@@ -1,0 +1,413 @@
+# DGentic Agile Task Plan
+
+Date created: 2026-05-07
+
+## Product Goal
+
+Build DGentic as an autonomous AI agent platform that can orchestrate local and external AI models, spawn and coordinate sub-agents, safely interact with files and CLI tools, maintain persistent memory, create reusable tools, and expose the system through chat, dashboard, API, and VS Code interfaces.
+
+## Delivery Strategy
+
+Use iterative Agile delivery with short, testable increments. Each sprint should produce a demonstrable slice of the platform, beginning with the orchestrator and safety boundaries before adding autonomy, memory, tools, and user interfaces.
+
+## Roles
+
+- Product owner: Defines priorities, acceptance criteria, and release readiness.
+- Tech lead: Owns architecture, sequencing, security posture, and implementation standards.
+- Backend engineer: Builds orchestrator, routing, memory, tool runtime, and APIs.
+- Frontend engineer: Builds chat interface, dashboard, settings, and approval workflows.
+- Extension engineer: Builds VS Code integration.
+- QA/security reviewer: Validates behavior, guardrails, tests, and permission boundaries.
+
+## Epic 1: Foundation And Repository Setup
+
+### Story 1.1: Define Project Structure
+
+As a maintainer, I want a clear repository structure so backend, frontend, extension, tools, and documentation can evolve independently.
+
+Acceptance criteria:
+- Repository layout is documented.
+- Backend, frontend, extension, local tool, and docs directories are defined.
+- Development setup instructions exist.
+
+Tasks:
+- Choose monorepo layout.
+- Add initial backend, frontend, extension, and `localmcp` directory conventions.
+- Document setup and contribution workflow.
+
+### Story 1.2: Establish Engineering Baseline
+
+As a developer, I want linting, testing, formatting, and CI conventions so future work remains stable.
+
+Acceptance criteria:
+- Formatting and linting commands are documented.
+- Test command conventions are defined.
+- CI plan exists, even if implementation is deferred.
+
+Tasks:
+- Select Python and TypeScript tooling.
+- Define test strategy.
+- Add quality gate checklist.
+
+## Epic 2: Orchestrator Core
+
+### Story 2.1: Create Task Planning Engine
+
+As a user, I want DGentic to break a goal into executable steps so complex work can be handled predictably.
+
+Acceptance criteria:
+- User task can be represented as structured plan data.
+- Plan contains objective, constraints, steps, tools, dependencies, and validation criteria.
+- Ambiguous requests can produce clarification prompts.
+
+Tasks:
+- Define task, plan, step, and result schemas.
+- Implement planner service interface.
+- Add plan validation rules.
+
+### Story 2.2: Add Execution Loop
+
+As a user, I want DGentic to execute planned steps and adapt when outputs fail validation.
+
+Acceptance criteria:
+- Steps can run sequentially.
+- Each step records status, output, error, and retry metadata.
+- Failed steps can trigger correction or escalation.
+
+Tasks:
+- Implement execution state machine.
+- Add retry and failure policies.
+- Persist run history.
+
+## Epic 3: Model Provider And Routing Layer
+
+### Story 3.1: Integrate Local Model Runtimes
+
+As a user, I want DGentic to use local AI models so sensitive or low-cost work can stay on-device.
+
+Acceptance criteria:
+- Ollama and LM Studio provider adapters are designed.
+- Provider health check exists.
+- Model metadata can be listed and selected.
+
+Tasks:
+- Define provider adapter interface.
+- Implement local runtime configuration.
+- Add local provider tests with mocked responses.
+
+### Story 3.2: Integrate External AI Providers
+
+As a user, I want DGentic to use external AI services through one interface so tasks can route to the best available model.
+
+Acceptance criteria:
+- External provider interface supports authentication, request, response, error, and rate-limit metadata.
+- Provider credentials are not stored in plain text.
+- Routing layer can select providers by role or policy.
+
+Tasks:
+- Define external provider contracts.
+- Add secure credential storage design.
+- Implement first provider adapter after architecture review.
+
+### Story 3.3: Build Hybrid Router
+
+As a user, I want DGentic to route tasks based on cost, latency, complexity, and reliability.
+
+Acceptance criteria:
+- Routing policy accepts cost, latency, reliability, privacy, and capability constraints.
+- Router decision is logged.
+- User can override routing behavior.
+
+Tasks:
+- Define router scoring model.
+- Implement routing decision logs.
+- Add configuration for model roles.
+
+## Epic 4: Multi-Agent System
+
+### Story 4.1: Spawn Sub-Agents
+
+As a user, I want DGentic to create sub-agents for specialized work so complex tasks can run in parallel.
+
+Acceptance criteria:
+- Sub-agent brief includes task, context, constraints, required data, and expected output.
+- Sub-agent lifecycle is tracked.
+- Parent orchestrator can collect outputs.
+
+Tasks:
+- Define agent blueprint schema.
+- Implement agent lifecycle manager.
+- Add parent-child task relationship tracking.
+
+### Story 4.2: Reconcile Agent Outputs
+
+As a user, I want DGentic to cross-check sub-agent outputs so final answers are reliable.
+
+Acceptance criteria:
+- Outputs can be compared against acceptance criteria.
+- Conflicts are detected and surfaced.
+- Final synthesis includes confidence and unresolved issues.
+
+Tasks:
+- Implement reconciliation workflow.
+- Add validation and cross-check policies.
+- Log conflicts and resolutions.
+
+## Epic 5: Guarded System Access
+
+### Story 5.1: Implement File System Boundary
+
+As a user, I want DGentic to access only an assigned root directory so project files are protected.
+
+Acceptance criteria:
+- All file operations resolve inside configured `rootDir`.
+- Attempts outside `rootDir` are denied and logged.
+- Read, write, and delete permissions are separately controlled.
+
+Tasks:
+- Define filesystem access policy.
+- Implement path resolution guard.
+- Add audit logs and tests.
+
+### Story 5.2: Implement Safe CLI Execution
+
+As a user, I want DGentic to run command-line operations safely so automation does not create unacceptable risk.
+
+Acceptance criteria:
+- CLI commands are classified as autopilot-safe or approval-required.
+- Blocked commands are denied before execution.
+- Command output and exit status are logged.
+
+Tasks:
+- Define command policy model.
+- Implement approval workflow interface.
+- Add command audit logging.
+
+## Epic 6: Memory And Retrieval
+
+### Story 6.1: Build Metadata Index
+
+As a user, I want skills and memories indexed by metadata so DGentic can retrieve context efficiently.
+
+Acceptance criteria:
+- Metadata includes tags, category, relevance, usage count, and timestamps.
+- Lookup and retrieval targets are documented.
+- Index update operations are logged.
+
+Tasks:
+- Define metadata schema.
+- Select database backend.
+- Implement indexing service.
+
+### Story 6.2: Build Hybrid Retrieval
+
+As a user, I want DGentic to combine structured index lookup with semantic vector search so relevant memory is found quickly.
+
+Acceptance criteria:
+- Retrieval can combine metadata filters and vector similarity.
+- Retrieval result includes source and score.
+- Long-term memory can be compressed or summarized.
+
+Tasks:
+- Select vector backend.
+- Implement retrieval query flow.
+- Add compression strategy design.
+
+## Epic 7: Tool Runtime And Self-Extensibility
+
+### Story 7.1: Create Local Tool Registry
+
+As a user, I want generated tools stored and registered consistently so agents can reuse them safely.
+
+Acceptance criteria:
+- Tools are stored under `rootDir/localmcp/[tool_name]/`.
+- Each tool has source code, metadata, interface wrapper, version, and permission classification.
+- Duplicate tools can be detected.
+
+Tasks:
+- Define local tool manifest.
+- Implement registration workflow.
+- Add governance metadata.
+
+### Story 7.2: Execute Tools Safely
+
+As a user, I want DGentic to execute generated tools in a controlled runtime so tool use remains auditable.
+
+Acceptance criteria:
+- Tool execution honors permission level.
+- Tool runs are logged with inputs, outputs, duration, and failures.
+- Unsafe tools can be deprecated or disabled.
+
+Tasks:
+- Define sandbox/runtime strategy.
+- Implement tool execution wrapper.
+- Add reliability tracking.
+
+## Epic 8: User Interfaces
+
+### Story 8.1: Build Unified Chat Interface
+
+As a user, I want a chat interface that shows orchestrator reasoning, sub-agent progress, rich output, approvals, and action logs.
+
+Acceptance criteria:
+- Chat supports Markdown, code, and LaTeX rendering.
+- Sub-agent progress is visible.
+- Approval-required actions can be reviewed in context.
+- Action logs are available without overwhelming the main conversation.
+
+Tasks:
+- Design chat layout and state model.
+- Implement task submission flow.
+- Add approval and log panels.
+
+### Story 8.2: Build Configuration Settings
+
+As a user, I want to configure providers, routing, filesystem boundaries, CLI policy, memory, and tooling.
+
+Acceptance criteria:
+- Settings cover providers, routing, hardware limits, filesystem jail, CLI guardrails, network policy, memory, and agent blueprints.
+- Sensitive values are masked.
+- Settings changes are audited.
+
+Tasks:
+- Define settings schema.
+- Build settings UI.
+- Add backend settings API.
+
+### Story 8.3: Build VS Code Extension
+
+As a developer, I want DGentic inside VS Code so I can trigger tasks, inspect agents, and use generated tools from my editor.
+
+Acceptance criteria:
+- Command palette can trigger DGentic tasks.
+- Sidebar shows active agents, memory status, and task decomposition.
+- Extension can connect to DGentic backend using configured endpoint and token.
+
+Tasks:
+- Scaffold VS Code extension.
+- Implement connection settings.
+- Add sidebar view.
+
+## Epic 9: Observability, Analytics, And Post-Session Behavior
+
+### Story 9.1: Add Action And Performance Logs
+
+As an operator, I want logs for actions, provider usage, tool usage, memory health, and latency so system behavior is explainable.
+
+Acceptance criteria:
+- Logs include task, agent, provider, tool, CLI, filesystem, and approval events.
+- Performance metrics include latency and token or cost estimates where available.
+- Logs can feed dashboard views.
+
+Tasks:
+- Define event schema.
+- Implement logging service.
+- Add dashboard data contracts.
+
+### Story 9.2: Add Session Summaries
+
+As a user, I want DGentic to summarize each session so work can resume cleanly later.
+
+Acceptance criteria:
+- Session summary includes actions, decisions, learned knowledge, created tools, and next steps.
+- Memory optimization can run after session completion.
+- Resume state can reload the previous context.
+
+Tasks:
+- Define session state file.
+- Implement summarization workflow.
+- Add resume workflow.
+
+## Milestone Plan
+
+### Milestone 0: Documentation And Planning
+
+Goal: Establish the project source of truth.
+
+Deliverables:
+- Product goal document.
+- Agile task plan.
+- Project progress log.
+- Root README and documentation index.
+
+### Milestone 1: Core Backend Skeleton
+
+Goal: Build the backend foundation for orchestrator, plans, execution state, and logs.
+
+Deliverables:
+- FastAPI service skeleton.
+- Pydantic schemas for task, plan, step, result, provider, agent, and log events.
+- Basic task planning endpoint.
+- Local persistence for development.
+
+### Milestone 2: Guardrails And Execution
+
+Goal: Add guarded file and CLI access before enabling broader autonomy.
+
+Deliverables:
+- Filesystem jail.
+- CLI policy engine.
+- Approval-required action flow.
+- Audit logging.
+
+### Milestone 3: Provider Routing And Agents
+
+Goal: Support model providers, routing rules, and sub-agent lifecycle.
+
+Deliverables:
+- Local provider adapters.
+- External provider contract.
+- Router policy implementation.
+- Agent manager and output reconciliation.
+
+### Milestone 4: Memory And Tool Runtime
+
+Goal: Add reusable memory and controlled local tool creation.
+
+Deliverables:
+- Metadata index.
+- Vector retrieval path.
+- `localmcp` tool registry.
+- Tool execution wrapper.
+
+### Milestone 5: Interfaces
+
+Goal: Make DGentic usable through web and editor workflows.
+
+Deliverables:
+- Chat interface.
+- Settings interface.
+- Analytics dashboard.
+- VS Code extension MVP.
+
+## Definition Of Ready
+
+A story is ready when:
+- The user value is clear.
+- Acceptance criteria are testable.
+- Dependencies are identified.
+- Security and permission impact is understood.
+- Required interfaces or schemas are drafted.
+
+## Definition Of Done
+
+A story is done when:
+- Acceptance criteria are met.
+- Tests or verification notes are recorded.
+- Documentation is updated.
+- Security and permission behavior is reviewed.
+- Progress log is updated.
+
+## Initial Sprint 1 Backlog
+
+Sprint goal: Turn the DGentic specification into a maintainable implementation foundation.
+
+Candidate tasks:
+- Finalize repository layout.
+- Create backend skeleton.
+- Define core Pydantic schemas.
+- Add task planning endpoint.
+- Add project configuration template.
+- Add first architecture document.
+- Add developer setup guide.
+- Add progress log update after implementation.

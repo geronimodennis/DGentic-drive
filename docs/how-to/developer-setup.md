@@ -1,0 +1,86 @@
+# Developer Setup
+
+Date created: 2026-05-07
+
+This guide explains how to run the current DGentic backend foundation.
+
+## Prerequisites
+
+- Python 3.11 or newer, below Python 3.15.
+- `uv` for dependency management.
+
+## Install Dependencies
+
+From the repository root:
+
+```powershell
+uv sync --dev
+```
+
+## Configure Environment
+
+Copy `.env.example` to `.env` if local overrides are needed:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Default settings:
+
+- `DGENTIC_APP_NAME=DGentic`
+- `DGENTIC_ENVIRONMENT=development`
+- `DGENTIC_ROOT_DIR=.`
+- `DGENTIC_AUTOPILOT_ENABLED=false`
+
+## Run The Backend
+
+```powershell
+uv run uvicorn dgentic.main:app --reload --app-dir src
+```
+
+After installing the package, you can also run:
+
+```powershell
+dgentic-server --host 127.0.0.1 --port 8000
+```
+
+Then open:
+
+- `http://127.0.0.1:8000/health`
+- `http://127.0.0.1:8000/docs`
+
+## Create A Task Plan
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/tasks/plan `
+  -ContentType "application/json" `
+  -Body '{"objective":"Create a guarded plan for indexing project memory.","constraints":["Only operate inside rootDir."],"acceptance_criteria":["Plan includes validation step."]}'
+```
+
+## Run Tests
+
+```powershell
+uv run pytest
+```
+
+## Run Lint And Format Checks
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+```
+
+To format files:
+
+```powershell
+uv run ruff format .
+```
+
+## Current Limitations
+
+- The planner is deterministic and does not call local or external models yet.
+- No filesystem or CLI execution runtime exists yet.
+- No database, memory index, provider router, frontend, or VS Code extension exists yet.
+- `localmcp/` is reserved for future generated tools but tool execution is not implemented.

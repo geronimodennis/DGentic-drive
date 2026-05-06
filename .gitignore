@@ -1,0 +1,47 @@
+.env
+.env.*
+!.env.example
+
+# Python environments
+.venv/
+.release-test/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build and packaging output
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Tooling and local state
+.cache/
+.uv-cache/
+.idea/
+.vscode/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# DGentic generated local tools
+localmcp/*
+!localmcp/.gitkeep

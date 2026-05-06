@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification and planning documents that define the first implementation path.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, provider routing, agent briefs, memory records, tool manifests, session summaries, and event logs.
 
 ## Documentation
 
@@ -42,9 +42,17 @@ Run tests:
 uv run pytest
 ```
 
+Run all quality checks:
+
+```powershell
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+```
+
 ## How To Use DGentic
 
-DGentic is not implemented yet. Use this repository as the planning and build source for the platform.
+DGentic is in backend MVP development. The current API is useful for exercising contracts and sprint slices, while provider integrations, durable persistence, real tool execution, frontend UI, and VS Code extension work continue.
 
 ### Review The Product Goal
 
@@ -60,6 +68,20 @@ Use [docs/progress/project-progress-log.md](docs/progress/project-progress-log.m
 
 For more detail, use [docs/how-to/using-dgentic.md](docs/how-to/using-dgentic.md).
 
+### Current Backend APIs
+
+The backend currently exposes:
+
+- `GET /` and `GET /health` for service status.
+- `POST /tasks/plan` for deterministic starter task planning.
+- `POST /tasks/execute` for deterministic plan execution runs.
+- `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
+- `GET /providers`, `GET /providers/{provider_id}/health`, and `POST /routing/decide` for provider routing contracts.
+- `POST /agents`, `GET /agents`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
+- `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
+- `POST /tools` and `GET /tools` for local tool manifest registration.
+- `POST /sessions/summary`, `GET /sessions/summary`, and `GET /logs` for session and observability contracts.
+
 ### Add New Documentation
 
 Place new documentation under `docs/` using focused subdirectories:
@@ -68,6 +90,8 @@ Place new documentation under `docs/` using focused subdirectories:
 - `docs/progress/` for progress logs, status updates, and decision records.
 - `docs/architecture/` for system design and technical diagrams.
 - `docs/how-to/` for usage, setup, and operational guides.
+
+When implementation changes behavior, update the README plus the relevant document in `docs/` in the same change. At minimum, update the progress log for every meaningful sprint or release change.
 
 ### Future Runtime Usage
 
@@ -83,6 +107,6 @@ Once implemented, DGentic should be used through one or more supported interface
 
 ## Current Status
 
-Status: backend foundation started.
+Status: backend MVP sprint surface started.
 
-The first FastAPI backend skeleton, core Pydantic schemas, deterministic task planning endpoint, and backend tests have been created. Frontend, memory, model routing, tool execution, and VS Code extension work have not started yet.
+The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, provider routing placeholders, sub-agent contracts, in-memory memory and tool registries, session summaries, event logs, and backend tests. Remaining work includes durable persistence, real provider adapters, approval workflow enforcement, controlled tool execution, semantic retrieval, web UI, and VS Code extension work.

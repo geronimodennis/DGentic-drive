@@ -398,6 +398,15 @@ A story is done when:
 - Security and permission behavior is reviewed.
 - Progress log is updated.
 
+## Sprint Close Checklist
+
+Every sprint completion must include:
+- Update the root `README.md` when behavior, setup, API surface, or project status changes.
+- Update the relevant documentation under `docs/`.
+- Update `docs/progress/project-progress-log.md` with completed work, verification, decisions, blockers, and next steps.
+- Mark remaining unfinished story work clearly as follow-up production work.
+- Run the quality gates and record the verification result before commit.
+
 ## Initial Sprint 1 Backlog
 
 Sprint goal: Turn the DGentic specification into a maintainable implementation foundation.

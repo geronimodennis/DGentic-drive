@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 2 MVP Execution Pass
+
+Status: remaining sprint themes have backend MVP coverage.
+
+Completed:
+- Added deterministic task execution runs with per-step results.
+- Added filesystem boundary policy checks for read, write, and delete actions.
+- Added CLI command policy classification for safe, approval-required, and blocked commands.
+- Added provider registry, provider health checks, and basic routing decisions.
+- Added sub-agent brief spawning and output reconciliation contracts.
+- Added in-memory memory indexing and search by text and tags.
+- Added local tool manifest registration.
+- Added session summary creation and retrieval.
+- Added centralized event logging across task, provider, agent, filesystem, CLI, memory, tool, and session events.
+- Added FastAPI endpoints for guardrails, execution, providers, routing, agents, memory, tools, summaries, and logs.
+- Added API tests covering the new MVP sprint surfaces.
+
+Verification:
+- API test coverage has been expanded for deterministic execution, guardrails, provider routing, registries, session summaries, and logs.
+
+Process update:
+- Added a sprint close checklist to the Agile task plan requiring README updates, relevant documentation updates, progress log updates, follow-up notes, and quality gate verification whenever a sprint is completed.
+
+Remaining production work:
+- Replace in-memory stores with durable persistence.
+- Replace placeholder provider adapters with Ollama, LM Studio, and external provider integrations.
+- Add real command execution with approval workflow enforcement.
+- Add real filesystem read/write operations behind the guardrail policy.
+- Add semantic vector retrieval and memory compression.
+- Add controlled tool execution runtime.
+- Build the web chat, settings, dashboard, and VS Code extension interfaces.
+
+---
+
 ### Release Distribution Update
 
 Status: DGentic 0.1.0 release distribution created.

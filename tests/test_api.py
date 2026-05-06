@@ -34,3 +34,111 @@ def test_task_plan_contains_expected_execution_shape() -> None:
     assert len(body["steps"]) == 5
     assert body["steps"][0]["id"] == "step-1"
     assert body["steps"][-1]["agent_role"] == "reviewer"
+
+
+def test_plan_can_execute_deterministically() -> None:
+    client = TestClient(create_app())
+    plan_response = client.post(
+        "/tasks/plan",
+        json={"objective": "Execute the backend sprint plan safely."},
+    )
+
+    response = client.post("/tasks/execute", json=plan_response.json())
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["status"] == "completed"
+    assert body["plan_id"] == plan_response.json()["id"]
+    assert len(body["results"]) == 5
+    assert all(result["status"] == "completed" for result in body["results"])
+
+
+def test_guardrails_classify_filesystem_and_commands() -> None:
+    client = TestClient(create_app())
+
+    file_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": "README.md", "action": "read"},
+    )
+    command_response = client.post(
+        "/guardrails/commands",
+        json={"command": "rm -rf important"},
+    )
+
+    assert file_response.status_code == 200
+    assert file_response.json()["allowed"] is True
+    assert command_response.status_code == 200
+    assert command_response.json()["permission_mode"] == "blocked"
+
+
+def test_provider_routing_prefers_local_when_privacy_is_required() -> None:
+    client = TestClient(create_app())
+
+    providers_response = client.get("/providers")
+    route_response = client.post("/routing/decide", json={"privacy_required": True})
+
+    assert providers_response.status_code == 200
+    assert len(providers_response.json()) >= 2
+    assert route_response.status_code == 200
+    assert route_response.json()["provider_id"] == "local-placeholder"
+
+
+def test_agent_memory_tool_and_session_registries() -> None:
+    client = TestClient(create_app())
+
+    agent_response = client.post(
+        "/agents",
+        json={
+            "role": "researcher",
+            "task": "Inspect provider contracts.",
+            "expected_output": "Concise findings.",
+        },
+    )
+    memory_response = client.post(
+        "/memory",
+        json={
+            "title": "Guardrail decision",
+            "content": "Filesystem access must stay inside rootDir.",
+            "tags": ["guardrails"],
+        },
+    )
+    search_response = client.post(
+        "/memory/search",
+        json={"text": "Filesystem", "tags": ["guardrails"]},
+    )
+    tool_response = client.post(
+        "/tools",
+        json={
+            "name": "example-tool",
+            "description": "Example local tool manifest.",
+            "entrypoint": "localmcp/example-tool/main.py",
+            "permission_mode": "approval_required",
+        },
+    )
+    summary_response = client.post(
+        "/sessions/summary",
+        json={
+            "actions": ["Added MVP sprint APIs."],
+            "decisions": ["Keep provider adapters as placeholders."],
+            "next_steps": ["Replace in-memory stores with persistence."],
+        },
+    )
+
+    assert agent_response.status_code == 201
+    assert agent_response.json()["status"] == "running"
+    assert memory_response.status_code == 201
+    assert search_response.status_code == 200
+    assert search_response.json()[0]["record"]["title"] == "Guardrail decision"
+    assert tool_response.status_code == 201
+    assert summary_response.status_code == 201
+
+
+def test_logs_capture_new_backend_activity() -> None:
+    client = TestClient(create_app())
+
+    client.post("/guardrails/commands", json={"command": "git status"})
+    response = client.get("/logs?event_type=cli")
+
+    assert response.status_code == 200
+    assert response.json()
+    assert response.json()[-1]["event_type"] == "cli"

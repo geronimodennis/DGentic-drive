@@ -58,6 +58,10 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
 ```
 
 ```powershell
+curl http://127.0.0.1:8000/tasks/plans
+```
+
+```powershell
 curl -X POST http://127.0.0.1:8000/guardrails/commands `
   -H "Content-Type: application/json" `
   -d '{"command":"git status"}'
@@ -70,6 +74,8 @@ curl -X POST http://127.0.0.1:8000/routing/decide `
 ```
 
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
+
+Local MVP state is written to `.dgentic/` by default. Set `DGENTIC_DATA_DIR` to move state elsewhere.
 
 ## Future Platform Usage
 
@@ -140,7 +146,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- State is held in memory and resets when the server restarts.
+- State is persisted as local JSON collections, but production-grade migrations, indexing, and concurrency controls still need to be added.
 - Provider adapters are placeholders, not live Ollama, LM Studio, or external service integrations.
 - Guardrails classify filesystem and CLI actions but do not yet enforce real file or command execution workflows.
 - Tool manifests can be registered, but generated tools are not executed in a sandbox yet.

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from dgentic.main import create_app
+from dgentic.settings import get_settings
 
 
 def test_health_returns_service_status() -> None:
@@ -51,6 +52,29 @@ def test_plan_can_execute_deterministically() -> None:
     assert body["plan_id"] == plan_response.json()["id"]
     assert len(body["results"]) == 5
     assert all(result["status"] == "completed" for result in body["results"])
+
+
+def test_task_history_is_persisted_to_local_state(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    plan_response = client.post(
+        "/tasks/plan",
+        json={"objective": "Persist task plans and execution history."},
+    )
+    run_response = client.post("/tasks/execute", json=plan_response.json())
+
+    plans_response = client.get("/tasks/plans")
+    runs_response = client.get("/tasks/runs")
+
+    assert plan_response.status_code == 201
+    assert run_response.status_code == 201
+    assert plans_response.json()[-1]["id"] == plan_response.json()["id"]
+    assert runs_response.json()[-1]["id"] == run_response.json()["id"]
+    assert (tmp_path / "task-plans.json").exists()
+    assert (tmp_path / "task-runs.json").exists()
+    get_settings.cache_clear()
 
 
 def test_guardrails_classify_filesystem_and_commands() -> None:

@@ -5,7 +5,7 @@ from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import evaluate_command_policy, evaluate_file_access
 from dgentic.memory import add_memory, search_memory
-from dgentic.planner import create_initial_plan
+from dgentic.planner import create_initial_plan, list_plans
 from dgentic.providers import check_provider_health, choose_provider, list_providers
 from dgentic.schemas import (
     AgentBrief,
@@ -63,9 +63,19 @@ def plan_task(request: TaskRequest) -> TaskPlan:
     return create_initial_plan(request)
 
 
+@router.get("/tasks/plans", response_model=list[TaskPlan])
+def get_task_plans() -> list[TaskPlan]:
+    return list_plans()
+
+
 @router.post("/tasks/execute", response_model=TaskRun, status_code=201)
 def execute_task_plan(plan: TaskPlan) -> TaskRun:
     return execution_engine.execute_plan(plan)
+
+
+@router.get("/tasks/runs", response_model=list[TaskRun])
+def get_task_runs() -> list[TaskRun]:
+    return execution_engine.list_runs()
 
 
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)

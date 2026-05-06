@@ -34,6 +34,7 @@ build/
 # Tooling and local state
 .cache/
 .uv-cache/
+.dgentic/
 .idea/
 .vscode/
 *.log

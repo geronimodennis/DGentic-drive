@@ -2,15 +2,16 @@ from uuid import uuid4
 
 from dgentic.events import event_log
 from dgentic.schemas import AgentBrief, AgentOutput, AgentReconciliation, AgentStatus, LogEventType
+from dgentic.storage import JsonCollection
 
-_agents: dict[str, AgentBrief] = {}
+_agents = JsonCollection("agents", AgentBrief)
 
 
 def spawn_agent(brief: AgentBrief) -> AgentBrief:
     agent = brief.model_copy(
         update={"id": brief.id or f"agent-{uuid4()}", "status": AgentStatus.running}
     )
-    _agents[agent.id] = agent
+    _agents.upsert(agent)
     event_log.record(
         LogEventType.agent,
         "Spawned sub-agent brief.",
@@ -21,7 +22,7 @@ def spawn_agent(brief: AgentBrief) -> AgentBrief:
 
 
 def list_agents() -> list[AgentBrief]:
-    return list(_agents.values())
+    return _agents.list()
 
 
 def reconcile_outputs(outputs: list[AgentOutput]) -> AgentReconciliation:

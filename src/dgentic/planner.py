@@ -1,6 +1,9 @@
 from uuid import uuid4
 
 from dgentic.schemas import PlanStep, TaskPlan, TaskRequest
+from dgentic.storage import JsonCollection
+
+_plans = JsonCollection("task-plans", TaskPlan)
 
 
 def create_initial_plan(request: TaskRequest) -> TaskPlan:
@@ -78,7 +81,7 @@ def create_initial_plan(request: TaskRequest) -> TaskPlan:
         ),
     ]
 
-    return TaskPlan(
+    plan = TaskPlan(
         id=f"plan-{uuid4()}",
         objective=request.objective,
         constraints=request.constraints,
@@ -86,3 +89,9 @@ def create_initial_plan(request: TaskRequest) -> TaskPlan:
         clarification_questions=clarification_questions,
         steps=steps,
     )
+    _plans.upsert(plan)
+    return plan
+
+
+def list_plans() -> list[TaskPlan]:
+    return _plans.list()

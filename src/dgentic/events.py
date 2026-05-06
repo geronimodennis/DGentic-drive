@@ -1,11 +1,12 @@
 from uuid import uuid4
 
 from dgentic.schemas import LogEvent, LogEventType
+from dgentic.storage import JsonCollection
 
 
 class EventLog:
     def __init__(self) -> None:
-        self._events: list[LogEvent] = []
+        self._events = JsonCollection("events", LogEvent)
 
     def record(
         self,
@@ -24,13 +25,14 @@ class EventLog:
             subject_id=subject_id,
             metadata=metadata or {},
         )
-        self._events.append(event)
+        self._events.upsert(event)
         return event
 
     def list(self, event_type: LogEventType | None = None) -> list[LogEvent]:
+        events = self._events.list()
         if event_type is None:
-            return list(self._events)
-        return [event for event in self._events if event.event_type == event_type]
+            return events
+        return [event for event in events if event.event_type == event_type]
 
 
 event_log = EventLog()

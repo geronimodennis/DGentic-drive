@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "DGentic"
     environment: str = "development"
     root_dir: Path = Field(default=Path("."))
+    data_dir: Path = Field(default=Path(".dgentic"))
     autopilot_enabled: bool = False
 
 

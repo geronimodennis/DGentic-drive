@@ -30,6 +30,7 @@ dgentic/
       schemas.py
       sessions.py
       settings.py
+      storage.py
       tools.py
   tests/
   .env.example
@@ -57,12 +58,13 @@ Current modules:
 - `memory.py`: In-memory memory record indexing and search.
 - `tools.py`: Local tool manifest registration.
 - `sessions.py`: Session summary registry.
-- `events.py`: Central in-memory event log.
+- `events.py`: Central event log backed by local JSON state.
+- `storage.py`: JSON collection persistence helper for MVP local state.
 - `settings.py`: Environment-based backend settings.
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, deterministic execution, guardrail checks, provider routing, agent and registry APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, provider routing, agent and registry APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -106,7 +108,9 @@ Current endpoints:
 - `GET /`: Service health response.
 - `GET /health`: Service health response.
 - `POST /tasks/plan`: Creates a structured starter task plan.
+- `GET /tasks/plans`: Lists persisted task plans.
 - `POST /tasks/execute`: Creates a deterministic execution run from a task plan.
+- `GET /tasks/runs`: Lists persisted task execution runs.
 - `POST /guardrails/filesystem`: Evaluates filesystem action policy against `rootDir`.
 - `POST /guardrails/commands`: Classifies CLI command risk.
 - `GET /providers`: Lists configured provider placeholders.
@@ -139,11 +143,25 @@ Quality gates:
 - `uv run ruff check .`
 - `uv run ruff format --check .`
 
+## Local State
+
+DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`.
+
+Current collections:
+
+- `task-plans.json`
+- `task-runs.json`
+- `events.json`
+- `agents.json`
+- `memory.json`
+- `tools.json`
+- `sessions.json`
+
 ## Architecture Decisions
 
 - Start with a backend-first monorepo because orchestration, permissions, schemas, and logs define the core product contracts.
 - Keep model-provider execution out of the first slice; the initial planner is deterministic and auditable.
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Create `localmcp/` now to reserve the generated-tool boundary without enabling tool execution yet.
-- Use in-memory registries for the MVP sprint surface; replace them with durable storage before production use.
+- Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Keep provider adapters as placeholders until guardrails, routing policy, credentials, and audit behavior are ready to harden together.

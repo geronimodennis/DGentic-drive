@@ -3,11 +3,12 @@ from uuid import uuid4
 
 from dgentic.events import event_log
 from dgentic.schemas import LogEventType, PlanStatus, StepResult, StepStatus, TaskPlan, TaskRun
+from dgentic.storage import JsonCollection
 
 
 class ExecutionEngine:
     def __init__(self) -> None:
-        self._runs: dict[str, TaskRun] = {}
+        self._runs = JsonCollection("task-runs", TaskRun)
 
     def execute_plan(self, plan: TaskPlan) -> TaskRun:
         results = [
@@ -30,7 +31,7 @@ class ExecutionEngine:
             results=results,
             completed_at=datetime.now(UTC),
         )
-        self._runs[run.id] = run
+        self._runs.upsert(run)
         event_log.record(
             LogEventType.task,
             "Executed deterministic task plan.",
@@ -41,6 +42,9 @@ class ExecutionEngine:
 
     def get_run(self, run_id: str) -> TaskRun | None:
         return self._runs.get(run_id)
+
+    def list_runs(self) -> list[TaskRun]:
+        return self._runs.list()
 
 
 execution_engine = ExecutionEngine()

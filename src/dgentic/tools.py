@@ -1,12 +1,12 @@
 from dgentic.events import event_log
 from dgentic.schemas import LogEventType, ToolManifest
+from dgentic.storage import JsonCollection
 
-_tools: dict[str, ToolManifest] = {}
+_tools = JsonCollection("tools", ToolManifest, key_field="name")
 
 
 def register_tool(manifest: ToolManifest) -> ToolManifest:
-    key = manifest.name.lower()
-    _tools[key] = manifest
+    _tools.upsert(manifest)
     event_log.record(
         LogEventType.tool,
         "Registered local tool manifest.",
@@ -17,4 +17,4 @@ def register_tool(manifest: ToolManifest) -> ToolManifest:
 
 
 def list_tools() -> list[ToolManifest]:
-    return list(_tools.values())
+    return _tools.list()

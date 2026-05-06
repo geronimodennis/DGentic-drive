@@ -4,6 +4,32 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 3 Local Persistence Pass
+
+Status: MVP local state now persists across backend process restarts.
+
+Completed:
+- Added `DGENTIC_DATA_DIR` setting with `.dgentic/` as the default local state directory.
+- Added `.dgentic/` to `.gitignore`.
+- Added reusable JSON collection storage for MVP state.
+- Persisted task plans, task runs, event logs, agent briefs, memory records, tool manifests, and session summaries.
+- Added task history endpoints: `GET /tasks/plans` and `GET /tasks/runs`.
+- Added test coverage proving task plans and execution runs are written to local state files.
+- Updated README, architecture documentation, usage guide, developer setup, environment template, and progress log.
+
+Verification:
+- `uv run pytest` passed with 8 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Remaining production work:
+- Add schema migrations or versioned storage format for persisted records.
+- Add concurrency controls appropriate for multi-worker deployments.
+- Replace JSON collections with a production database when dashboard, retrieval, and long-running agents need richer querying.
+- Add API support for deleting, archiving, and exporting local state.
+
+---
+
 ### Sprint 2 MVP Execution Pass
 
 Status: remaining sprint themes have backend MVP coverage.

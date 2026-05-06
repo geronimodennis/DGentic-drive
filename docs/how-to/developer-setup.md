@@ -30,6 +30,7 @@ Default settings:
 - `DGENTIC_APP_NAME=DGentic`
 - `DGENTIC_ENVIRONMENT=development`
 - `DGENTIC_ROOT_DIR=.`
+- `DGENTIC_DATA_DIR=.dgentic`
 - `DGENTIC_AUTOPILOT_ENABLED=false`
 
 ## Run The Backend
@@ -59,6 +60,15 @@ Invoke-RestMethod `
   -Body '{"objective":"Create a guarded plan for indexing project memory.","constraints":["Only operate inside rootDir."],"acceptance_criteria":["Plan includes validation step."]}'
 ```
 
+Task plans and execution runs are persisted in local JSON state:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/tasks/plans
+Invoke-RestMethod -Uri http://127.0.0.1:8000/tasks/runs
+```
+
+By default, local state files are written under `.dgentic/`, which is ignored by Git.
+
 ## Run Tests
 
 ```powershell
@@ -82,5 +92,5 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - No filesystem or CLI execution runtime exists yet.
-- No database, memory index, provider router, frontend, or VS Code extension exists yet.
+- Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
 - `localmcp/` is reserved for future generated tools but tool execution is not implemented.

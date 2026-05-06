@@ -2,13 +2,14 @@ from uuid import uuid4
 
 from dgentic.events import event_log
 from dgentic.schemas import LogEventType, SessionSummary
+from dgentic.storage import JsonCollection
 
-_summaries: dict[str, SessionSummary] = {}
+_summaries = JsonCollection("sessions", SessionSummary)
 
 
 def create_session_summary(summary: SessionSummary) -> SessionSummary:
     saved = summary.model_copy(update={"id": summary.id or f"session-{uuid4()}"})
-    _summaries[saved.id] = saved
+    _summaries.upsert(saved)
     event_log.record(
         LogEventType.session,
         "Created session summary.",
@@ -19,4 +20,4 @@ def create_session_summary(summary: SessionSummary) -> SessionSummary:
 
 
 def list_session_summaries() -> list[SessionSummary]:
-    return list(_summaries.values())
+    return _summaries.list()

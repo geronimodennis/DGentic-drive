@@ -4,6 +4,32 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 4 Guarded Filesystem Operations Pass
+
+Status: guarded text file read and write operations are available behind root boundary checks.
+
+Completed:
+- Added file read and write request/response schemas.
+- Added guarded UTF-8 text file read service that rejects paths outside `rootDir`.
+- Added guarded UTF-8 text file write service with optional parent directory creation.
+- Added audit log events for guarded file reads and writes.
+- Added API endpoints: `POST /filesystem/read` and `POST /filesystem/write`.
+- Added tests for allowed writes, allowed reads, blocked outside-root access, and approval-required delete policy.
+- Updated README, architecture documentation, usage guide, developer setup, and progress log.
+
+Verification:
+- `uv run pytest` passed with 9 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Remaining production work:
+- Add explicit approval workflow for delete, move, overwrite, and sensitive write operations.
+- Add binary file handling and size limits.
+- Add richer error contracts for filesystem operations.
+- Add file operation history views and export support.
+
+---
+
 ### Sprint 3 Local Persistence Pass
 
 Status: MVP local state now persists across backend process restarts.

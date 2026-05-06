@@ -207,6 +207,27 @@ class FileAccessDecision(BaseModel):
     reason: str
 
 
+class FileReadRequest(BaseModel):
+    path: Path
+
+
+class FileReadResponse(BaseModel):
+    path: Path
+    content: str
+    bytes_read: int
+
+
+class FileWriteRequest(BaseModel):
+    path: Path
+    content: str
+    create_parent_dirs: bool = True
+
+
+class FileWriteResponse(BaseModel):
+    path: Path
+    bytes_written: int
+
+
 class CommandPolicyRequest(BaseModel):
     command: str
 

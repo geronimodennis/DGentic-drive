@@ -5,6 +5,10 @@ from dgentic.schemas import (
     CommandRisk,
     FileAccessDecision,
     FileAccessRequest,
+    FileReadRequest,
+    FileReadResponse,
+    FileWriteRequest,
+    FileWriteResponse,
     LogEventType,
     PermissionMode,
 )
@@ -62,6 +66,52 @@ def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
         metadata=decision.model_dump(mode="json"),
     )
     return decision
+
+
+def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="read"))
+    if not decision.allowed:
+        raise PermissionError(decision.reason)
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    if not decision.resolved_path.is_file():
+        raise IsADirectoryError(str(decision.path))
+
+    content = decision.resolved_path.read_text(encoding="utf-8")
+    response = FileReadResponse(
+        path=decision.path,
+        content=content,
+        bytes_read=len(content.encode("utf-8")),
+    )
+    event_log.record(
+        LogEventType.filesystem,
+        "Read guarded text file.",
+        metadata={"path": str(decision.path), "bytes_read": response.bytes_read},
+    )
+    return response
+
+
+def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="write"))
+    if not decision.allowed:
+        raise PermissionError(decision.reason)
+
+    if request.create_parent_dirs:
+        decision.resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    elif not decision.resolved_path.parent.exists():
+        raise FileNotFoundError(str(decision.resolved_path.parent))
+
+    decision.resolved_path.write_text(request.content, encoding="utf-8")
+    response = FileWriteResponse(
+        path=decision.path,
+        bytes_written=len(request.content.encode("utf-8")),
+    )
+    event_log.record(
+        LogEventType.filesystem,
+        "Wrote guarded text file.",
+        metadata={"path": str(decision.path), "bytes_written": response.bytes_written},
+    )
+    return response
 
 
 def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:

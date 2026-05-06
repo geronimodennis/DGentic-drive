@@ -68,6 +68,18 @@ curl -X POST http://127.0.0.1:8000/guardrails/commands `
 ```
 
 ```powershell
+curl -X POST http://127.0.0.1:8000/filesystem/write `
+  -H "Content-Type: application/json" `
+  -d '{"path":"notes/sprint.txt","content":"Sprint note."}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/filesystem/read `
+  -H "Content-Type: application/json" `
+  -d '{"path":"notes/sprint.txt"}'
+```
+
+```powershell
 curl -X POST http://127.0.0.1:8000/routing/decide `
   -H "Content-Type: application/json" `
   -d '{"privacy_required":true}'
@@ -148,7 +160,8 @@ DGentic should persist session state so future sessions can resume with context,
 - DGentic has backend MVP contracts, not production autonomy.
 - State is persisted as local JSON collections, but production-grade migrations, indexing, and concurrency controls still need to be added.
 - Provider adapters are placeholders, not live Ollama, LM Studio, or external service integrations.
-- Guardrails classify filesystem and CLI actions but do not yet enforce real file or command execution workflows.
+- Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
+- CLI guardrails classify commands but do not yet execute commands through an approval workflow.
 - Tool manifests can be registered, but generated tools are not executed in a sandbox yet.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

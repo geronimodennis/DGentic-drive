@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, provider routing, agent briefs, memory records, tool manifests, session summaries, event logs, and local JSON state persistence.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, guarded text file operations, provider routing, agent briefs, memory records, tool manifests, session summaries, event logs, and local JSON state persistence.
 
 ## Documentation
 
@@ -78,6 +78,7 @@ The backend currently exposes:
 - `POST /tasks/execute` for deterministic plan execution runs.
 - `GET /tasks/runs` for persisted execution run history.
 - `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
+- `POST /filesystem/read` and `POST /filesystem/write` for policy-enforced UTF-8 text file operations inside `rootDir`.
 - `GET /providers`, `GET /providers/{provider_id}/health`, and `POST /routing/decide` for provider routing contracts.
 - `POST /agents`, `GET /agents`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
@@ -113,4 +114,4 @@ Once implemented, DGentic should be used through one or more supported interface
 
 Status: backend MVP sprint surface started.
 
-The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, provider routing placeholders, sub-agent contracts, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, real provider adapters, approval workflow enforcement, controlled tool execution, semantic retrieval, web UI, and VS Code extension work.
+The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, provider routing placeholders, sub-agent contracts, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, real provider adapters, approval workflow enforcement, richer filesystem operations, controlled tool execution, semantic retrieval, web UI, and VS Code extension work.

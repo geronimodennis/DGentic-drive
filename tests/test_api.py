@@ -95,6 +95,40 @@ def test_guardrails_classify_filesystem_and_commands() -> None:
     assert command_response.json()["permission_mode"] == "blocked"
 
 
+def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    write_response = client.post(
+        "/filesystem/write",
+        json={"path": "notes/sprint.txt", "content": "Sprint filesystem note."},
+    )
+    read_response = client.post(
+        "/filesystem/read",
+        json={"path": "notes/sprint.txt"},
+    )
+    outside_response = client.post(
+        "/filesystem/read",
+        json={"path": str(tmp_path / "outside.txt")},
+    )
+    delete_policy_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": "notes/sprint.txt", "action": "delete"},
+    )
+
+    assert write_response.status_code == 200
+    assert write_response.json()["bytes_written"] == len("Sprint filesystem note.")
+    assert read_response.status_code == 200
+    assert read_response.json()["content"] == "Sprint filesystem note."
+    assert outside_response.status_code == 403
+    assert delete_policy_response.json()["permission_mode"] == "approval_required"
+    get_settings.cache_clear()
+
+
 def test_provider_routing_prefers_local_when_privacy_is_required() -> None:
     client = TestClient(create_app())
 

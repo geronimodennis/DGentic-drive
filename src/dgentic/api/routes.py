@@ -1,9 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from dgentic.agents import list_agents, reconcile_outputs, spawn_agent
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
-from dgentic.guardrails import evaluate_command_policy, evaluate_file_access
+from dgentic.guardrails import (
+    evaluate_command_policy,
+    evaluate_file_access,
+    read_guarded_text_file,
+    write_guarded_text_file,
+)
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.providers import check_provider_health, choose_provider, list_providers
@@ -15,6 +20,10 @@ from dgentic.schemas import (
     CommandPolicyRequest,
     FileAccessDecision,
     FileAccessRequest,
+    FileReadRequest,
+    FileReadResponse,
+    FileWriteRequest,
+    FileWriteResponse,
     HealthResponse,
     LogEvent,
     LogEventType,
@@ -81,6 +90,26 @@ def get_task_runs() -> list[TaskRun]:
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)
 def check_filesystem_access(request: FileAccessRequest) -> FileAccessDecision:
     return evaluate_file_access(request)
+
+
+@router.post("/filesystem/read", response_model=FileReadResponse)
+def read_file(request: FileReadRequest) -> FileReadResponse:
+    try:
+        return read_guarded_text_file(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (IsADirectoryError, PermissionError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/write", response_model=FileWriteResponse)
+def write_file(request: FileWriteRequest) -> FileWriteResponse:
+    try:
+        return write_guarded_text_file(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/guardrails/commands", response_model=CommandPolicyDecision)

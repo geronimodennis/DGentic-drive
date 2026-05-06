@@ -52,7 +52,7 @@ Current modules:
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
-- `guardrails.py`: Filesystem and CLI policy classification.
+- `guardrails.py`: Filesystem and CLI policy classification plus guarded UTF-8 text file reads and writes.
 - `providers.py`: Provider registry, health checks, and placeholder routing decisions.
 - `agents.py`: Sub-agent brief registry and output reconciliation.
 - `memory.py`: In-memory memory record indexing and search.
@@ -112,6 +112,8 @@ Current endpoints:
 - `POST /tasks/execute`: Creates a deterministic execution run from a task plan.
 - `GET /tasks/runs`: Lists persisted task execution runs.
 - `POST /guardrails/filesystem`: Evaluates filesystem action policy against `rootDir`.
+- `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
+- `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
 - `POST /guardrails/commands`: Classifies CLI command risk.
 - `GET /providers`: Lists configured provider placeholders.
 - `GET /providers/{provider_id}/health`: Returns provider configuration health.
@@ -165,3 +167,4 @@ Current collections:
 - Create `localmcp/` now to reserve the generated-tool boundary without enabling tool execution yet.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Keep provider adapters as placeholders until guardrails, routing policy, credentials, and audit behavior are ready to harden together.
+- Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.

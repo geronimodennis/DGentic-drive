@@ -1,5 +1,11 @@
+import shlex
+import subprocess
+from datetime import UTC, datetime
+
 from dgentic.events import event_log
 from dgentic.schemas import (
+    CommandExecutionRequest,
+    CommandExecutionResult,
     CommandPolicyDecision,
     CommandPolicyRequest,
     CommandRisk,
@@ -146,3 +152,51 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
         metadata=decision.model_dump(),
     )
     return decision
+
+
+def execute_guarded_command(request: CommandExecutionRequest) -> CommandExecutionResult:
+    decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
+    if decision.permission_mode == PermissionMode.blocked:
+        raise PermissionError(decision.reason)
+    if decision.permission_mode == PermissionMode.approval_required and not request.approved:
+        raise PermissionError("Command requires explicit approval before execution.")
+
+    root_dir = get_settings().root_dir.resolve()
+    cwd = request.cwd or root_dir
+    if not cwd.is_absolute():
+        cwd = root_dir / cwd
+    cwd = cwd.resolve()
+    if cwd != root_dir and root_dir not in cwd.parents:
+        raise PermissionError(f"Command cwd resolves outside configured rootDir: {root_dir}")
+
+    started_at = datetime.now(UTC)
+    completed = subprocess.run(
+        shlex.split(request.command, posix=False),
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=request.timeout_seconds,
+        check=False,
+    )
+    duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
+    result = CommandExecutionResult(
+        command=request.command,
+        cwd=cwd,
+        exit_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        permission_mode=decision.permission_mode,
+        duration_ms=duration_ms,
+    )
+    event_log.record(
+        LogEventType.cli,
+        "Executed guarded CLI command.",
+        metadata={
+            "command": request.command,
+            "cwd": str(cwd),
+            "exit_code": completed.returncode,
+            "duration_ms": duration_ms,
+            "permission_mode": decision.permission_mode,
+        },
+    )
+    return result

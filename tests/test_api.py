@@ -137,8 +137,39 @@ def test_provider_routing_prefers_local_when_privacy_is_required() -> None:
 
     assert providers_response.status_code == 200
     assert len(providers_response.json()) >= 2
+    assert {provider["id"] for provider in providers_response.json()} >= {"ollama", "lm-studio"}
     assert route_response.status_code == 200
-    assert route_response.json()["provider_id"] == "local-placeholder"
+    assert route_response.json()["provider_id"] in {"ollama", "lm-studio"}
+    assert route_response.json()["candidate_scores"]
+
+
+def test_guarded_cli_execution_requires_policy_approval(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    safe_response = client.post(
+        "/cli/execute",
+        json={"command": "cmd /c echo hello", "timeout_seconds": 5},
+    )
+    approval_response = client.post(
+        "/cli/execute",
+        json={"command": "git status", "timeout_seconds": 5},
+    )
+    blocked_response = client.post(
+        "/cli/execute",
+        json={"command": "rm -rf important", "timeout_seconds": 5},
+    )
+
+    assert safe_response.status_code == 200
+    assert safe_response.json()["exit_code"] == 0
+    assert "hello" in safe_response.json()["stdout"]
+    assert approval_response.status_code == 403
+    assert blocked_response.status_code == 403
+    get_settings.cache_clear()
 
 
 def test_agent_memory_tool_and_session_registries() -> None:

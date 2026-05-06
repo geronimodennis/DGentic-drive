@@ -1,3 +1,5 @@
+import subprocess
+
 from fastapi import APIRouter, HTTPException
 
 from dgentic.agents import list_agents, reconcile_outputs, spawn_agent
@@ -6,6 +8,7 @@ from dgentic.execution import execution_engine
 from dgentic.guardrails import (
     evaluate_command_policy,
     evaluate_file_access,
+    execute_guarded_command,
     read_guarded_text_file,
     write_guarded_text_file,
 )
@@ -16,6 +19,8 @@ from dgentic.schemas import (
     AgentBrief,
     AgentOutput,
     AgentReconciliation,
+    CommandExecutionRequest,
+    CommandExecutionResult,
     CommandPolicyDecision,
     CommandPolicyRequest,
     FileAccessDecision,
@@ -115,6 +120,18 @@ def write_file(request: FileWriteRequest) -> FileWriteResponse:
 @router.post("/guardrails/commands", response_model=CommandPolicyDecision)
 def check_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     return evaluate_command_policy(request)
+
+
+@router.post("/cli/execute", response_model=CommandExecutionResult)
+def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
+    try:
+        return execute_guarded_command(request)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=408, detail="Command timed out.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/providers", response_model=list[ProviderConfig])

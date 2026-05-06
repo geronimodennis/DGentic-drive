@@ -133,6 +133,9 @@ class ProviderConfig(BaseModel):
     kind: ProviderKind
     base_url: str | None = None
     model_names: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    estimated_latency_ms: int | None = None
+    estimated_cost_usd: float | None = None
     permission_mode: PermissionMode = PermissionMode.approval_required
     enabled: bool = True
 
@@ -141,6 +144,7 @@ class ProviderHealth(BaseModel):
     provider_id: str
     available: bool
     message: str
+    model_names: list[str] = Field(default_factory=list)
     checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -158,6 +162,7 @@ class RoutingDecision(BaseModel):
     reason: str
     score: float
     policy: RoutingRequest
+    candidate_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class AgentBrief(BaseModel):
@@ -186,7 +191,7 @@ class AgentReconciliation(BaseModel):
 
 class ToolManifest(BaseModel):
     name: str
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     description: str
     entrypoint: str
     permission_mode: PermissionMode
@@ -244,6 +249,30 @@ class CommandPolicyDecision(BaseModel):
     risk: CommandRisk
     permission_mode: PermissionMode
     reason: str
+
+
+class CommandExecutionRequest(BaseModel):
+    command: str
+    cwd: Path | None = None
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    approved: bool = False
+
+    @field_validator("command")
+    @classmethod
+    def command_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Command must not be empty.")
+        return value
+
+
+class CommandExecutionResult(BaseModel):
+    command: str
+    cwd: Path
+    exit_code: int
+    stdout: str
+    stderr: str
+    permission_mode: PermissionMode
+    duration_ms: int
 
 
 class MemoryRecord(BaseModel):

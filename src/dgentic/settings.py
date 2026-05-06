@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     root_dir: Path = Field(default=Path("."))
     data_dir: Path = Field(default=Path(".dgentic"))
     autopilot_enabled: bool = False
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    lm_studio_base_url: str = "http://127.0.0.1:1234"
 
 
 @lru_cache

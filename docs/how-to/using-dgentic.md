@@ -68,6 +68,12 @@ curl -X POST http://127.0.0.1:8000/guardrails/commands `
 ```
 
 ```powershell
+curl -X POST http://127.0.0.1:8000/cli/execute `
+  -H "Content-Type: application/json" `
+  -d '{"command":"cmd /c echo hello","timeout_seconds":5}'
+```
+
+```powershell
 curl -X POST http://127.0.0.1:8000/filesystem/write `
   -H "Content-Type: application/json" `
   -d '{"path":"notes/sprint.txt","content":"Sprint note."}'
@@ -83,6 +89,13 @@ curl -X POST http://127.0.0.1:8000/filesystem/read `
 curl -X POST http://127.0.0.1:8000/routing/decide `
   -H "Content-Type: application/json" `
   -d '{"privacy_required":true}'
+```
+
+Provider health checks can probe local Ollama and LM Studio runtimes:
+
+```powershell
+curl http://127.0.0.1:8000/providers/ollama/health
+curl http://127.0.0.1:8000/providers/lm-studio/health
 ```
 
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
@@ -159,9 +172,10 @@ DGentic should persist session state so future sessions can resume with context,
 
 - DGentic has backend MVP contracts, not production autonomy.
 - State is persisted as local JSON collections, but production-grade migrations, indexing, and concurrency controls still need to be added.
-- Provider adapters are placeholders, not live Ollama, LM Studio, or external service integrations.
+- Ollama and LM Studio have local health/model probes, but generation requests are not implemented yet.
+- External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails classify commands but do not yet execute commands through an approval workflow.
+- CLI guardrails can execute safe commands and approved commands inside `rootDir`, but there is not yet a user-facing approval queue.
 - Tool manifests can be registered, but generated tools are not executed in a sandbox yet.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

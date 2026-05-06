@@ -52,8 +52,8 @@ Current modules:
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
-- `guardrails.py`: Filesystem and CLI policy classification plus guarded UTF-8 text file reads and writes.
-- `providers.py`: Provider registry, health checks, and placeholder routing decisions.
+- `guardrails.py`: Filesystem and CLI policy classification plus guarded UTF-8 text file reads, writes, and command execution.
+- `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
 - `agents.py`: Sub-agent brief registry and output reconciliation.
 - `memory.py`: In-memory memory record indexing and search.
 - `tools.py`: Local tool manifest registration.
@@ -115,9 +115,10 @@ Current endpoints:
 - `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
 - `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
 - `POST /guardrails/commands`: Classifies CLI command risk.
-- `GET /providers`: Lists configured provider placeholders.
+- `POST /cli/execute`: Executes allowed or explicitly approved commands inside `rootDir`.
+- `GET /providers`: Lists configured providers with discovered local model names when reachable.
 - `GET /providers/{provider_id}/health`: Returns provider configuration health.
-- `POST /routing/decide`: Returns a basic provider routing decision.
+- `POST /routing/decide`: Returns a scored provider routing decision with candidate scores.
 - `POST /agents`: Registers a running sub-agent brief.
 - `GET /agents`: Lists registered sub-agent briefs.
 - `POST /agents/reconcile`: Reconciles sub-agent output reports.
@@ -166,5 +167,6 @@ Current collections:
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Create `localmcp/` now to reserve the generated-tool boundary without enabling tool execution yet.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
-- Keep provider adapters as placeholders until guardrails, routing policy, credentials, and audit behavior are ready to harden together.
+- Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
+- Execute CLI commands only through command policy evaluation, root-bound working directories, and audit logging. Approval-required commands must pass `approved: true`.

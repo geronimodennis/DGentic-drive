@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 5 Provider Routing And Guarded CLI Pass
+
+Status: local provider discovery, scored routing, and guarded command execution are implemented for the backend MVP.
+
+Completed:
+- Added `DGENTIC_OLLAMA_BASE_URL` and `DGENTIC_LM_STUDIO_BASE_URL` settings.
+- Added live Ollama health/model discovery through `/api/tags`.
+- Added live LM Studio health/model discovery through `/v1/models`.
+- Added provider capability, latency, and cost metadata.
+- Replaced first-enabled routing with scored provider routing and candidate score reporting.
+- Added guarded CLI execution inside `rootDir`.
+- Added blocked-command denial, approval-required command denial, explicit approved execution, timeouts, stdout/stderr capture, exit code capture, duration tracking, and audit logging.
+- Added API endpoint: `POST /cli/execute`.
+- Added tests for scored local routing and CLI policy enforcement.
+- Bumped package and API version to `0.2.0`.
+- Updated README, documentation index, architecture documentation, usage guide, developer setup, release distribution guide, release notes, and progress log.
+
+Verification:
+- `uv run pytest` passed with 10 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Remaining production work:
+- Add chat/completion calls for Ollama and LM Studio.
+- Add external provider adapters with secure credential handling and rate-limit metadata.
+- Add a real approval queue/UI instead of the current `approved: true` API field.
+- Expand CLI policy from executable-level classification to command/argument-aware rules.
+- Add command output truncation, streaming, and redaction policies.
+
+---
+
 ### Sprint 4 Guarded Filesystem Operations Pass
 
 Status: guarded text file read and write operations are available behind root boundary checks.

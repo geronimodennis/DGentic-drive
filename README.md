@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, guarded text file operations, provider routing, agent briefs, memory records, tool manifests, session summaries, event logs, and local JSON state persistence.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, guarded text file operations, guarded CLI execution, local provider probes, scored provider routing, agent briefs, memory records, tool manifests, session summaries, event logs, and local JSON state persistence.
 
 ## Documentation
 
@@ -14,6 +14,7 @@ The current repository contains the project specification, planning documents, a
 - [Developer setup](docs/how-to/developer-setup.md)
 - [Repository architecture](docs/architecture/repository-architecture.md)
 - [Release distribution](docs/how-to/release-distribution.md)
+- [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)
 
 ## Quick Start
@@ -79,7 +80,8 @@ The backend currently exposes:
 - `GET /tasks/runs` for persisted execution run history.
 - `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
 - `POST /filesystem/read` and `POST /filesystem/write` for policy-enforced UTF-8 text file operations inside `rootDir`.
-- `GET /providers`, `GET /providers/{provider_id}/health`, and `POST /routing/decide` for provider routing contracts.
+- `POST /cli/execute` for policy-enforced command execution inside `rootDir`.
+- `GET /providers`, `GET /providers/{provider_id}/health`, and `POST /routing/decide` for Ollama/LM Studio probes and scored provider routing.
 - `POST /agents`, `GET /agents`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
 - `POST /tools` and `GET /tools` for local tool manifest registration.
@@ -114,4 +116,4 @@ Once implemented, DGentic should be used through one or more supported interface
 
 Status: backend MVP sprint surface started.
 
-The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, provider routing placeholders, sub-agent contracts, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, real provider adapters, approval workflow enforcement, richer filesystem operations, controlled tool execution, semantic retrieval, web UI, and VS Code extension work.
+The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, guarded CLI execution, Ollama and LM Studio health/model probes, scored provider routing, sub-agent contracts, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, external provider adapters, interactive approval UX, richer filesystem operations, controlled tool execution, semantic retrieval, web UI, and VS Code extension work.

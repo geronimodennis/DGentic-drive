@@ -78,6 +78,19 @@ class MemoryKind(StrEnum):
     summary = "summary"
 
 
+class ToolTriggerSource(StrEnum):
+    main_agent = "main_agent"
+    sub_agent = "sub_agent"
+    skill = "skill"
+    module = "module"
+
+
+class ToolStatus(StrEnum):
+    active = "active"
+    deprecated = "deprecated"
+    disabled = "disabled"
+
+
 class TaskRequest(BaseModel):
     objective: str = Field(min_length=1, description="The user goal DGentic should plan.")
     context: list[str] = Field(default_factory=list)
@@ -196,7 +209,39 @@ class ToolManifest(BaseModel):
     entrypoint: str
     permission_mode: PermissionMode
     tags: list[str] = Field(default_factory=list)
+    interface: dict[str, Any] = Field(default_factory=dict)
+    status: ToolStatus = ToolStatus.active
+    usage_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    reliability_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    last_used_at: datetime | None = None
+    deprecated_reason: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ToolGenerationRequest(BaseModel):
+    name: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+    description: str = Field(min_length=1)
+    trigger_source: ToolTriggerSource
+    permission_mode: PermissionMode = PermissionMode.approval_required
+    tags: list[str] = Field(default_factory=list)
+    version: str = "0.2.0"
+    source_code: str | None = None
+    interface: dict[str, Any] = Field(default_factory=dict)
+    overwrite: bool = False
+
+
+class ToolGenerationResult(BaseModel):
+    manifest: ToolManifest
+    tool_dir: Path
+    files_created: list[Path]
+    duplicate_detected: bool = False
+
+
+class ToolGovernanceUpdate(BaseModel):
+    status: ToolStatus
+    reason: str | None = None
 
 
 class FileAccessRequest(BaseModel):

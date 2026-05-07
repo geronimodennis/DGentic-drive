@@ -98,6 +98,22 @@ curl http://127.0.0.1:8000/providers/ollama/health
 curl http://127.0.0.1:8000/providers/lm-studio/health
 ```
 
+Generate a reusable local tool:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/tools/generate `
+  -H "Content-Type: application/json" `
+  -d '{"name":"pdf-generator","description":"Generate a PDF from structured input.","trigger_source":"main_agent","permission_mode":"approval_required","tags":["pdf","document"]}'
+```
+
+Deprecate a tool:
+
+```powershell
+curl -X PATCH http://127.0.0.1:8000/tools/pdf-generator/governance `
+  -H "Content-Type: application/json" `
+  -d '{"status":"deprecated","reason":"Replaced by a more reliable tool."}'
+```
+
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
 
 Local MVP state is written to `.dgentic/` by default. Set `DGENTIC_DATA_DIR` to move state elsewhere.
@@ -176,6 +192,6 @@ DGentic should persist session state so future sessions can resume with context,
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
 - CLI guardrails can execute safe commands and approved commands inside `rootDir`, but there is not yet a user-facing approval queue.
-- Tool manifests can be registered, but generated tools are not executed in a sandbox yet.
+- Tools can be generated, registered, indexed, and deprecated, but generated tools are not executed in a sandbox yet.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

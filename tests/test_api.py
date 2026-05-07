@@ -222,6 +222,97 @@ def test_agent_memory_tool_and_session_registries() -> None:
     assert summary_response.status_code == 201
 
 
+def test_dynamic_tool_generation_creates_localmcp_files_and_registry(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/tools/generate",
+        json={
+            "name": "pdf-generator",
+            "description": "Generate a PDF from structured input.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "tags": ["pdf", "document"],
+            "interface": {"input": "dict", "output": "pdf_path"},
+        },
+    )
+    duplicate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "pdf-generator",
+            "description": "Generate a PDF from structured input.",
+            "trigger_source": "sub_agent",
+            "permission_mode": "approval_required",
+            "tags": ["pdf"],
+        },
+    )
+    tools_response = client.get("/tools")
+    memory_response = client.post("/memory/search", json={"tags": ["localmcp"]})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["manifest"]["name"] == "pdf-generator"
+    assert body["manifest"]["status"] == "active"
+    assert body["manifest"]["usage_count"] == 0
+    assert (root_dir / "localmcp" / "pdf-generator" / "tool.py").exists()
+    assert (root_dir / "localmcp" / "pdf-generator" / "wrapper.py").exists()
+    assert (root_dir / "localmcp" / "pdf-generator" / "manifest.json").exists()
+    assert (root_dir / "localmcp" / "pdf-generator" / "README.md").exists()
+    assert duplicate_response.status_code == 409
+    assert any(tool["name"] == "pdf-generator" for tool in tools_response.json())
+    assert any(
+        result["record"]["title"] == "Generated tool: pdf-generator"
+        for result in memory_response.json()
+    )
+    get_settings.cache_clear()
+
+
+def test_dynamic_tool_generation_blocks_invalid_permission_and_deprecates_tool(
+    tmp_path, monkeypatch
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    blocked_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "blocked-tool",
+            "description": "Should not be generated.",
+            "trigger_source": "skill",
+            "permission_mode": "blocked",
+        },
+    )
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "summarizer",
+            "description": "Summarize text payloads.",
+            "trigger_source": "skill",
+            "permission_mode": "autopilot_safe",
+        },
+    )
+    governance_response = client.patch(
+        "/tools/summarizer/governance",
+        json={"status": "deprecated", "reason": "Replaced by a better version."},
+    )
+
+    assert blocked_response.status_code == 403
+    assert generate_response.status_code == 201
+    assert governance_response.status_code == 200
+    assert governance_response.json()["status"] == "deprecated"
+    assert governance_response.json()["deprecated_reason"] == "Replaced by a better version."
+    get_settings.cache_clear()
+
+
 def test_logs_capture_new_backend_activity() -> None:
     client = TestClient(create_app())
 

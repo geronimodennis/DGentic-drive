@@ -243,6 +243,36 @@ Tasks:
 - Implement tool execution wrapper.
 - Add reliability tracking.
 
+### Story 7.3: Fully Implement Dynamic Tool Creation
+
+As a user, I want DGentic to generate, store, register, govern, and reuse local tools when main agents, sub-agents, or skills identify repeatable work.
+
+Acceptance criteria:
+- Tool creation can be triggered by the main agent, sub-agents, or skills/modules through a shared backend contract.
+- Generated tools are written under `rootDir/localmcp/[tool_name]/`.
+- Each generated tool directory includes source code, metadata, an interface wrapper, version information, and documentation.
+- Tool generation uses filesystem guardrails and cannot write outside `rootDir/localmcp/`.
+- Tools are registered in the persisted tool registry and indexed for memory/skill lookup.
+- Tool permission mode is inherited from the triggering context or explicitly classified as `autopilot_safe` or `approval_required`.
+- Duplicate tools are detected before generation by name, tags, description, and interface signature.
+- Tool versions are tracked and new versions do not overwrite existing versions without policy approval.
+- Tool usage count, success count, failure count, last-used timestamp, reliability score, and deprecation status are tracked.
+- Unsafe or unreliable tools can be disabled or deprecated and excluded from reuse.
+- Generated tools are reusable by the main agent and sub-agents.
+- Tests cover generation, duplicate detection, registration, permission classification, governance fields, and root boundary enforcement.
+- README, architecture documentation, usage guide, and progress log are updated when the sprint completes.
+
+Tasks:
+- Define tool generation request, result, interface, governance, and usage schemas.
+- Add `POST /tools/generate` to create tool directories under `rootDir/localmcp/[tool_name]/`.
+- Generate `manifest.json`, source file, interface wrapper, and README for each tool.
+- Add duplicate detection and versioning policy.
+- Persist governance and reliability metadata in the tool registry.
+- Add memory/skill indexing hook for generated tools.
+- Add deprecate/disable endpoint for unsafe tools.
+- Add tests for successful generation and blocked outside-root writes.
+- Add tests for duplicate detection, versioning, permission inheritance, and governance updates.
+
 ## Epic 8: User Interfaces
 
 ### Story 8.1: Build Unified Chat Interface

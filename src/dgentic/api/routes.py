@@ -43,11 +43,14 @@ from dgentic.schemas import (
     TaskPlan,
     TaskRequest,
     TaskRun,
+    ToolGenerationRequest,
+    ToolGenerationResult,
+    ToolGovernanceUpdate,
     ToolManifest,
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
 from dgentic.settings import get_settings
-from dgentic.tools import list_tools, register_tool
+from dgentic.tools import generate_tool, list_tools, register_tool, update_tool_governance
 
 router = APIRouter()
 
@@ -179,9 +182,27 @@ def create_tool(manifest: ToolManifest) -> ToolManifest:
     return register_tool(manifest)
 
 
+@router.post("/tools/generate", response_model=ToolGenerationResult, status_code=201)
+def generate_local_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
+    try:
+        return generate_tool(request)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/tools", response_model=list[ToolManifest])
 def get_tools() -> list[ToolManifest]:
     return list_tools()
+
+
+@router.patch("/tools/{name}/governance", response_model=ToolManifest)
+def update_local_tool_governance(name: str, update: ToolGovernanceUpdate) -> ToolManifest:
+    tool = update_tool_governance(name, update)
+    if tool is None:
+        raise HTTPException(status_code=404, detail=f"Tool not found: {name}")
+    return tool
 
 
 @router.post("/sessions/summary", response_model=SessionSummary, status_code=201)

@@ -112,6 +112,25 @@ Invoke-RestMethod -Uri http://127.0.0.1:8000/providers/ollama/health
 Invoke-RestMethod -Uri http://127.0.0.1:8000/providers/lm-studio/health
 ```
 
+## Generate A Local Tool
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/tools/generate `
+  -ContentType "application/json" `
+  -Body '{"name":"pdf-generator","description":"Generate a PDF from structured input.","trigger_source":"main_agent","permission_mode":"approval_required","tags":["pdf","document"]}'
+```
+
+This creates:
+
+- `localmcp/pdf-generator/tool.py`
+- `localmcp/pdf-generator/wrapper.py`
+- `localmcp/pdf-generator/manifest.json`
+- `localmcp/pdf-generator/README.md`
+
+Generated tools are registered in local JSON state and indexed as memory artifacts.
+
 Read it back:
 
 ```powershell
@@ -148,4 +167,4 @@ uv run ruff format .
 - CLI execution is policy-enforced and root-bound, but there is no interactive approval UI yet.
 - Ollama and LM Studio can be probed for health and models, but chat/completion calls are not implemented yet.
 - Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
-- `localmcp/` is reserved for future generated tools but tool execution is not implemented.
+- Local tools can be generated under `localmcp/`, but tool execution sandboxing is not implemented.

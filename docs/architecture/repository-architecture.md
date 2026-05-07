@@ -56,7 +56,7 @@ Current modules:
 - `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
 - `agents.py`: Sub-agent brief registry and output reconciliation.
 - `memory.py`: In-memory memory record indexing and search.
-- `tools.py`: Local tool manifest registration.
+- `tools.py`: Local tool manifest registration, guarded tool generation, duplicate detection, and governance updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
 - `storage.py`: JSON collection persistence helper for MVP local state.
@@ -64,11 +64,11 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, provider routing, agent and registry APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, provider routing, dynamic tool generation and governance, agent and registry APIs, session summaries, and logs.
 
 ### `localmcp/`
 
-Reserved location for future generated reusable tools. DGentic-created tools should eventually live under:
+Location for generated reusable tools. DGentic-created tools live under:
 
 ```text
 localmcp/[tool_name]/
@@ -125,7 +125,9 @@ Current endpoints:
 - `POST /memory`: Adds an in-memory memory record.
 - `POST /memory/search`: Searches memory records by text and tags.
 - `POST /tools`: Registers a local tool manifest.
+- `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files.
 - `GET /tools`: Lists registered tool manifests.
+- `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
 - `POST /sessions/summary`: Creates a session summary.
 - `GET /sessions/summary`: Lists session summaries.
 - `GET /logs`: Lists recorded events, optionally filtered by event type.
@@ -165,7 +167,7 @@ Current collections:
 - Start with a backend-first monorepo because orchestration, permissions, schemas, and logs define the core product contracts.
 - Keep model-provider execution out of the first slice; the initial planner is deterministic and auditable.
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
-- Create `localmcp/` now to reserve the generated-tool boundary without enabling tool execution yet.
+- Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.

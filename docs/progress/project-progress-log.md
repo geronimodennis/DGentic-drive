@@ -4,6 +4,52 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 6 Dynamic Tool Creation Pass
+
+Status: dynamic local tool generation and governance are implemented for the backend MVP.
+
+Completed:
+- Added tool trigger source and governance status schemas.
+- Expanded tool manifests with interface, status, usage, success, failure, reliability, last-used, and deprecation metadata.
+- Added `POST /tools/generate` to create `rootDir/localmcp/[tool_name]/` directories.
+- Generated `tool.py`, `wrapper.py`, `manifest.json`, and `README.md` for generated tools.
+- Added duplicate detection by name, matching tags plus description, and interface signature.
+- Added permission validation so blocked tools cannot be generated.
+- Registered generated tools in persisted local state.
+- Indexed generated tools as memory artifacts for reuse lookup.
+- Added `PATCH /tools/{name}/governance` for active, deprecated, and disabled status updates.
+- Added tests for generation, file creation, duplicate detection, memory indexing, blocked permissions, and deprecation.
+- Updated README, architecture documentation, usage guide, developer setup, Agile task plan, and progress log.
+
+Verification:
+- `uv run pytest` passed with 12 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Remaining production work:
+- Add sandboxed generated tool execution.
+- Add usage, success, failure, and reliability updates from actual tool runs.
+- Add richer duplicate detection using code/interface similarity.
+- Add multi-version storage where multiple versions of the same tool can coexist.
+- Add UI and approval flow for tool generation and deprecation.
+
+---
+
+### Dynamic Tool Creation Backlog Update
+
+Status: full Dynamic Tool Creation has been added as explicit required work.
+
+Completed:
+- Added Story 7.3 to the Agile task plan for fully implementing Dynamic Tool Creation and Self-Extensibility.
+- Captured trigger sources, tool generation, `rootDir/localmcp/[tool_name]/` storage, registry and memory indexing, permission inheritance, duplicate detection, versioning, usage/reliability tracking, deprecation, reuse, and test requirements.
+
+Next steps:
+- Implement `POST /tools/generate`.
+- Generate tool directories with source, manifest, wrapper, and README files.
+- Add governance metadata, duplicate detection, version policy, memory indexing, and deprecation controls.
+
+---
+
 ### Sprint 5 Provider Routing And Guarded CLI Pass
 
 Status: local provider discovery, scored routing, and guarded command execution are implemented for the backend MVP.

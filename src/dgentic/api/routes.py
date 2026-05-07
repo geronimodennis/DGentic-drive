@@ -187,6 +187,34 @@ def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/cli/runs", response_model=CommandRun, status_code=202)
+def start_cli_run(request: CommandExecutionRequest) -> CommandRun:
+    try:
+        return cli_runtime_service.start_command(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/cli/runs/{run_id}", response_model=CommandRun)
+def get_cli_run(run_id: str) -> CommandRun:
+    run = cli_runtime_service.get_command_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Command run not found: {run_id}")
+    return run
+
+
+@router.post("/cli/runs/{run_id}/cancel", response_model=CommandRun)
+def cancel_cli_run(run_id: str) -> CommandRun:
+    try:
+        return cli_runtime_service.cancel_command_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/cli/approvals", response_model=CommandApproval, status_code=201)
 def create_cli_approval(
     request: CommandExecutionRequest,

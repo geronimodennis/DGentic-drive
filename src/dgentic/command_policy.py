@@ -27,7 +27,36 @@ BLOCKED_COMMANDS = {
     "rmdir",
     "del",
 }
-APPROVAL_COMMANDS = {"git", "pip", "uv", "npm", "pnpm", "yarn", "python", "powershell"}
+APPROVAL_COMMANDS = {
+    "git",
+    "git.exe",
+    "pip",
+    "pip.exe",
+    "uv",
+    "uv.exe",
+    "npm",
+    "npm.cmd",
+    "pnpm",
+    "pnpm.cmd",
+    "yarn",
+    "yarn.cmd",
+    "python",
+    "python.exe",
+    "powershell",
+    "powershell.exe",
+    "pwsh",
+    "pwsh.exe",
+}
+SHELL_COMMAND_FLAGS = {
+    "cmd": {"/c"},
+    "cmd.exe": {"/c"},
+    "sh": {"-c"},
+    "bash": {"-c"},
+    "powershell": {"-command", "-c"},
+    "powershell.exe": {"-command", "-c"},
+    "pwsh": {"-command", "-c"},
+    "pwsh.exe": {"-command", "-c"},
+}
 
 _rules = JsonCollection("cli-command-policy-rules", CommandPolicyRule)
 
@@ -91,7 +120,7 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
             _record_decision(decision)
             return decision
 
-    decision = _default_decision(command, parsed.executable)
+    decision = _default_decision(command, parsed)
     _record_decision(decision)
     return decision
 
@@ -150,7 +179,28 @@ def _decision_from_rule(command: str, rule: CommandPolicyRule) -> CommandPolicyD
     )
 
 
-def _default_decision(command: str, executable: str) -> CommandPolicyDecision:
+def _default_decision(command: str, parsed: ParsedCommand) -> CommandPolicyDecision:
+    executable = parsed.executable
+    inner = _parse_inner_shell_command(parsed)
+    if inner is not None:
+        inner_decision = _default_decision(command, inner)
+        if inner_decision.permission_mode == PermissionMode.blocked:
+            inner_decision.reason = (
+                f"Inner shell command {inner.executable} is blocked by the command policy."
+            )
+        elif inner_decision.permission_mode == PermissionMode.approval_required:
+            inner_decision.reason = (
+                f"Inner shell command {inner.executable} requires approval by the command policy."
+            )
+        return inner_decision
+
+    if executable in SHELL_COMMAND_FLAGS:
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason=f"{executable} requires approval when no inspectable inner command is present.",
+        )
     if executable in BLOCKED_COMMANDS:
         return CommandPolicyDecision(
             command=command,
@@ -171,6 +221,19 @@ def _default_decision(command: str, executable: str) -> CommandPolicyDecision:
         permission_mode=PermissionMode.autopilot_safe,
         reason="Command is classified as read-only or low risk.",
     )
+
+
+def _parse_inner_shell_command(parsed: ParsedCommand) -> ParsedCommand | None:
+    flags = SHELL_COMMAND_FLAGS.get(parsed.executable)
+    if flags is None:
+        return None
+
+    for index, argument in enumerate(parsed.arguments):
+        if argument.strip().strip("\"'").lower() in flags and index + 1 < len(parsed.arguments):
+            inner_command = " ".join(parsed.arguments[index + 1 :]).strip().strip("\"'")
+            if inner_command:
+                return parse_command(inner_command)
+    return None
 
 
 def _risk_for_permission(permission_mode: PermissionMode) -> CommandRisk:

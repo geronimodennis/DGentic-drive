@@ -12,6 +12,7 @@ This folder contains the source documentation for the DGentic project.
 - [Developer setup](how-to/developer-setup.md): Local backend setup, run, test, and lint commands.
 - [Repository architecture](architecture/repository-architecture.md): Current monorepo layout and architecture decisions.
 - [Release distribution](how-to/release-distribution.md): Build and verify release artifacts.
+- [0.2.2 release notes](releases/0.2.2.md): Asynchronous CLI runs, polling, cancellation, and shell-wrapper policy hardening release notes.
 - [0.2.1 release notes](releases/0.2.1.md): Configurable CLI policy rules and agentic workflow documentation release notes.
 - [0.2.0 release notes](releases/0.2.0.md): Provider probes, scored routing, guarded CLI execution, persistence, and filesystem release notes.
 - [0.1.0 release notes](releases/0.1.0.md): First backend foundation release notes.

@@ -97,6 +97,17 @@ def test_command_policy_rules_can_be_disabled(policy_state) -> None:
     assert allowed.permission_mode == PermissionMode.autopilot_safe
 
 
+def test_shell_wrapped_blocked_commands_do_not_bypass_policy(policy_state) -> None:
+    _root_dir, _data_dir = policy_state
+
+    blocked = evaluate_command_policy(CommandPolicyRequest(command="cmd /c del important.txt"))
+    safe_shell_read = evaluate_command_policy(CommandPolicyRequest(command="cmd /c echo hello"))
+
+    assert blocked.permission_mode == PermissionMode.blocked
+    assert "Inner shell command del is blocked" in blocked.reason
+    assert safe_shell_read.permission_mode == PermissionMode.autopilot_safe
+
+
 def test_cli_runtime_honors_argument_aware_policy_rules(policy_state) -> None:
     from dgentic.cli_runtime import CliRuntimeService
 

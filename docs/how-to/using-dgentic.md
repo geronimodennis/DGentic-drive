@@ -91,6 +91,22 @@ curl -X POST http://127.0.0.1:8000/cli/execute `
   -d '{"command":"cmd /c echo hello","timeout_seconds":5}'
 ```
 
+Start, poll, and cancel an asynchronous CLI run:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/runs `
+  -H "Content-Type: application/json" `
+  -d '{"command":"python -c \"import time; time.sleep(30)\"","approved":true,"timeout_seconds":60}'
+```
+
+```powershell
+curl http://127.0.0.1:8000/cli/runs/[run_id]
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/runs/[run_id]/cancel
+```
+
 Queue, approve, and execute an approval-required CLI command:
 
 ```powershell
@@ -243,7 +259,7 @@ DGentic should persist session state so future sessions can resume with context,
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can configure persisted policy rules, queue, approve, deny, execute, and persist command runs, but there is not yet a user-facing approval UI, cancellation API, or streaming/polling output API.
+- CLI guardrails can configure persisted policy rules, queue, approve, deny, execute, start asynchronous runs, poll run status, cancel process-local runs, and persist command runs, but there is not yet a user-facing approval UI, streaming output API, restart-resilient process supervision, or agent/context-aware permission model.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

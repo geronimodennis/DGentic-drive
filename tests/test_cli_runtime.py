@@ -1,8 +1,14 @@
 import subprocess
+import time
 
 import pytest
 
-from dgentic.cli_runtime import CliRuntimeService, CommandApprovalStatus, sanitize_output
+from dgentic.cli_runtime import (
+    CliRuntimeService,
+    CommandApprovalStatus,
+    CommandRunStatus,
+    sanitize_output,
+)
 from dgentic.schemas import CommandExecutionRequest, PermissionMode
 from dgentic.settings import get_settings
 
@@ -159,3 +165,58 @@ def test_sanitize_output_redacts_before_truncating() -> None:
     assert "rosebud" not in output
     assert "TOKEN=[REDACTED]" in output
     assert truncated is True
+
+
+def test_async_command_run_can_be_polled_after_completion(runtime) -> None:
+    service, _root_dir, data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command="python -c \"print('TOKEN=abc123')\"",
+            approved=True,
+            timeout_seconds=5,
+        )
+    )
+
+    assert run.status == CommandRunStatus.running
+    for _attempt in range(40):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.status == CommandRunStatus.completed:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Async command did not complete.")
+
+    assert polled.exit_code == 0
+    assert "TOKEN=[REDACTED]" in polled.stdout
+    assert "abc123" not in polled.stdout
+    assert polled.completed_at is not None
+    assert (data_dir / "cli-command-runs.json").exists()
+
+
+def test_async_command_run_can_be_cancelled(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command='python -c "import time; time.sleep(10)"',
+            approved=True,
+            timeout_seconds=30,
+        )
+    )
+    cancelled = service.cancel_command_run(run.id)
+
+    assert cancelled.status == CommandRunStatus.cancelled
+    assert cancelled.cancelled_at is not None
+    for _attempt in range(40):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.completed_at is not None:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Cancelled command did not finalize.")
+
+    assert polled.status == CommandRunStatus.cancelled
+    assert polled.exit_code is not None

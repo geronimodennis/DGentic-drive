@@ -4,6 +4,62 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Release Distribution 0.2.2
+
+Status: DGentic 0.2.2 release distribution created.
+
+Completed:
+- Bumped package, API, and backend `__version__` metadata to `0.2.2`.
+- Added release notes in `docs/releases/0.2.2.md`.
+- Built source distribution: `dist/dgentic-0.2.2.tar.gz`.
+- Built wheel distribution: `dist/dgentic-0.2.2-py3-none-any.whl`.
+- Updated artifact checksums in `dist/SHA256SUMS.txt`.
+- Created release bundle: `releases/dgentic-0.2.2.zip`.
+- Updated release distribution documentation.
+
+Verification:
+- `uv run pytest` passed with 40 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+- `uv build` created both wheel and source distribution.
+- Clean virtual environment install from `dist/dgentic-0.2.2-py3-none-any.whl` succeeded.
+- Packaged `dgentic-server` command started successfully on port 8012.
+- Packaged `/health` endpoint returned `status: ok`.
+
+Artifact hashes:
+- `dgentic-0.2.2.tar.gz`: `E9018A01F03A2E0E73782292D2FD276A7890E8B0AA87974CC6A55C1683CA0F2F`
+- `dgentic-0.2.2-py3-none-any.whl`: `2216092DB89ED7A1A5830676DA9911CD3F9B57D74C20917C45C1D4687C556376`
+- `dgentic-0.2.2.zip`: `80EEF95E4837BEFC0B77368800CF8EAEABE01EE5A4DB6395729D60B0BBC9EB8A`
+
+---
+
+### CLI Async Run And Cancellation Pass
+
+Status: asynchronous CLI run polling and process-local cancellation are implemented for the backend MVP.
+
+Completed:
+- Added `CommandRunStatus` with `running`, `completed`, `timed_out`, and `cancelled` states.
+- Added asynchronous CLI command start using persisted run records before process execution.
+- Added command polling by run id.
+- Added process-local cancellation for running commands.
+- Added API endpoints: `POST /cli/runs`, `GET /cli/runs/{run_id}`, and `POST /cli/runs/{run_id}/cancel`.
+- Hardened default command policy so common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations are inspected for blocked inner commands.
+- Preserved existing synchronous `/cli/execute` behavior.
+- Added tests for asynchronous completion, polling, cancellation, API cancellation, and shell-wrapped blocked command detection.
+- Updated README, architecture documentation, usage guide, developer setup guide, Agile task plan, and progress log.
+
+Verification:
+- `uv run pytest tests/test_cli_runtime.py tests/test_command_policy.py tests/test_api.py -q` passed with 30 tests.
+
+Remaining production work:
+- Add streaming command output.
+- Add restart-resilient process supervision and stale-running reconciliation.
+- Add agent/context-aware CLI permissions.
+- Add controlled and auditable command environment variables.
+- Broaden safe parsing validation across Windows and POSIX execution modes.
+
+---
+
 ### Release Distribution 0.2.1
 
 Status: DGentic 0.2.1 release distribution created.
@@ -50,7 +106,7 @@ Verification:
 - `uv run pytest tests/test_command_policy.py tests/test_api.py -q` passed with 20 tests.
 
 Remaining production work:
-- Add CLI cancellation and output streaming/polling.
+- Add streaming command output and restart-resilient process supervision.
 - Add agent/context-aware CLI permissions.
 - Add controlled and auditable command environment variables.
 - Broaden safe parsing validation across Windows and POSIX execution modes.
@@ -100,7 +156,7 @@ Verification:
 - `uv run ruff format --check .` passed.
 
 Remaining production work:
-- Add CLI cancellation and output streaming/polling.
+- Add streaming command output and restart-resilient process supervision.
 - Add agent/context-aware CLI permissions and controlled command environments.
 - Add external provider adapters and credential management.
 - Add stronger tool sandbox isolation.
@@ -117,7 +173,7 @@ Completed:
 - Captured approval records, approve/deny endpoints, persisted command run history, configurable command policy, argument-aware rules, safe parsing, output truncation/redaction, streaming or polling, cancellation, agent-aware permissions, environment controls, root boundary enforcement, tests, and documentation requirements.
 
 Next steps:
-- Add CLI cancellation and output streaming/polling.
+- Add streaming command output and restart-resilient process supervision.
 - Add agent/context-aware CLI permissions and controlled command environments.
 - Broaden safe parsing validation across Windows and POSIX execution modes.
 
@@ -195,7 +251,7 @@ Remaining production work:
 - Add chat/completion calls for Ollama and LM Studio.
 - Add external provider adapters with secure credential handling and rate-limit metadata.
 - Add a real approval queue/UI instead of the current `approved: true` API field.
-- Add command cancellation and output streaming/polling policies.
+- Add streaming command output and restart-resilient process supervision policies.
 - Add agent/context-aware CLI permissions and controlled command environments.
 
 ---

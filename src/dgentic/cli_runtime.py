@@ -1,10 +1,12 @@
 import os
 import re
 import shlex
+import signal
 import subprocess
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from threading import Lock, Thread
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -14,6 +16,7 @@ from dgentic.guardrails import evaluate_command_policy
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandExecutionResult,
+    CommandPolicyDecision,
     CommandPolicyRequest,
     LogEventType,
     PermissionMode,
@@ -34,6 +37,13 @@ class CommandApprovalStatus(StrEnum):
     approved = "approved"
     denied = "denied"
     executed = "executed"
+
+
+class CommandRunStatus(StrEnum):
+    running = "running"
+    completed = "completed"
+    timed_out = "timed_out"
+    cancelled = "cancelled"
 
 
 class CommandApproval(BaseModel):
@@ -59,15 +69,18 @@ class CommandRun(BaseModel):
     approval_id: str | None = None
     command: str
     cwd: Path
-    exit_code: int
-    stdout: str
-    stderr: str
+    status: CommandRunStatus = CommandRunStatus.completed
+    process_id: int | None = None
+    exit_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
     stdout_truncated: bool = False
     stderr_truncated: bool = False
     permission_mode: PermissionMode
     duration_ms: int
     started_at: datetime
-    completed_at: datetime
+    completed_at: datetime | None = None
+    cancelled_at: datetime | None = None
 
 
 def redact_sensitive_values(text: str) -> str:
@@ -110,6 +123,48 @@ def _command_args(command: str) -> str | list[str]:
     return shlex.split(command)
 
 
+def _popen_kwargs(cwd: Path) -> dict:
+    kwargs = {
+        "cwd": cwd,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    elif os.name != "nt":
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        process.terminate()
+        if process.pid is not None:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        if process.poll() is None:
+            process.kill()
+        return
+
+    if process.pid is not None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.terminate()
+    else:
+        process.terminate()
+
+
 def _text_output(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -123,6 +178,9 @@ class CliRuntimeService:
         self.max_output_chars = max_output_chars
         self._approvals = JsonCollection("cli-approvals", CommandApproval)
         self._runs = JsonCollection("cli-command-runs", CommandRun)
+        self._active_processes: dict[str, subprocess.Popen] = {}
+        self._cancelled_run_ids: set[str] = set()
+        self._active_lock = Lock()
 
     def create_approval(
         self,
@@ -240,6 +298,83 @@ class CliRuntimeService:
         result, _run = self._execute_request(request, approval_id=None)
         return result
 
+    def start_command(self, request: CommandExecutionRequest) -> CommandRun:
+        decision, cwd = self._authorize_request(request)
+        started_at = datetime.now(UTC)
+        process = subprocess.Popen(
+            _command_args(decision.command),
+            **_popen_kwargs(cwd),
+        )
+        run = CommandRun(
+            id=f"cmdrun-{uuid4()}",
+            command=decision.command,
+            cwd=cwd,
+            status=CommandRunStatus.running,
+            process_id=process.pid,
+            permission_mode=decision.permission_mode,
+            duration_ms=0,
+            started_at=started_at,
+        )
+        self._runs.upsert(run)
+        with self._active_lock:
+            self._active_processes[run.id] = process
+
+        event_log.record(
+            LogEventType.cli,
+            "Started asynchronous CLI command run.",
+            subject_id=run.id,
+            metadata={
+                "command": redact_sensitive_values(run.command),
+                "cwd": str(run.cwd),
+                "process_id": run.process_id,
+                "permission_mode": run.permission_mode,
+            },
+        )
+        Thread(
+            target=self._wait_for_process,
+            args=(run.id, process, request.timeout_seconds, started_at),
+            daemon=True,
+        ).start()
+        return run
+
+    def get_command_run(self, run_id: str) -> CommandRun | None:
+        return self._runs.get(run_id)
+
+    def cancel_command_run(self, run_id: str) -> CommandRun:
+        run = self._get_run_or_raise(run_id)
+        if run.status != CommandRunStatus.running:
+            raise ValueError(
+                f"Only running commands can be cancelled; current status is {run.status}."
+            )
+
+        with self._active_lock:
+            process = self._active_processes.get(run_id)
+            self._cancelled_run_ids.add(run_id)
+
+        if process is None:
+            with self._active_lock:
+                self._cancelled_run_ids.discard(run_id)
+            raise ValueError(
+                "Command run is marked running but is not cancellable in this process."
+            )
+
+        _terminate_process_tree(process)
+        now = datetime.now(UTC)
+        run.status = CommandRunStatus.cancelled
+        run.exit_code = process.returncode if process.returncode is not None else -1
+        run.stderr = "Command cancellation requested."
+        run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
+        run.cancelled_at = now
+        run.completed_at = now
+        self._runs.upsert(run)
+        event_log.record(
+            LogEventType.cli,
+            "Cancellation requested for CLI command run.",
+            subject_id=run.id,
+            metadata={"process_id": run.process_id},
+        )
+        return run
+
     def list_approvals(
         self,
         status: CommandApprovalStatus | str | None = None,
@@ -253,19 +388,24 @@ class CliRuntimeService:
     def list_command_runs(self) -> list[CommandRun]:
         return self._runs.list()
 
+    def _authorize_request(
+        self,
+        request: CommandExecutionRequest,
+    ) -> tuple[CommandPolicyDecision, Path]:
+        decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
+        if decision.permission_mode == PermissionMode.blocked:
+            raise PermissionError(decision.reason)
+        if decision.permission_mode == PermissionMode.approval_required and not request.approved:
+            raise PermissionError("Command requires explicit approval before execution.")
+        return decision, resolve_command_cwd(request.cwd)
+
     def _execute_request(
         self,
         request: CommandExecutionRequest,
         *,
         approval_id: str | None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
-        decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
-        if decision.permission_mode == PermissionMode.blocked:
-            raise PermissionError(decision.reason)
-        if decision.permission_mode == PermissionMode.approval_required and not request.approved:
-            raise PermissionError("Command requires explicit approval before execution.")
-
-        cwd = resolve_command_cwd(request.cwd)
+        decision, cwd = self._authorize_request(request)
         started_at = datetime.now(UTC)
         try:
             completed = subprocess.run(
@@ -291,6 +431,7 @@ class CliRuntimeService:
                 permission_mode=decision.permission_mode,
                 duration_ms=duration_ms,
                 started_at=started_at,
+                status=CommandRunStatus.timed_out,
             )
             raise
 
@@ -319,6 +460,7 @@ class CliRuntimeService:
         permission_mode: PermissionMode,
         duration_ms: int,
         started_at: datetime,
+        status: CommandRunStatus = CommandRunStatus.completed,
     ) -> tuple[CommandExecutionResult, CommandRun]:
         sanitized_stdout, stdout_truncated = sanitize_output(
             stdout,
@@ -334,6 +476,7 @@ class CliRuntimeService:
             approval_id=approval_id,
             command=command,
             cwd=cwd,
+            status=status,
             exit_code=exit_code,
             stdout=sanitized_stdout,
             stderr=sanitized_stderr,
@@ -371,11 +514,120 @@ class CliRuntimeService:
         )
         return result, run
 
+    def _wait_for_process(
+        self,
+        run_id: str,
+        process: subprocess.Popen,
+        timeout_seconds: int,
+        started_at: datetime,
+    ) -> None:
+        status = CommandRunStatus.completed
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            stdout = _text_output(exc.stdout)
+            stderr = _text_output(exc.stderr)
+            with self._active_lock:
+                was_cancelled = run_id in self._cancelled_run_ids
+            if was_cancelled:
+                status = CommandRunStatus.cancelled
+            else:
+                status = CommandRunStatus.timed_out
+            if process.poll() is None:
+                process.kill()
+            timeout_stdout, timeout_stderr = process.communicate()
+            stdout = f"{stdout}{_text_output(timeout_stdout)}"
+            stderr = f"{stderr}{_text_output(timeout_stderr)}"
+            if was_cancelled:
+                cancel_message = "Command was cancelled."
+                stderr = f"{stderr}\n{cancel_message}" if stderr else cancel_message
+            else:
+                timeout_message = f"Command timed out after {timeout_seconds} seconds."
+                stderr = f"{stderr}\n{timeout_message}" if stderr else timeout_message
+        else:
+            with self._active_lock:
+                was_cancelled = run_id in self._cancelled_run_ids
+            if was_cancelled:
+                status = CommandRunStatus.cancelled
+
+        with self._active_lock:
+            self._active_processes.pop(run_id, None)
+            self._cancelled_run_ids.discard(run_id)
+
+        exit_code = process.returncode
+        if exit_code is None:
+            exit_code = -1
+        duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
+        self._finalize_async_run(
+            run_id=run_id,
+            exit_code=exit_code,
+            stdout=_text_output(stdout),
+            stderr=_text_output(stderr),
+            status=status,
+            duration_ms=duration_ms,
+        )
+
+    def _finalize_async_run(
+        self,
+        *,
+        run_id: str,
+        exit_code: int,
+        stdout: str,
+        stderr: str,
+        status: CommandRunStatus,
+        duration_ms: int,
+    ) -> None:
+        run = self._runs.get(run_id)
+        if run is None:
+            return
+
+        sanitized_stdout, stdout_truncated = sanitize_output(
+            stdout,
+            max_chars=self.max_output_chars,
+        )
+        sanitized_stderr, stderr_truncated = sanitize_output(
+            stderr,
+            max_chars=self.max_output_chars,
+        )
+        completed_at = datetime.now(UTC)
+        run.status = status
+        run.exit_code = exit_code
+        run.stdout = sanitized_stdout
+        run.stderr = sanitized_stderr
+        run.stdout_truncated = stdout_truncated
+        run.stderr_truncated = stderr_truncated
+        run.duration_ms = duration_ms
+        run.completed_at = completed_at
+        if status == CommandRunStatus.cancelled and run.cancelled_at is None:
+            run.cancelled_at = completed_at
+        self._runs.upsert(run)
+        event_log.record(
+            LogEventType.cli,
+            "Finalized asynchronous CLI command run.",
+            subject_id=run.id,
+            metadata={
+                "command": redact_sensitive_values(run.command),
+                "cwd": str(run.cwd),
+                "exit_code": exit_code,
+                "duration_ms": duration_ms,
+                "permission_mode": run.permission_mode,
+                "status": run.status,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+            },
+        )
+
     def _get_approval_or_raise(self, approval_id: str) -> CommandApproval:
         approval = self._approvals.get(approval_id)
         if approval is None:
             raise KeyError(f"Command approval not found: {approval_id}")
         return approval
+
+    def _get_run_or_raise(self, run_id: str) -> CommandRun:
+        run = self._runs.get(run_id)
+        if run is None:
+            raise KeyError(f"Command run not found: {run_id}")
+        return run
 
 
 cli_runtime_service = CliRuntimeService()

@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from dgentic.main import create_app
@@ -249,6 +251,45 @@ def test_cli_policy_rule_api_persists_and_controls_command_decisions(tmp_path, m
     assert update_response.status_code == 200
     assert update_response.json()["enabled"] is False
     assert disabled_decision_response.json()["permission_mode"] == "autopilot_safe"
+    get_settings.cache_clear()
+
+
+def test_cli_async_run_api_polls_and_cancels(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    start_response = client.post(
+        "/cli/runs",
+        json={
+            "command": 'python -c "import time; time.sleep(10)"',
+            "approved": True,
+            "timeout_seconds": 30,
+        },
+    )
+    run_id = start_response.json()["id"]
+    poll_response = client.get(f"/cli/runs/{run_id}")
+    cancel_response = client.post(f"/cli/runs/{run_id}/cancel")
+
+    assert start_response.status_code == 202
+    assert start_response.json()["status"] == "running"
+    assert poll_response.status_code == 200
+    assert poll_response.json()["id"] == run_id
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    for _attempt in range(40):
+        final_response = client.get(f"/cli/runs/{run_id}")
+        if final_response.json()["completed_at"] is not None:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Cancelled API command did not finalize.")
+
+    assert final_response.json()["status"] == "cancelled"
     get_settings.cache_clear()
 
 

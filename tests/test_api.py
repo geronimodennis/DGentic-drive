@@ -172,6 +172,40 @@ def test_guarded_cli_execution_requires_policy_approval(tmp_path, monkeypatch) -
     get_settings.cache_clear()
 
 
+def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+    )
+    approval_id = create_response.json()["id"]
+    list_response = client.get("/cli/approvals?status=pending")
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
+    runs_response = client.get("/cli/runs")
+
+    assert create_response.status_code == 201
+    assert create_response.json()["requested_by"] == "tester"
+    assert list_response.status_code == 200
+    assert any(item["id"] == approval_id for item in list_response.json())
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+    assert execute_response.status_code == 200
+    assert execute_response.json()["exit_code"] == 0
+    assert runs_response.status_code == 200
+    assert any(run["approval_id"] == approval_id for run in runs_response.json())
+    get_settings.cache_clear()
+
+
 def test_agent_memory_tool_and_session_registries() -> None:
     client = TestClient(create_app())
 
@@ -220,6 +254,45 @@ def test_agent_memory_tool_and_session_registries() -> None:
     assert search_response.json()[0]["record"]["title"] == "Guardrail decision"
     assert tool_response.status_code == 201
     assert summary_response.status_code == 201
+
+
+def test_agent_lifecycle_tracks_parent_child_and_completion(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    parent_response = client.post(
+        "/agents",
+        json={
+            "role": "planner",
+            "task": "Coordinate implementation.",
+            "expected_output": "Work plan.",
+        },
+    )
+    parent_id = parent_response.json()["id"]
+    child_response = client.post(
+        "/agents",
+        json={
+            "role": "worker",
+            "task": "Implement a bounded slice.",
+            "parent_agent_id": parent_id,
+            "expected_output": "Changed files and tests.",
+        },
+    )
+    status_response = client.patch(
+        f"/agents/{child_response.json()['id']}/status",
+        json={"status": "completed", "note": "Finished implementation."},
+    )
+    children_response = client.get(f"/agents/{parent_id}/children")
+
+    assert parent_response.status_code == 201
+    assert child_response.status_code == 201
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "completed"
+    assert status_response.json()["completed_at"] is not None
+    assert children_response.status_code == 200
+    assert children_response.json()[0]["parent_agent_id"] == parent_id
+    get_settings.cache_clear()
 
 
 def test_dynamic_tool_generation_creates_localmcp_files_and_registry(tmp_path, monkeypatch) -> None:
@@ -311,6 +384,55 @@ def test_dynamic_tool_generation_blocks_invalid_permission_and_deprecates_tool(
     assert governance_response.json()["status"] == "deprecated"
     assert governance_response.json()["deprecated_reason"] == "Replaced by a better version."
     get_settings.cache_clear()
+
+
+def test_generated_tool_execute_api_updates_reliability(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "echo-tool",
+            "description": "Echo payloads.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+        },
+    )
+    execute_response = client.post(
+        "/tools/echo-tool/execute",
+        json={"payload": {"value": 42}},
+    )
+    tools_response = client.get("/tools")
+
+    assert generate_response.status_code == 201
+    assert execute_response.status_code == 200
+    assert execute_response.json()["exit_code"] == 0
+    assert execute_response.json()["parsed_output"]["payload"] == {"value": 42}
+    stored = next(tool for tool in tools_response.json() if tool["name"] == "echo-tool")
+    assert stored["usage_count"] == 1
+    assert stored["success_count"] == 1
+    assert stored["reliability_score"] == 1.0
+    get_settings.cache_clear()
+
+
+def test_provider_generate_api_rejects_unsupported_provider() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "unknown",
+            "model": "local-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
 
 
 def test_logs_capture_new_backend_activity() -> None:

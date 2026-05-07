@@ -182,11 +182,20 @@ class AgentBrief(BaseModel):
     id: str = ""
     role: str
     task: str
+    parent_agent_id: str | None = None
+    task_id: str | None = None
     context: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     required_data: list[str] = Field(default_factory=list)
     expected_output: str
     status: AgentStatus = AgentStatus.pending
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+
+
+class AgentStatusUpdate(BaseModel):
+    status: AgentStatus
+    note: str | None = None
 
 
 class AgentOutput(BaseModel):
@@ -242,6 +251,12 @@ class ToolGenerationResult(BaseModel):
 class ToolGovernanceUpdate(BaseModel):
     status: ToolStatus
     reason: str | None = None
+
+
+class ToolExecutionRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    approved: bool = False
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
 
 
 class FileAccessRequest(BaseModel):
@@ -318,6 +333,11 @@ class CommandExecutionResult(BaseModel):
     stderr: str
     permission_mode: PermissionMode
     duration_ms: int
+
+
+class CommandApprovalDecisionRequest(BaseModel):
+    decided_by: str | None = None
+    reason: str | None = None
 
 
 class MemoryRecord(BaseModel):

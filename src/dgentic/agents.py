@@ -1,7 +1,15 @@
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from dgentic.events import event_log
-from dgentic.schemas import AgentBrief, AgentOutput, AgentReconciliation, AgentStatus, LogEventType
+from dgentic.schemas import (
+    AgentBrief,
+    AgentOutput,
+    AgentReconciliation,
+    AgentStatus,
+    AgentStatusUpdate,
+    LogEventType,
+)
 from dgentic.storage import JsonCollection
 
 _agents = JsonCollection("agents", AgentBrief)
@@ -23,6 +31,31 @@ def spawn_agent(brief: AgentBrief) -> AgentBrief:
 
 def list_agents() -> list[AgentBrief]:
     return _agents.list()
+
+
+def get_agent(agent_id: str) -> AgentBrief | None:
+    return _agents.get(agent_id)
+
+
+def list_child_agents(parent_agent_id: str) -> list[AgentBrief]:
+    return [agent for agent in _agents.list() if agent.parent_agent_id == parent_agent_id]
+
+
+def update_agent_status(agent_id: str, update: AgentStatusUpdate) -> AgentBrief | None:
+    agent = get_agent(agent_id)
+    if agent is None:
+        return None
+    terminal_statuses = {AgentStatus.completed, AgentStatus.failed, AgentStatus.cancelled}
+    completed_at = datetime.now(UTC) if update.status in terminal_statuses else None
+    updated = agent.model_copy(update={"status": update.status, "completed_at": completed_at})
+    _agents.upsert(updated)
+    event_log.record(
+        LogEventType.agent,
+        "Updated agent lifecycle status.",
+        subject_id=agent_id,
+        metadata={"status": update.status, "note": update.note},
+    )
+    return updated
 
 
 def reconcile_outputs(outputs: list[AgentOutput]) -> AgentReconciliation:

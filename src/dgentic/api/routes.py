@@ -2,23 +2,42 @@ import subprocess
 
 from fastapi import APIRouter, HTTPException
 
-from dgentic.agents import list_agents, reconcile_outputs, spawn_agent
+from dgentic.agents import (
+    get_agent,
+    list_agents,
+    list_child_agents,
+    reconcile_outputs,
+    spawn_agent,
+    update_agent_status,
+)
+from dgentic.cli_runtime import (
+    CommandApproval,
+    CommandApprovalStatus,
+    CommandRun,
+    cli_runtime_service,
+)
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import (
     evaluate_command_policy,
     evaluate_file_access,
-    execute_guarded_command,
     read_guarded_text_file,
     write_guarded_text_file,
 )
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
+from dgentic.provider_runtime import (
+    ProviderGenerationRequest,
+    ProviderGenerationResult,
+    generate_provider_completion,
+)
 from dgentic.providers import check_provider_health, choose_provider, list_providers
 from dgentic.schemas import (
     AgentBrief,
     AgentOutput,
     AgentReconciliation,
+    AgentStatusUpdate,
+    CommandApprovalDecisionRequest,
     CommandExecutionRequest,
     CommandExecutionResult,
     CommandPolicyDecision,
@@ -43,6 +62,7 @@ from dgentic.schemas import (
     TaskPlan,
     TaskRequest,
     TaskRun,
+    ToolExecutionRequest,
     ToolGenerationRequest,
     ToolGenerationResult,
     ToolGovernanceUpdate,
@@ -50,6 +70,7 @@ from dgentic.schemas import (
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
 from dgentic.settings import get_settings
+from dgentic.tool_runtime import ToolExecutionResult, execute_tool
 from dgentic.tools import generate_tool, list_tools, register_tool, update_tool_governance
 
 router = APIRouter()
@@ -128,13 +149,78 @@ def check_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision
 @router.post("/cli/execute", response_model=CommandExecutionResult)
 def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
     try:
-        return execute_guarded_command(request)
+        return cli_runtime_service.execute_command(request)
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=408, detail="Command timed out.") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/cli/approvals", response_model=CommandApproval, status_code=201)
+def create_cli_approval(
+    request: CommandExecutionRequest,
+    requested_by: str | None = None,
+) -> CommandApproval:
+    try:
+        return cli_runtime_service.create_approval(request, requested_by=requested_by)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/cli/approvals", response_model=list[CommandApproval])
+def get_cli_approvals(status: CommandApprovalStatus | None = None) -> list[CommandApproval]:
+    return cli_runtime_service.list_approvals(status)
+
+
+@router.post("/cli/approvals/{approval_id}/approve", response_model=CommandApproval)
+def approve_cli_approval(
+    approval_id: str,
+    request: CommandApprovalDecisionRequest,
+) -> CommandApproval:
+    try:
+        return cli_runtime_service.approve_approval(approval_id, decided_by=request.decided_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/cli/approvals/{approval_id}/deny", response_model=CommandApproval)
+def deny_cli_approval(
+    approval_id: str,
+    request: CommandApprovalDecisionRequest,
+) -> CommandApproval:
+    try:
+        return cli_runtime_service.deny_approval(
+            approval_id,
+            decided_by=request.decided_by,
+            reason=request.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/cli/approvals/{approval_id}/execute", response_model=CommandExecutionResult)
+def execute_cli_approval(approval_id: str) -> CommandExecutionResult:
+    try:
+        return cli_runtime_service.execute_approved_command(approval_id)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=408, detail="Command timed out.") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/cli/runs", response_model=list[CommandRun])
+def get_cli_runs() -> list[CommandRun]:
+    return cli_runtime_service.list_command_runs()
 
 
 @router.get("/providers", response_model=list[ProviderConfig])
@@ -152,6 +238,16 @@ def decide_route(request: RoutingRequest) -> RoutingDecision:
     return choose_provider(request)
 
 
+@router.post("/providers/generate", response_model=ProviderGenerationResult)
+def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenerationResult:
+    try:
+        return generate_provider_completion(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post("/agents", response_model=AgentBrief, status_code=201)
 def create_agent(brief: AgentBrief) -> AgentBrief:
     return spawn_agent(brief)
@@ -160,6 +256,27 @@ def create_agent(brief: AgentBrief) -> AgentBrief:
 @router.get("/agents", response_model=list[AgentBrief])
 def get_agents() -> list[AgentBrief]:
     return list_agents()
+
+
+@router.get("/agents/{agent_id}", response_model=AgentBrief)
+def get_agent_detail(agent_id: str) -> AgentBrief:
+    agent = get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+    return agent
+
+
+@router.get("/agents/{agent_id}/children", response_model=list[AgentBrief])
+def get_child_agents(agent_id: str) -> list[AgentBrief]:
+    return list_child_agents(agent_id)
+
+
+@router.patch("/agents/{agent_id}/status", response_model=AgentBrief)
+def update_agent_lifecycle_status(agent_id: str, update: AgentStatusUpdate) -> AgentBrief:
+    agent = update_agent_status(agent_id, update)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+    return agent
 
 
 @router.post("/agents/reconcile", response_model=AgentReconciliation)
@@ -195,6 +312,23 @@ def generate_local_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
 @router.get("/tools", response_model=list[ToolManifest])
 def get_tools() -> list[ToolManifest]:
     return list_tools()
+
+
+@router.post("/tools/{name}/execute", response_model=ToolExecutionResult)
+def execute_local_tool(name: str, request: ToolExecutionRequest) -> ToolExecutionResult:
+    try:
+        return execute_tool(
+            name,
+            request.payload,
+            approved=request.approved,
+            timeout_seconds=request.timeout_seconds,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.patch("/tools/{name}/governance", response_model=ToolManifest)

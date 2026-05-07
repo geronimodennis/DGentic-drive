@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Parallel Backend Hardening Pass
+
+Status: multiple backend workers completed independent slices and the API integration is wired.
+
+Completed:
+- Added CLI approval queue and persisted command run history.
+- Added CLI approve, deny, execute-approved, list approvals, and list run history API endpoints.
+- Added CLI output redaction and truncation for sensitive `TOKEN=`, `PASSWORD=`, and `SECRET=` assignments.
+- Added local provider chat generation runtime for Ollama and LM Studio.
+- Added provider generation API endpoint.
+- Added generated tool execution runtime with JSON input/output handling.
+- Added tool permission enforcement for approval-required, blocked, disabled, and deprecated tools.
+- Added tool reliability tracking from execution runs: usage, success, failure, last-used, and reliability score.
+- Added agent detail, child-agent listing, and lifecycle status update APIs.
+- Added parent agent and task relationship fields to agent briefs.
+- Added focused worker tests for CLI runtime, provider runtime, and tool runtime.
+- Added API tests for CLI approvals, provider generation errors, generated tool execution, and agent lifecycle tracking.
+- Updated README, architecture documentation, usage guide, developer setup, Agile task plan, and progress log.
+
+Verification:
+- `uv run pytest` passed with 32 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Remaining production work:
+- Add CLI cancellation and output streaming/polling.
+- Add configurable command policy storage and argument-aware rules.
+- Add external provider adapters and credential management.
+- Add stronger tool sandbox isolation.
+- Add UI surfaces for approvals, agents, tools, and provider activity.
+
+---
+
+### CLI Integration Backlog Update
+
+Status: production CLI integration has been added as explicit required work.
+
+Completed:
+- Added Story 5.3 to the Agile task plan for completing production CLI integration.
+- Captured approval records, approve/deny endpoints, persisted command run history, configurable command policy, argument-aware rules, safe parsing, output truncation/redaction, streaming or polling, cancellation, agent-aware permissions, environment controls, root boundary enforcement, tests, and documentation requirements.
+
+Next steps:
+- Implement pending CLI approvals and approve/deny endpoints.
+- Add persisted command run history.
+- Replace the current executable-only policy with configurable argument-aware rules.
+
+---
+
 ### Sprint 6 Dynamic Tool Creation Pass
 
 Status: dynamic local tool generation and governance are implemented for the backend MVP.

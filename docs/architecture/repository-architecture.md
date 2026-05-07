@@ -21,16 +21,19 @@ dgentic/
       api/
       agents.py
       events.py
+      cli_runtime.py
       execution.py
       guardrails.py
       main.py
       memory.py
       planner.py
+      provider_runtime.py
       providers.py
       schemas.py
       sessions.py
       settings.py
       storage.py
+      tool_runtime.py
       tools.py
   tests/
   .env.example
@@ -50,13 +53,16 @@ Current modules:
 - `main.py`: FastAPI app factory and application instance.
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
+- `cli_runtime.py`: CLI approvals, root-bound command execution, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
 - `guardrails.py`: Filesystem and CLI policy classification plus guarded UTF-8 text file reads, writes, and command execution.
 - `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
-- `agents.py`: Sub-agent brief registry and output reconciliation.
+- `provider_runtime.py`: Ollama and LM Studio chat/completion request execution.
+- `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: In-memory memory record indexing and search.
 - `tools.py`: Local tool manifest registration, guarded tool generation, duplicate detection, and governance updates.
+- `tool_runtime.py`: Generated tool subprocess execution and reliability counter updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
 - `storage.py`: JSON collection persistence helper for MVP local state.
@@ -64,7 +70,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, provider routing, dynamic tool generation and governance, agent and registry APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, CLI approvals and run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -72,8 +78,9 @@ Location for generated reusable tools. DGentic-created tools live under:
 
 ```text
 localmcp/[tool_name]/
+  tool.py
+  wrapper.py
   manifest.json
-  src/
   README.md
 ```
 
@@ -116,16 +123,27 @@ Current endpoints:
 - `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
 - `POST /guardrails/commands`: Classifies CLI command risk.
 - `POST /cli/execute`: Executes allowed or explicitly approved commands inside `rootDir`.
+- `POST /cli/approvals`: Creates a pending approval for approval-required commands.
+- `GET /cli/approvals`: Lists CLI approval records.
+- `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command.
+- `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command.
+- `POST /cli/approvals/{approval_id}/execute`: Executes an approved CLI command once.
+- `GET /cli/runs`: Lists persisted CLI command run history.
 - `GET /providers`: Lists configured providers with discovered local model names when reachable.
 - `GET /providers/{provider_id}/health`: Returns provider configuration health.
+- `POST /providers/generate`: Runs an Ollama or LM Studio chat/completion request.
 - `POST /routing/decide`: Returns a scored provider routing decision with candidate scores.
 - `POST /agents`: Registers a running sub-agent brief.
 - `GET /agents`: Lists registered sub-agent briefs.
+- `GET /agents/{agent_id}`: Returns a specific sub-agent brief.
+- `GET /agents/{agent_id}/children`: Lists child agents for a parent agent.
+- `PATCH /agents/{agent_id}/status`: Updates sub-agent lifecycle status.
 - `POST /agents/reconcile`: Reconciles sub-agent output reports.
 - `POST /memory`: Adds an in-memory memory record.
 - `POST /memory/search`: Searches memory records by text and tags.
 - `POST /tools`: Registers a local tool manifest.
 - `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files.
+- `POST /tools/{name}/execute`: Executes a registered generated tool and updates reliability counters.
 - `GET /tools`: Lists registered tool manifests.
 - `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
 - `POST /sessions/summary`: Creates a session summary.
@@ -161,6 +179,8 @@ Current collections:
 - `memory.json`
 - `tools.json`
 - `sessions.json`
+- `cli-approvals.json`
+- `cli-command-runs.json`
 
 ## Architecture Decisions
 
@@ -170,5 +190,6 @@ Current collections:
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
+- Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
-- Execute CLI commands only through command policy evaluation, root-bound working directories, and audit logging. Approval-required commands must pass `approved: true`.
+- Execute CLI commands only through command policy evaluation, root-bound working directories, approval records, sanitized output capture, persisted run history, and audit logging.

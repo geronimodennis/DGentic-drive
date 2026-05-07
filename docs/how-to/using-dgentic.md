@@ -73,6 +73,24 @@ curl -X POST http://127.0.0.1:8000/cli/execute `
   -d '{"command":"cmd /c echo hello","timeout_seconds":5}'
 ```
 
+Queue, approve, and execute an approval-required CLI command:
+
+```powershell
+curl -X POST "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
+  -H "Content-Type: application/json" `
+  -d '{"command":"python --version","timeout_seconds":10}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/approve `
+  -H "Content-Type: application/json" `
+  -d '{"decided_by":"reviewer"}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/execute
+```
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/filesystem/write `
   -H "Content-Type: application/json" `
@@ -98,6 +116,14 @@ curl http://127.0.0.1:8000/providers/ollama/health
 curl http://127.0.0.1:8000/providers/lm-studio/health
 ```
 
+Run a local provider generation request:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/providers/generate `
+  -H "Content-Type: application/json" `
+  -d '{"provider_id":"ollama","model":"llama3.1","messages":[{"role":"user","content":"Say hello."}]}'
+```
+
 Generate a reusable local tool:
 
 ```powershell
@@ -112,6 +138,14 @@ Deprecate a tool:
 curl -X PATCH http://127.0.0.1:8000/tools/pdf-generator/governance `
   -H "Content-Type: application/json" `
   -d '{"status":"deprecated","reason":"Replaced by a more reliable tool."}'
+```
+
+Execute a generated tool:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/tools/pdf-generator/execute `
+  -H "Content-Type: application/json" `
+  -d '{"payload":{"title":"Example"},"approved":true}'
 ```
 
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
@@ -188,10 +222,10 @@ DGentic should persist session state so future sessions can resume with context,
 
 - DGentic has backend MVP contracts, not production autonomy.
 - State is persisted as local JSON collections, but production-grade migrations, indexing, and concurrency controls still need to be added.
-- Ollama and LM Studio have local health/model probes, but generation requests are not implemented yet.
+- Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can execute safe commands and approved commands inside `rootDir`, but there is not yet a user-facing approval queue.
-- Tools can be generated, registered, indexed, and deprecated, but generated tools are not executed in a sandbox yet.
+- CLI guardrails can queue, approve, deny, execute, and persist command runs, but there is not yet a user-facing approval UI or cancellation API.
+- Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

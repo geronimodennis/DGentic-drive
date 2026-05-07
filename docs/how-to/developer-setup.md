@@ -105,11 +105,41 @@ Invoke-RestMethod `
   -Body '{"command":"git status","approved":true,"timeout_seconds":5}'
 ```
 
+Approval-required commands can also use the approval queue:
+
+```powershell
+$approval = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
+  -ContentType "application/json" `
+  -Body '{"command":"python --version","timeout_seconds":10}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/approve" `
+  -ContentType "application/json" `
+  -Body '{"decided_by":"reviewer"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/execute"
+```
+
 ## Check Local Providers
 
 ```powershell
 Invoke-RestMethod -Uri http://127.0.0.1:8000/providers/ollama/health
 Invoke-RestMethod -Uri http://127.0.0.1:8000/providers/lm-studio/health
+```
+
+Run a local provider generation request:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/providers/generate `
+  -ContentType "application/json" `
+  -Body '{"provider_id":"ollama","model":"llama3.1","messages":[{"role":"user","content":"Say hello."}]}'
 ```
 
 ## Generate A Local Tool
@@ -130,6 +160,16 @@ This creates:
 - `localmcp/pdf-generator/README.md`
 
 Generated tools are registered in local JSON state and indexed as memory artifacts.
+
+Execute a generated tool:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/tools/pdf-generator/execute `
+  -ContentType "application/json" `
+  -Body '{"payload":{"title":"Example"},"approved":true}'
+```
 
 Read it back:
 
@@ -164,7 +204,7 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound, but there is no interactive approval UI yet.
-- Ollama and LM Studio can be probed for health and models, but chat/completion calls are not implemented yet.
+- CLI execution is policy-enforced and root-bound with approval records, but there is no interactive approval UI or cancellation API yet.
+- Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
-- Local tools can be generated under `localmcp/`, but tool execution sandboxing is not implemented.
+- Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

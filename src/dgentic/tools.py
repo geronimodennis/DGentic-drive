@@ -34,6 +34,14 @@ def list_tools() -> list[ToolManifest]:
     return _tools.list()
 
 
+def get_tool(name: str) -> ToolManifest | None:
+    return _tools.get(name)
+
+
+def save_tool_manifest(manifest: ToolManifest) -> ToolManifest:
+    return _tools.upsert(manifest)
+
+
 def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     if request.permission_mode == PermissionMode.blocked:
         raise PermissionError("Generated tools cannot be registered with blocked permission mode.")

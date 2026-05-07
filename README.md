@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, guarded text file operations, guarded CLI execution, local provider probes, scored provider routing, agent briefs, memory records, dynamically generated local tools, tool governance, session summaries, event logs, and local JSON state persistence.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, guardrail checks, guarded text file operations, guarded CLI execution and approvals, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, and local JSON state persistence.
 
 ## Documentation
 
@@ -80,11 +80,11 @@ The backend currently exposes:
 - `GET /tasks/runs` for persisted execution run history.
 - `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
 - `POST /filesystem/read` and `POST /filesystem/write` for policy-enforced UTF-8 text file operations inside `rootDir`.
-- `POST /cli/execute` for policy-enforced command execution inside `rootDir`.
-- `GET /providers`, `GET /providers/{provider_id}/health`, and `POST /routing/decide` for Ollama/LM Studio probes and scored provider routing.
-- `POST /agents`, `GET /agents`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
+- `POST /cli/execute`, `POST /cli/approvals`, `POST /cli/approvals/{approval_id}/approve`, `POST /cli/approvals/{approval_id}/deny`, `POST /cli/approvals/{approval_id}/execute`, and `GET /cli/runs` for policy-enforced command execution, approvals, and run history.
+- `GET /providers`, `GET /providers/{provider_id}/health`, `POST /providers/generate`, and `POST /routing/decide` for Ollama/LM Studio probes, generation calls, and scored provider routing.
+- `POST /agents`, `GET /agents`, `GET /agents/{agent_id}`, `GET /agents/{agent_id}/children`, `PATCH /agents/{agent_id}/status`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
-- `POST /tools`, `POST /tools/generate`, `GET /tools`, and `PATCH /tools/{name}/governance` for local tool registration, generation, listing, and deprecation/disable governance.
+- `POST /tools`, `POST /tools/generate`, `POST /tools/{name}/execute`, `GET /tools`, and `PATCH /tools/{name}/governance` for local tool registration, generation, execution, listing, and deprecation/disable governance.
 - `POST /sessions/summary`, `GET /sessions/summary`, and `GET /logs` for session and observability contracts.
 
 Local state is stored under `.dgentic/` by default and is ignored by Git. Override it with `DGENTIC_DATA_DIR`.
@@ -116,4 +116,4 @@ Once implemented, DGentic should be used through one or more supported interface
 
 Status: backend MVP sprint surface started.
 
-The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, guarded CLI execution, Ollama and LM Studio health/model probes, scored provider routing, sub-agent contracts, dynamic local tool generation under `localmcp/`, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, external provider adapters, interactive approval UX, richer filesystem operations, controlled tool execution sandboxing, semantic retrieval, web UI, and VS Code extension work.
+The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, guarded CLI execution with approvals and run history, Ollama and LM Studio health/model probes and generation calls, scored provider routing, sub-agent lifecycle tracking, dynamic local tool generation and execution under `localmcp/`, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes stronger storage migrations, external provider adapters, interactive approval UX, richer filesystem operations, stronger tool sandboxing, semantic retrieval, web UI, and VS Code extension work.

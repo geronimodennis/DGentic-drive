@@ -183,6 +183,36 @@ Tasks:
 - Implement approval workflow interface.
 - Add command audit logging.
 
+### Story 5.3: Complete Production CLI Integration
+
+As an operator, I want CLI execution to support approvals, policy configuration, safe parsing, run history, streaming, redaction, cancellation, and agent-aware permissions so command automation is useful without losing control.
+
+Acceptance criteria:
+- Approval-required commands create pending approval records instead of relying only on an `approved: true` request field.
+- Pending CLI approvals can be approved or denied through API endpoints.
+- CLI execution records are persisted separately from generic logs.
+- Command policy supports configurable allowlists, denylists, argument-aware rules, and per-command permission modes.
+- Command parsing avoids unsafe shell behavior and has explicit Windows and POSIX behavior.
+- Command output supports truncation and redaction of sensitive values.
+- Long-running command output can be streamed or polled.
+- Running commands can be cancelled.
+- CLI permissions can vary by triggering agent, role, or task context.
+- Command environment variables are controlled and auditable.
+- CLI execution remains constrained to `rootDir` unless explicitly approved by policy.
+- Tests cover approval creation, approve/deny, policy configuration, argument rules, redaction, run history, cancellation, and root boundary enforcement.
+- README, architecture documentation, usage guide, developer setup, and progress log are updated when the sprint completes.
+
+Tasks:
+- Define CLI approval, command run, command policy, and command environment schemas.
+- Add pending approval storage and approve/deny endpoints.
+- Add persisted command run history endpoints.
+- Add configurable command allowlist/denylist and argument-aware policy evaluator.
+- Add output truncation and redaction layer.
+- Add command cancellation support.
+- Add command streaming or polling API.
+- Add agent/context-aware permission checks.
+- Add tests and documentation updates.
+
 ## Epic 6: Memory And Retrieval
 
 ### Story 6.1: Build Metadata Index

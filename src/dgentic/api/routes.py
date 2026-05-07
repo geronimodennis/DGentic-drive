@@ -185,6 +185,8 @@ def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/cli/runs", response_model=CommandRun, status_code=202)
@@ -195,6 +197,8 @@ def start_cli_run(request: CommandExecutionRequest) -> CommandRun:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/cli/runs/{run_id}", response_model=CommandRun)

@@ -4,6 +4,60 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Release Distribution 0.2.4
+
+Status: DGentic 0.2.4 release distribution created.
+
+Completed:
+- Bumped package, API, backend `__version__`, and generated tool default version metadata to `0.2.4`.
+- Added release notes in `docs/releases/0.2.4.md`.
+- Built source distribution: `dist/dgentic-0.2.4.tar.gz`.
+- Built wheel distribution: `dist/dgentic-0.2.4-py3-none-any.whl`.
+- Updated artifact checksums in `dist/SHA256SUMS.txt`.
+- Created release bundle: `releases/dgentic-0.2.4.zip`.
+- Updated README, documentation index, release distribution guide, and progress log.
+
+Verification:
+- `uv run pytest` passed with 46 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+- `uv build` created both wheel and source distribution.
+- Clean virtual environment install from `dist/dgentic-0.2.4-py3-none-any.whl` succeeded.
+- Packaged `dgentic-server` command started successfully on port 8014.
+- Packaged `/health` endpoint returned `status: ok`.
+
+Artifact hashes:
+- `dgentic-0.2.4.tar.gz`: `0F6533ABA481F2412E33B7FA4EC3E5F3A445696A13BBB4411E52DEC0EA15B23B`
+- `dgentic-0.2.4-py3-none-any.whl`: `74BB4BA3EA9FE1652016FB8755055B6FDF139F0A53B729AF634CD22843C06CCE`
+- `dgentic-0.2.4.zip`: `136F48C5F3F1A7BC49A2322C3B5350B7C2FD5B9E982C9C27583C3755938B3788`
+
+---
+
+### CLI Context And Environment Control Pass
+
+Status: Story 5.3 advanced with agent-aware CLI permissions and controlled command environments.
+
+Completed:
+- Added optional `agent_role`, `agent_id`, and `task_id` context to command policy checks and command execution requests.
+- Added agent-role scoped CLI policy rules so configured allow, approval, or block rules can apply only to matching roles.
+- Added controlled command environment construction with a small inherited baseline and explicit caller overrides.
+- Blocked sensitive runtime environment overrides such as `PATH`, `PYTHONPATH`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `PYTHONHOME`, `HOME`, and `VIRTUAL_ENV`.
+- Added environment-key auditing to command execution results, run history, approvals, and CLI event metadata without persisting environment values in approval records.
+- Added API error handling for invalid command environment requests.
+- Added focused runtime, policy, and API tests.
+- Updated README, architecture documentation, usage guide, developer setup guide, Agile task plan, and progress log.
+
+Verification:
+- `uv run pytest tests/test_cli_runtime.py tests/test_command_policy.py tests/test_api.py -q` passed with 36 tests.
+
+Remaining production work:
+- Add streaming command output.
+- Add restart-resilient process supervision and stale-running reconciliation.
+- Broaden safe parsing validation across Windows and POSIX execution modes.
+- Add a user-facing approval and environment review UX.
+
+---
+
 ### PM Project Evaluation And Release Coordination
 
 Status: project evaluated and release coordination completed for latest unreleased governance work.

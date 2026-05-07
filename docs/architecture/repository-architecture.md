@@ -53,9 +53,9 @@ Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
-- `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, providers, routing, agents, memory, tools, sessions, and logs.
-- `command_policy.py`: Persisted CLI policy rule storage and executable, exact-command, contains, and argument-aware command matching.
-- `cli_runtime.py`: CLI approvals, root-bound synchronous and asynchronous command execution, process-local cancellation, output redaction/truncation, and command run history.
+- `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
+- `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, and executable, exact-command, contains, and argument-aware command matching.
+- `cli_runtime.py`: CLI approvals, root-bound synchronous and asynchronous command execution, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
 - `guardrails.py`: Filesystem policy evaluation plus guarded UTF-8 text file reads, writes, and command execution compatibility wrappers.
@@ -72,7 +72,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable CLI policy rules, shell-wrapper command policy hardening, CLI approvals, asynchronous CLI polling/cancellation, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, asynchronous CLI polling/cancellation, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -123,15 +123,15 @@ Current endpoints:
 - `POST /guardrails/filesystem`: Evaluates filesystem action policy against `rootDir`.
 - `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
 - `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
-- `POST /guardrails/commands`: Classifies CLI command risk.
-- `POST /cli/policy/rules`: Creates a persisted CLI policy rule.
+- `POST /guardrails/commands`: Classifies CLI command risk, optionally using agent role, agent id, and task id context.
+- `POST /cli/policy/rules`: Creates a persisted CLI policy rule, optionally scoped to one or more agent roles.
 - `GET /cli/policy/rules`: Lists persisted CLI policy rules in evaluation order.
 - `PATCH /cli/policy/rules/{rule_id}`: Updates a persisted CLI policy rule.
-- `POST /cli/execute`: Executes allowed or explicitly approved commands inside `rootDir`.
-- `POST /cli/runs`: Starts an allowed or explicitly approved asynchronous command run.
+- `POST /cli/execute`: Executes allowed or explicitly approved commands inside `rootDir` with audited agent/task context and controlled environment overrides.
+- `POST /cli/runs`: Starts an allowed or explicitly approved asynchronous command run with audited agent/task context and controlled environment overrides.
 - `GET /cli/runs/{run_id}`: Polls a persisted command run by id.
 - `POST /cli/runs/{run_id}/cancel`: Requests cancellation for a running command in the current backend process.
-- `POST /cli/approvals`: Creates a pending approval for approval-required commands.
+- `POST /cli/approvals`: Creates a pending approval for approval-required commands. Approval records include context metadata but reject environment values so sensitive values are not persisted in the approval queue.
 - `GET /cli/approvals`: Lists CLI approval records.
 - `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command.
 - `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command.
@@ -201,6 +201,6 @@ Current collections:
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
-- Execute CLI commands only through configurable command policy evaluation, root-bound working directories, approval records, sanitized output capture, persisted run history, and audit logging.
+- Execute CLI commands only through configurable command policy evaluation, root-bound working directories, controlled inherited environments plus explicit non-sensitive overrides, approval records, sanitized output capture, persisted run history, and audit logging.
 - Support asynchronous CLI runs through persisted run records with process-local cancellation; production restart recovery and multi-worker process supervision remain follow-up work.
-- Keep built-in CLI defaults for blocked and approval-required executables, inspect common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations for blocked inner commands, and let persisted rules override or refine defaults by executable, exact command, command substring, or argument substring.
+- Keep built-in CLI defaults for blocked and approval-required executables, inspect common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations for blocked inner commands, and let persisted rules override or refine defaults by executable, exact command, command substring, argument substring, or agent role.

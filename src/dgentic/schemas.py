@@ -220,7 +220,7 @@ class AgentReconciliation(BaseModel):
 
 class ToolManifest(BaseModel):
     name: str
-    version: str = "0.2.3"
+    version: str = "0.2.4"
     description: str
     entrypoint: str
     permission_mode: PermissionMode
@@ -242,7 +242,7 @@ class ToolGenerationRequest(BaseModel):
     trigger_source: ToolTriggerSource
     permission_mode: PermissionMode = PermissionMode.approval_required
     tags: list[str] = Field(default_factory=list)
-    version: str = "0.2.3"
+    version: str = "0.2.4"
     source_code: str | None = None
     interface: dict[str, Any] = Field(default_factory=dict)
     overwrite: bool = False
@@ -302,6 +302,9 @@ class FileWriteResponse(BaseModel):
 
 class CommandPolicyRequest(BaseModel):
     command: str
+    agent_role: str | None = None
+    agent_id: str | None = None
+    task_id: str | None = None
 
     @field_validator("command")
     @classmethod
@@ -317,6 +320,7 @@ class CommandPolicyRuleRequest(BaseModel):
     pattern: str = Field(min_length=1)
     permission_mode: PermissionMode
     reason: str = Field(min_length=1)
+    agent_roles: list[str] = Field(default_factory=list)
     enabled: bool = True
     priority: int = Field(default=100, ge=0, le=10_000)
 
@@ -341,6 +345,7 @@ class CommandPolicyRuleUpdate(BaseModel):
     pattern: str | None = Field(default=None, min_length=1)
     permission_mode: PermissionMode | None = None
     reason: str | None = Field(default=None, min_length=1)
+    agent_roles: list[str] | None = None
     enabled: bool | None = None
     priority: int | None = Field(default=None, ge=0, le=10_000)
 
@@ -360,6 +365,9 @@ class CommandPolicyDecision(BaseModel):
     risk: CommandRisk
     permission_mode: PermissionMode
     reason: str
+    agent_role: str | None = None
+    agent_id: str | None = None
+    task_id: str | None = None
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
 
@@ -369,6 +377,11 @@ class CommandExecutionRequest(BaseModel):
     cwd: Path | None = None
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     approved: bool = False
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    environment: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("command")
     @classmethod
@@ -386,6 +399,11 @@ class CommandExecutionResult(BaseModel):
     stderr: str
     permission_mode: PermissionMode
     duration_ms: int
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    environment_keys: list[str] = Field(default_factory=list)
 
 
 class CommandApprovalDecisionRequest(BaseModel):

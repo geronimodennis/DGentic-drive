@@ -97,6 +97,39 @@ def test_command_policy_rules_can_be_disabled(policy_state) -> None:
     assert allowed.permission_mode == PermissionMode.autopilot_safe
 
 
+def test_command_policy_rules_can_be_scoped_to_agent_roles(policy_state) -> None:
+    _root_dir, _data_dir = policy_state
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Developers may inspect git",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="git",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Developer git inspection is allowed.",
+            agent_roles=["Developer"],
+        )
+    )
+
+    developer_decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="git status",
+            agent_role="developer",
+            agent_id="agent-dev-1",
+            task_id="story-5.3",
+        )
+    )
+    qa_decision = evaluate_command_policy(
+        CommandPolicyRequest(command="git status", agent_role="qa")
+    )
+
+    assert rule.agent_roles == ["developer"]
+    assert developer_decision.permission_mode == PermissionMode.autopilot_safe
+    assert developer_decision.matched_rule_id == rule.id
+    assert developer_decision.agent_id == "agent-dev-1"
+    assert developer_decision.task_id == "story-5.3"
+    assert qa_decision.permission_mode == PermissionMode.approval_required
+
+
 def test_shell_wrapped_blocked_commands_do_not_bypass_policy(policy_state) -> None:
     _root_dir, _data_dir = policy_state
 

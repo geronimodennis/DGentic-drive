@@ -75,6 +75,14 @@ curl -X POST http://127.0.0.1:8000/cli/policy/rules `
   -d '{"name":"Block unsafe flag","match_type":"argument_contains","pattern":"--unsafe","permission_mode":"blocked","reason":"Unsafe flag is blocked by workspace policy.","priority":5}'
 ```
 
+Create a role-scoped CLI policy rule:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/policy/rules `
+  -H "Content-Type: application/json" `
+  -d '{"name":"Developers may inspect git","match_type":"executable","pattern":"git","permission_mode":"autopilot_safe","reason":"Developer git inspection is allowed.","agent_roles":["developer"],"priority":5}'
+```
+
 ```powershell
 curl http://127.0.0.1:8000/cli/policy/rules
 ```
@@ -89,6 +97,14 @@ curl -X PATCH http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
 curl -X POST http://127.0.0.1:8000/cli/execute `
   -H "Content-Type: application/json" `
   -d '{"command":"cmd /c echo hello","timeout_seconds":5}'
+```
+
+Run a command with agent/task context and a controlled environment override. Command run history stores only the applied environment variable names:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/execute `
+  -H "Content-Type: application/json" `
+  -d '{"command":"cmd /c echo context","requested_by":"pm","agent_id":"agent-dev-1","agent_role":"developer","task_id":"story-5.3","environment":{"DGENTIC_TEST_FLAG":"enabled"}}'
 ```
 
 Start, poll, and cancel an asynchronous CLI run:
@@ -209,7 +225,8 @@ Configure strict operating boundaries before running autonomous tasks:
 - Workspace `rootDir`
 - Filesystem read, write, and delete permissions
 - CLI execution mode
-- Configurable CLI allow, approval, and block rules with executable and argument-aware matching
+- Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
+- Controlled CLI environment overrides and command context audit metadata
 - Network policy and domain rules
 - Tool creation and execution permissions
 
@@ -259,7 +276,7 @@ DGentic should persist session state so future sessions can resume with context,
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can configure persisted policy rules, queue, approve, deny, execute, start asynchronous runs, poll run status, cancel process-local runs, and persist command runs, but there is not yet a user-facing approval UI, streaming output API, restart-resilient process supervision, or agent/context-aware permission model.
+- CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute, start asynchronous runs, poll run status, cancel process-local runs, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, streaming output API, or restart-resilient process supervision.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

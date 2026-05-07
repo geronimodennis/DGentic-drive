@@ -293,6 +293,60 @@ def test_cli_async_run_api_polls_and_cancels(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_cli_execute_api_records_context_and_environment_keys(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/execute",
+        json={
+            "command": "cmd /c echo context",
+            "requested_by": "pm",
+            "agent_id": "agent-dev-1",
+            "agent_role": "developer",
+            "task_id": "story-5.3",
+            "environment": {"DGENTIC_TEST_FLAG": "enabled"},
+        },
+    )
+    runs_response = client.get("/cli/runs")
+
+    assert response.status_code == 200
+    assert response.json()["requested_by"] == "pm"
+    assert response.json()["agent_id"] == "agent-dev-1"
+    assert response.json()["agent_role"] == "developer"
+    assert response.json()["task_id"] == "story-5.3"
+    assert response.json()["environment_keys"] == ["DGENTIC_TEST_FLAG"]
+    latest_run = runs_response.json()[-1]
+    assert latest_run["environment_keys"] == ["DGENTIC_TEST_FLAG"]
+    assert latest_run["agent_role"] == "developer"
+    get_settings.cache_clear()
+
+
+def test_cli_execute_api_rejects_blocked_environment_override(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/execute",
+        json={
+            "command": "cmd /c echo blocked",
+            "environment": {"PATH": "C:\\unsafe"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "PATH" in response.json()["detail"]
+    get_settings.cache_clear()
+
+
 def test_agent_memory_tool_and_session_registries() -> None:
     client = TestClient(create_app())
 

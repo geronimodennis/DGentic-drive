@@ -30,6 +30,27 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"\b(?P<key>TOKEN|PASSWORD|SECRET)\s*=\s*(?P<value>[^\s;&|]+)",
     re.IGNORECASE,
 )
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BLOCKED_ENV_OVERRIDES = {
+    "COMSPEC",
+    "HOME",
+    "PATH",
+    "PATHEXT",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "SYSTEMROOT",
+    "VIRTUAL_ENV",
+}
+_INHERITED_ENV_KEYS = {
+    "COMSPEC",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "WINDIR",
+}
 
 
 class CommandApprovalStatus(StrEnum):
@@ -55,6 +76,10 @@ class CommandApproval(BaseModel):
     policy_reason: str
     status: CommandApprovalStatus = CommandApprovalStatus.pending
     requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    environment_keys: list[str] = Field(default_factory=list)
     decided_by: str | None = None
     denial_reason: str | None = None
     run_id: str | None = None
@@ -78,6 +103,11 @@ class CommandRun(BaseModel):
     stderr_truncated: bool = False
     permission_mode: PermissionMode
     duration_ms: int
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    environment_keys: list[str] = Field(default_factory=list)
     started_at: datetime
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
@@ -137,6 +167,36 @@ def _popen_kwargs(cwd: Path) -> dict:
     return kwargs
 
 
+def _base_command_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in _INHERITED_ENV_KEYS:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def build_command_environment(overrides: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    env = _base_command_environment()
+    applied_keys: list[str] = []
+    for key, value in overrides.items():
+        normalized_key = key.strip()
+        if not _ENV_NAME_RE.fullmatch(normalized_key):
+            raise ValueError(f"Invalid environment variable name: {key}")
+        upper_key = normalized_key.upper()
+        if upper_key in _BLOCKED_ENV_OVERRIDES:
+            raise ValueError(f"Environment variable override is not allowed: {normalized_key}")
+        if len(value) > 4096:
+            raise ValueError(f"Environment variable value is too long: {normalized_key}")
+        env[normalized_key] = value
+        applied_keys.append(normalized_key)
+    return env, sorted(applied_keys)
+
+
+def validate_command_environment(overrides: dict[str, str]) -> list[str]:
+    _env, environment_keys = build_command_environment(overrides)
+    return environment_keys
+
+
 def _terminate_process_tree(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
@@ -188,11 +248,24 @@ class CliRuntimeService:
         *,
         requested_by: str | None = None,
     ) -> CommandApproval:
-        decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
+        decision = evaluate_command_policy(
+            CommandPolicyRequest(
+                command=request.command,
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+        )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
         if decision.permission_mode != PermissionMode.approval_required:
             raise ValueError("Only approval-required commands can be queued for approval.")
+        if request.environment:
+            raise ValueError(
+                "Approval queue does not persist environment values; execute with approval "
+                "after reviewing the environment keys."
+            )
+        environment_keys = validate_command_environment(request.environment)
 
         approval = CommandApproval(
             id=f"approval-{uuid4()}",
@@ -201,7 +274,11 @@ class CliRuntimeService:
             timeout_seconds=request.timeout_seconds,
             permission_mode=decision.permission_mode,
             policy_reason=decision.reason,
-            requested_by=requested_by,
+            requested_by=requested_by or request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+            environment_keys=environment_keys,
         )
         self._approvals.upsert(approval)
         event_log.record(
@@ -212,6 +289,11 @@ class CliRuntimeService:
                 "command": redact_sensitive_values(approval.command),
                 "cwd": str(approval.cwd),
                 "permission_mode": approval.permission_mode,
+                "requested_by": approval.requested_by,
+                "agent_id": approval.agent_id,
+                "agent_role": approval.agent_role,
+                "task_id": approval.task_id,
+                "environment_keys": approval.environment_keys,
             },
         )
         return approval
@@ -283,6 +365,10 @@ class CliRuntimeService:
             cwd=approval.cwd,
             timeout_seconds=approval.timeout_seconds,
             approved=True,
+            requested_by=approval.requested_by,
+            agent_id=approval.agent_id,
+            agent_role=approval.agent_role,
+            task_id=approval.task_id,
         )
         result, run = self._execute_request(request, approval_id=approval.id)
 
@@ -300,9 +386,11 @@ class CliRuntimeService:
 
     def start_command(self, request: CommandExecutionRequest) -> CommandRun:
         decision, cwd = self._authorize_request(request)
+        env, environment_keys = build_command_environment(request.environment)
         started_at = datetime.now(UTC)
         process = subprocess.Popen(
             _command_args(decision.command),
+            env=env,
             **_popen_kwargs(cwd),
         )
         run = CommandRun(
@@ -313,6 +401,11 @@ class CliRuntimeService:
             process_id=process.pid,
             permission_mode=decision.permission_mode,
             duration_ms=0,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+            environment_keys=environment_keys,
             started_at=started_at,
         )
         self._runs.upsert(run)
@@ -328,6 +421,11 @@ class CliRuntimeService:
                 "cwd": str(run.cwd),
                 "process_id": run.process_id,
                 "permission_mode": run.permission_mode,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+                "environment_keys": run.environment_keys,
             },
         )
         Thread(
@@ -371,7 +469,13 @@ class CliRuntimeService:
             LogEventType.cli,
             "Cancellation requested for CLI command run.",
             subject_id=run.id,
-            metadata={"process_id": run.process_id},
+            metadata={
+                "process_id": run.process_id,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+            },
         )
         return run
 
@@ -392,7 +496,14 @@ class CliRuntimeService:
         self,
         request: CommandExecutionRequest,
     ) -> tuple[CommandPolicyDecision, Path]:
-        decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
+        decision = evaluate_command_policy(
+            CommandPolicyRequest(
+                command=request.command,
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+        )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
         if decision.permission_mode == PermissionMode.approval_required and not request.approved:
@@ -406,11 +517,13 @@ class CliRuntimeService:
         approval_id: str | None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
         decision, cwd = self._authorize_request(request)
+        env, environment_keys = build_command_environment(request.environment)
         started_at = datetime.now(UTC)
         try:
             completed = subprocess.run(
                 _command_args(decision.command),
                 cwd=cwd,
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=request.timeout_seconds,
@@ -432,6 +545,11 @@ class CliRuntimeService:
                 duration_ms=duration_ms,
                 started_at=started_at,
                 status=CommandRunStatus.timed_out,
+                requested_by=request.requested_by,
+                agent_id=request.agent_id,
+                agent_role=request.agent_role,
+                task_id=request.task_id,
+                environment_keys=environment_keys,
             )
             raise
 
@@ -446,6 +564,11 @@ class CliRuntimeService:
             permission_mode=decision.permission_mode,
             duration_ms=duration_ms,
             started_at=started_at,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+            environment_keys=environment_keys,
         )
 
     def _record_run(
@@ -461,7 +584,13 @@ class CliRuntimeService:
         duration_ms: int,
         started_at: datetime,
         status: CommandRunStatus = CommandRunStatus.completed,
+        requested_by: str | None = None,
+        agent_id: str | None = None,
+        agent_role: str | None = None,
+        task_id: str | None = None,
+        environment_keys: list[str] | None = None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
+        environment_keys = environment_keys or []
         sanitized_stdout, stdout_truncated = sanitize_output(
             stdout,
             max_chars=self.max_output_chars,
@@ -484,6 +613,11 @@ class CliRuntimeService:
             stderr_truncated=stderr_truncated,
             permission_mode=permission_mode,
             duration_ms=duration_ms,
+            requested_by=requested_by,
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+            environment_keys=environment_keys,
             started_at=started_at,
             completed_at=completed_at,
         )
@@ -499,6 +633,11 @@ class CliRuntimeService:
                 "exit_code": exit_code,
                 "duration_ms": duration_ms,
                 "permission_mode": permission_mode,
+                "requested_by": requested_by,
+                "agent_id": agent_id,
+                "agent_role": agent_role,
+                "task_id": task_id,
+                "environment_keys": environment_keys,
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
             },
@@ -511,6 +650,11 @@ class CliRuntimeService:
             stderr=sanitized_stderr,
             permission_mode=permission_mode,
             duration_ms=duration_ms,
+            requested_by=requested_by,
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+            environment_keys=environment_keys,
         )
         return result, run
 
@@ -612,6 +756,11 @@ class CliRuntimeService:
                 "duration_ms": duration_ms,
                 "permission_mode": run.permission_mode,
                 "status": run.status,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+                "environment_keys": run.environment_keys,
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
             },

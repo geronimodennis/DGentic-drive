@@ -95,6 +95,16 @@ Invoke-RestMethod `
   -Body '{"command":"cmd /c echo hello","timeout_seconds":5}'
 ```
 
+Command requests can include agent/task context and explicit environment overrides. DGentic builds a controlled process environment, blocks sensitive runtime overrides such as `PATH`, `PYTHONPATH`, `SYSTEMROOT`, and `COMSPEC`, and stores only the applied environment variable names in command run history:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/cli/execute `
+  -ContentType "application/json" `
+  -Body '{"command":"cmd /c echo context","requested_by":"pm","agent_id":"agent-dev-1","agent_role":"developer","task_id":"story-5.3","environment":{"DGENTIC_TEST_FLAG":"enabled"}}'
+```
+
 Approval-required commands must include `approved: true`:
 
 ```powershell
@@ -125,6 +135,8 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/execute"
 ```
 
+Approval records keep agent/task context, but environment values are rejected by the approval queue because queued approval storage does not persist runtime secrets. Execute with `approved: true` after reviewing the environment keys when an environment override is required.
+
 Long-running commands can be started asynchronously, polled, and cancelled. Policy checks and `rootDir` working-directory checks still run before the process starts:
 
 ```powershell
@@ -141,24 +153,24 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/cli/runs/$($run.id)/cancel"
 ```
 
-Configure persisted command policy rules when the built-in defaults are too broad or too narrow. Rules are evaluated by ascending priority and can match by executable, exact command, command substring, or argument substring:
+Configure persisted command policy rules when the built-in defaults are too broad or too narrow. Rules are evaluated by ascending priority and can match by executable, exact command, command substring, or argument substring. Rules can also be scoped to agent roles:
 
 ```powershell
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/cli/policy/rules `
   -ContentType "application/json" `
-  -Body '{"name":"Block unsafe flag","match_type":"argument_contains","pattern":"--unsafe","permission_mode":"blocked","reason":"Unsafe flag is blocked by workspace policy.","priority":5}'
+  -Body '{"name":"Developers may inspect git","match_type":"executable","pattern":"git","permission_mode":"autopilot_safe","reason":"Developer git inspection is allowed.","agent_roles":["developer"],"priority":5}'
 ```
 
-Check that the argument-aware rule applies:
+Check that the role-scoped rule applies:
 
 ```powershell
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/guardrails/commands `
   -ContentType "application/json" `
-  -Body '{"command":"cmd /c echo --unsafe"}'
+  -Body '{"command":"git status","agent_role":"developer","agent_id":"agent-dev-1","task_id":"story-5.3"}'
 ```
 
 List or disable configured policy rules:
@@ -252,7 +264,7 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound with configurable policy rules, approval records, asynchronous polling, and process-local cancellation, but there is no interactive approval UI, streaming output API, restart-resilient process supervision, or agent/context-aware permission model yet.
+- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous polling, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, streaming output API, or restart-resilient process supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

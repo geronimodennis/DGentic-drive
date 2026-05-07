@@ -84,8 +84,9 @@ def test_approved_command_executes_once_and_records_sanitized_history(
         CommandExecutionRequest(command="python --version", timeout_seconds=5)
     )
 
-    def fake_run(args, cwd, capture_output, text, timeout, check):
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
         assert cwd == root_dir.resolve()
+        assert "PATH" in env
         assert capture_output is True
         assert text is True
         assert timeout == 5
@@ -131,8 +132,9 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
 ) -> None:
     service, root_dir, _data_dir = runtime
 
-    def fake_run(args, cwd, capture_output, text, timeout, check):
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
         assert cwd == root_dir.resolve()
+        assert "PATH" in env
         return subprocess.CompletedProcess(
             args=args,
             returncode=0,
@@ -151,6 +153,71 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
     with pytest.raises(PermissionError, match="outside configured rootDir"):
         service.execute_command(
             CommandExecutionRequest(command="cmd /c echo hello", cwd=tmp_path / "outside")
+        )
+
+
+def test_command_execution_applies_controlled_environment_and_audit_context(
+    runtime, monkeypatch
+) -> None:
+    service, root_dir, _data_dir = runtime
+
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
+        assert cwd == root_dir.resolve()
+        assert env["DGENTIC_TEST_FLAG"] == "enabled"
+        assert "PATH" in env
+        assert "PYTHONPATH" not in env
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    result = service.execute_command(
+        CommandExecutionRequest(
+            command="cmd /c echo ok",
+            requested_by="pm",
+            agent_id="agent-dev-1",
+            agent_role="developer",
+            task_id="story-5.3",
+            environment={"DGENTIC_TEST_FLAG": "enabled"},
+        )
+    )
+    run = service.list_command_runs()[0]
+
+    assert result.exit_code == 0
+    assert result.requested_by == "pm"
+    assert result.agent_id == "agent-dev-1"
+    assert result.agent_role == "developer"
+    assert result.task_id == "story-5.3"
+    assert result.environment_keys == ["DGENTIC_TEST_FLAG"]
+    assert run.environment_keys == ["DGENTIC_TEST_FLAG"]
+    assert run.agent_role == "developer"
+
+
+def test_command_environment_blocks_sensitive_runtime_overrides(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    with pytest.raises(ValueError, match="PATH"):
+        service.execute_command(
+            CommandExecutionRequest(
+                command="cmd /c echo blocked",
+                environment={"PATH": "C:\\unsafe"},
+            )
+        )
+
+
+def test_approval_queue_rejects_environment_values(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    with pytest.raises(ValueError, match="does not persist environment values"):
+        service.create_approval(
+            CommandExecutionRequest(
+                command="python --version",
+                environment={"DGENTIC_TEST_FLAG": "enabled"},
+            )
         )
 
 

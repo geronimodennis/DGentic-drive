@@ -69,6 +69,7 @@ def create_command_policy_rule(request: CommandPolicyRuleRequest) -> CommandPoli
         pattern=request.pattern,
         permission_mode=request.permission_mode,
         reason=request.reason,
+        agent_roles=_normalize_agent_roles(request.agent_roles),
         enabled=request.enabled,
         priority=request.priority,
     )
@@ -95,6 +96,8 @@ def update_command_policy_rule(
         return None
 
     updates = update.model_dump(exclude_unset=True)
+    if "agent_roles" in updates and updates["agent_roles"] is not None:
+        updates["agent_roles"] = _normalize_agent_roles(updates["agent_roles"])
     for field, value in updates.items():
         setattr(rule, field, value)
     rule.updated_at = datetime.now(UTC)
@@ -115,12 +118,14 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
     for rule in _sorted_rules(_rules.list()):
         if not rule.enabled:
             continue
+        if not _rule_applies_to_context(rule, request):
+            continue
         if _rule_matches(rule, command, parsed):
-            decision = _decision_from_rule(command, rule)
+            decision = _decision_from_rule(command, rule, request)
             _record_decision(decision)
             return decision
 
-    decision = _default_decision(command, parsed)
+    decision = _default_decision(command, parsed, request)
     _record_decision(decision)
     return decision
 
@@ -168,22 +173,41 @@ def _rule_matches(rule: CommandPolicyRule, command: str, parsed: ParsedCommand) 
     return False
 
 
-def _decision_from_rule(command: str, rule: CommandPolicyRule) -> CommandPolicyDecision:
+def _rule_applies_to_context(rule: CommandPolicyRule, request: CommandPolicyRequest) -> bool:
+    if not rule.agent_roles:
+        return True
+    if request.agent_role is None:
+        return False
+    return request.agent_role.strip().lower() in rule.agent_roles
+
+
+def _decision_from_rule(
+    command: str,
+    rule: CommandPolicyRule,
+    request: CommandPolicyRequest,
+) -> CommandPolicyDecision:
     return CommandPolicyDecision(
         command=command,
         risk=_risk_for_permission(rule.permission_mode),
         permission_mode=rule.permission_mode,
         reason=rule.reason,
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
         matched_rule_id=rule.id,
         matched_rule_name=rule.name,
     )
 
 
-def _default_decision(command: str, parsed: ParsedCommand) -> CommandPolicyDecision:
+def _default_decision(
+    command: str,
+    parsed: ParsedCommand,
+    request: CommandPolicyRequest,
+) -> CommandPolicyDecision:
     executable = parsed.executable
     inner = _parse_inner_shell_command(parsed)
     if inner is not None:
-        inner_decision = _default_decision(command, inner)
+        inner_decision = _default_decision(command, inner, request)
         if inner_decision.permission_mode == PermissionMode.blocked:
             inner_decision.reason = (
                 f"Inner shell command {inner.executable} is blocked by the command policy."
@@ -200,6 +224,9 @@ def _default_decision(command: str, parsed: ParsedCommand) -> CommandPolicyDecis
             risk=CommandRisk.approval_required,
             permission_mode=PermissionMode.approval_required,
             reason=f"{executable} requires approval when no inspectable inner command is present.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
         )
     if executable in BLOCKED_COMMANDS:
         return CommandPolicyDecision(
@@ -207,6 +234,9 @@ def _default_decision(command: str, parsed: ParsedCommand) -> CommandPolicyDecis
             risk=CommandRisk.blocked,
             permission_mode=PermissionMode.blocked,
             reason=f"{executable} is blocked by the command policy.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
         )
     if executable in APPROVAL_COMMANDS:
         return CommandPolicyDecision(
@@ -214,12 +244,18 @@ def _default_decision(command: str, parsed: ParsedCommand) -> CommandPolicyDecis
             risk=CommandRisk.approval_required,
             permission_mode=PermissionMode.approval_required,
             reason=f"{executable} can change runtime or project state and needs approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
         )
     return CommandPolicyDecision(
         command=command,
         risk=CommandRisk.safe,
         permission_mode=PermissionMode.autopilot_safe,
         reason="Command is classified as read-only or low risk.",
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
     )
 
 
@@ -242,6 +278,10 @@ def _risk_for_permission(permission_mode: PermissionMode) -> CommandRisk:
     if permission_mode == PermissionMode.approval_required:
         return CommandRisk.approval_required
     return CommandRisk.safe
+
+
+def _normalize_agent_roles(agent_roles: list[str]) -> list[str]:
+    return sorted({role.strip().lower() for role in agent_roles if role.strip()})
 
 
 def _record_decision(decision: CommandPolicyDecision) -> None:

@@ -20,8 +20,14 @@ Task:
 
 Rules:
 - Work autonomously.
+- Follow role write boundaries from `docs/agentic-workflows/governance/role-boundaries.md`.
+- Do not silently switch agent roles to justify out-of-scope file edits.
+- Developer agents must not create or modify tests, fixtures, snapshots, or QA validation scripts.
+- QA agents must not create or modify production source, runtime implementation files, schemas, API implementation, or production configuration.
+- If QA needs source changes, QA must fail the story and hand off to Developer with failing evidence.
+- If Developer needs test changes, Developer must hand off to QA with expected behavior and coverage needs.
 - Create or update docs when behavior changes.
-- Add tests for implemented behavior.
+- QA adds or updates tests for implemented behavior.
 - Run quality checks.
 - Commit and push when complete.
 - If release-worthy, create a release bundle and GitHub release.

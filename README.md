@@ -9,6 +9,7 @@ The current repository contains the project specification, planning documents, a
 - [Project goal](docs/DGentic-goal.md)
 - [Documentation index](docs/README.md)
 - [Agentic tasking and workflows](docs/agentic-workflows/README.md)
+- [Agent role boundary rules](docs/agentic-workflows/governance/role-boundaries.md)
 - [Agile task plan](docs/planning/agile-task-plan.md)
 - [Project progress log](docs/progress/project-progress-log.md)
 - [How to use DGentic](docs/how-to/using-dgentic.md)

@@ -61,6 +61,7 @@ Product Owner Agent
 ### Governance
 
 - [Story statuses and Definition of Done](governance/statuses-and-dod.md)
+- [Role boundary and write ownership rules](governance/role-boundaries.md)
 - [Coordination and continuous learning rules](governance/coordination-and-learning.md)
 - [Risk management](governance/risk-management.md)
 
@@ -71,3 +72,5 @@ Product Owner Agent
 ## Operating Rule
 
 Each agent owns its responsibilities independently, but all agents must share status, blockers, decisions, validation results, and follow-up backlog items through the sprint workflow.
+
+Each agent must also obey role write boundaries. Developer Agents must not create or modify tests. QA Agents must not create or modify production source. Any needed out-of-scope change must be handed off to the owning agent.

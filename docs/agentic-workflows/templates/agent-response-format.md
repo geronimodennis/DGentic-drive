@@ -24,6 +24,14 @@ Reference the current story, task, or backlog item.
 
 Describe actions performed.
 
+## Write Scope Used
+
+List the files or file categories the agent changed.
+
+If the agent changed no files, write `None`.
+
+The write scope must match the role boundary rules in `docs/agentic-workflows/governance/role-boundaries.md`.
+
 ## Findings
 
 List:
@@ -48,6 +56,9 @@ Story 7.3: Fully Implement Dynamic Tool Creation
 
 Action Summary:
 Ran API and regression tests for generated tool creation and governance.
+
+Write Scope Used:
+- `tests/`
 
 Findings:
 - Defect: Duplicate detection does not compare interface signatures.

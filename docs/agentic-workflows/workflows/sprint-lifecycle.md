@@ -34,16 +34,28 @@ Owner: Architect
 Owner: Developer
 
 - Implement stories.
-- Write tests.
+- Update implementation documentation when behavior changes.
+- Run existing checks as needed.
 - Submit implementation.
 
-## 5. Unit Testing
+Boundary:
 
-Owner: Developer
+- Developer must not create or modify tests, fixtures, snapshots, or QA validation scripts.
+- If tests need to change, Developer returns the story to QA with the expected behavior and coverage need.
 
+## 5. Test Creation And Unit Testing
+
+Owner: QA
+
+- Create or update tests for implemented behavior.
 - Run automated tests.
-- Validate local correctness.
-- Ensure test coverage.
+- Validate local correctness through test results.
+- Ensure acceptance criteria and regression coverage.
+
+Boundary:
+
+- QA must not create or modify production source, runtime implementation, application schemas, or production configuration.
+- If implementation must change, QA fails the story and returns it to Developer with failing evidence.
 
 ## 6. QA Validation
 
@@ -53,6 +65,11 @@ Owner: QA
 - Execute tests.
 - Detect missing implementation.
 - Validate edge cases.
+
+Boundary:
+
+- QA reports defects and maintains tests only.
+- QA does not patch implementation defects directly.
 
 ## 7. Code Review
 

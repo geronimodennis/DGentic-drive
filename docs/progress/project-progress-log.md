@@ -4,6 +4,27 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Agent Role Boundary Governance Update
+
+Status: strict write ownership rules added for autonomous agents.
+
+Completed:
+- Added `docs/agentic-workflows/governance/role-boundaries.md`.
+- Updated Developer Agent rules so Dev owns production implementation and must not create or modify tests.
+- Updated QA Agent rules so QA owns tests and must not create or modify production source.
+- Updated the sprint lifecycle so test creation and unit testing are QA-owned.
+- Updated autonomous mode rules to require cross-role handoff when source or test changes belong to another role.
+- Updated the agent response template with a required `Write Scope Used` section.
+- Updated README, documentation index, and agentic workflow index.
+
+Verification:
+- Documentation-only change; no runtime tests required.
+
+Remaining production work:
+- Enforce these role boundaries in backend agent orchestration APIs when machine-readable workflow enforcement is implemented.
+
+---
+
 ### Release Distribution 0.2.2
 
 Status: DGentic 0.2.2 release distribution created.

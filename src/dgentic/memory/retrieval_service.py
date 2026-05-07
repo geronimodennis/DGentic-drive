@@ -33,10 +33,11 @@ class RetrievalService:
                 .filter(VectorEmbedding.metadata_id == metadata.id)
                 .first()
             )
-            if not vector_record:
-                continue
-
-            stored_embedding = json.loads(vector_record.embedding)
+            stored_embedding = (
+                json.loads(vector_record.embedding)
+                if vector_record
+                else self.embedding_service.generate_embedding(self._metadata_text(metadata))
+            )
             similarity_score = EmbeddingService.cosine_similarity(query_embedding, stored_embedding)
             if similarity_score < request.similarity_threshold:
                 continue
@@ -166,3 +167,13 @@ class RetrievalService:
         if metadata.access_count > 10:
             score *= 1.1
         return min(score, 1.0)
+
+    def _metadata_text(self, metadata: MemoryMetadata) -> str:
+        parts = [
+            metadata.entity_type,
+            metadata.entity_id,
+            metadata.category or "",
+            metadata.description or "",
+            " ".join(metadata.tags or []),
+        ]
+        return " ".join(part for part in parts if part)

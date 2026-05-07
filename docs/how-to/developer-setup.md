@@ -255,6 +255,16 @@ $metadata = Invoke-RestMethod `
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memory/metadata/$($metadata.id)"
 ```
 
+Run dependency-light hybrid retrieval over metadata text. The default embedding model is deterministic and does not require `sentence-transformers`:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/memory/retrieve/hybrid `
+  -ContentType "application/json" `
+  -Body '{"query":"sprint metadata retrieval","tags":["sprint"],"similarity_threshold":0.1}'
+```
+
 Register a tool in the SQLAlchemy-backed registry and record usage:
 
 ```powershell
@@ -271,7 +281,7 @@ Invoke-RestMethod `
   -Body '{"status":"success","execution_time_ms":25}'
 ```
 
-Semantic vector retrieval routes exist as contracts, but embedding generation requires installing an optional embedding dependency before use.
+Semantic and hybrid retrieval work with the default deterministic hash embedding. Configure an optional sentence-transformers model only when stronger production embeddings are required and the dependency is installed.
 
 ## Run Tests
 
@@ -298,5 +308,5 @@ uv run ruff format .
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous polling, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, streaming output API, or restart-resilient process supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
-- Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
+- Local JSON persistence and SQLite-compatible semantic memory prototypes exist, but no production database migrations, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

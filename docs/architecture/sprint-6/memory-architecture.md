@@ -373,25 +373,34 @@ CREATE INDEX idx_tool_permission ON tool_registry(permission_level);
 
 ## 5. Embedding Model Selection
 
-**Model:** `sentence-transformers/all-MiniLM-L6-v2`
+**MVP default:** `dgentic-hash-embedding-v1`
+
+Sprint 7 uses a deterministic hashed bag-of-words embedding as the default semantic retrieval path. It produces 384-dimensional vectors locally without downloading models or requiring heavyweight dependencies, which keeps tests and local MVP usage reliable.
+
+**Optional production path:** `sentence-transformers/all-MiniLM-L6-v2`
+
+Operators can still configure a sentence-transformers model name when the optional dependency is installed. PostgreSQL plus pgvector and a production embedding model remain the target for a production retrieval backend.
 
 **Rationale:**
-- 384-dimensional embeddings (memory-efficient)
-- Fine-tuned for semantic similarity
-- Works offline (no external API required)
-- ~80MB model size
-- MTEB benchmark: Strong across semantic search tasks
-- Python library: `sentence-transformers`
+- Default retrieval is dependency-light and deterministic for CI and local development.
+- 384-dimensional vectors keep the MVP compatible with the planned pgvector shape.
+- Optional sentence-transformers support preserves a stronger semantic path without making normal installs download model packages.
+- Embeddings remain local; no external API calls are required.
 
 ## 6. Implementation Libraries
 
 ```python
-# Core dependencies (add to pyproject.toml)
+# Core MVP dependency
 "sqlalchemy>=2.0.0,<3.0.0"           # ORM and database access
-"alembic>=1.13.0,<2.0.0"             # Database migrations
-"sentence-transformers>=2.2.0,<3.0.0"  # Embedding generation
-"pgvector>=0.2.0,<1.0.0"             # PostgreSQL vector support
-"psycopg[binary]>=3.1.0,<4.0.0"      # PostgreSQL driver
+```
+
+Future production dependencies under review:
+
+```python
+"alembic>=1.13.0,<2.0.0"               # Database migrations
+"sentence-transformers>=2.2.0,<3.0.0"  # Optional embedding generation
+"pgvector>=0.2.0,<1.0.0"               # PostgreSQL vector support
+"psycopg[binary]>=3.1.0,<4.0.0"        # PostgreSQL driver
 ```
 
 ## 7. Service Layer Architecture
@@ -421,7 +430,7 @@ dgentic/
 
 **Story 6.1:** ✓ Metadata schema defined | ✓ Database backend selected | ✓ API contracts defined
 
-**Story 6.2:** ✓ Vector backend selected | ✓ Retrieval API defined | ✓ Compression strategy (future: summarization)
+**Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | Compression strategy remains future summarization work
 
 **Story 7.1:** ✓ Tool manifest schema defined | ✓ API contracts defined | ✓ Duplicate detection endpoint
 

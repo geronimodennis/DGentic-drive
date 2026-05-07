@@ -437,6 +437,54 @@ def test_metadata_index_api_crud(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_hybrid_retrieval_api_uses_default_hash_embedding(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "semantic-memory",
+            "tags": ["semantic", "metadata"],
+            "category": "retrieval",
+            "description": "Semantic metadata retrieval combines search tags and scoring.",
+            "relevance_score": 0.8,
+        },
+    )
+    client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "release-memory",
+            "tags": ["release"],
+            "category": "release",
+            "description": "Release packaging and checksum upload.",
+            "relevance_score": 0.9,
+        },
+    )
+    retrieval_response = client.post(
+        "/api/v1/memory/retrieve/hybrid",
+        json={
+            "query": "semantic metadata retrieval",
+            "tags": ["semantic"],
+            "similarity_threshold": 0.1,
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert retrieval_response.status_code == 200
+    body = retrieval_response.json()
+    assert body["total"] == 1
+    assert body["results"][0]["entity_id"] == "semantic-memory"
+    assert body["results"][0]["source"] == "hybrid_retrieval"
+    get_settings.cache_clear()
+
+
 def test_tool_registry_api_duplicate_usage_and_deprecation(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

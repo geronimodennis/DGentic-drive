@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Sprint 7 Semantic Retrieval Kickoff
+
+Status: completed.
+
+Current story:
+- Story 6.2: Build Hybrid Retrieval.
+
+Sprint goal:
+- Make semantic and hybrid retrieval testable without requiring model downloads or heavyweight embedding dependencies.
+
+Checklist:
+- Completed: PM created sprint checklist and tracked implemented, partially implemented, and not-yet-implemented features.
+- Completed: Dev added dependency-light embedding generation and retrieval fallback behavior.
+- Completed: QA added service and API tests for semantic retrieval.
+- Completed: PM updated README, Agile task plan, architecture/usage docs, and progress log.
+- Completed: Ran quality gates.
+- Completed: Commit and push completed sprint slice.
+
+Feature tracking:
+- Implemented before sprint: metadata-only retrieval route contracts and retrieval service scaffolding.
+- Partially implemented before sprint: semantic/vector retrieval route contracts without tested dependency-light behavior.
+- Not yet implemented before sprint: production vector backend, migrations, compression/summarization workflow, and performance validation.
+
+Completed in this sprint slice:
+- Added deterministic `dgentic-hash-embedding-v1` embeddings so semantic retrieval works without model downloads or heavyweight embedding dependencies.
+- Added hybrid retrieval fallback scoring from metadata text when a stored vector embedding is not available.
+- Added service tests for deterministic embeddings, hybrid metadata fallback, and stored vector retrieval.
+- Added API regression coverage for `/api/v1/memory/retrieve/hybrid` using default hash embeddings.
+
+Current feature status:
+- Implemented: metadata index CRUD, metadata-only retrieval, dependency-light hybrid retrieval, stored vector retrieval, and focused service/API coverage.
+- Partially implemented: production memory backend, optional external embedding model operations, migrations, compression/summarization, and performance validation.
+- Not yet implemented: production vector backend selection/integration and long-term memory lifecycle policy.
+
+Focused verification:
+- `uv run pytest tests\test_retrieval_service.py tests\test_api.py` passed with 26 tests.
+
+Full verification:
+- `uv run pytest` passed with 79 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Sprint close decision:
+- Story 6.2 is complete for the MVP dependency-light retrieval acceptance criteria.
+- Follow-up backlog remains open for production vector backend selection, migrations, optional external embedding packaging, compression/summarization, and retrieval performance validation.
+
+---
+
 ### Agent Checklist And Progress Governance Update
 
 Status: agent workflow rules updated.

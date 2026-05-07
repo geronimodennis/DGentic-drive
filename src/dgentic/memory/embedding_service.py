@@ -1,33 +1,36 @@
 """Embedding service for vector generation and storage."""
 
+import hashlib
 import json
 import math
-from typing import Any
+import re
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from dgentic.memory.models import VectorEmbedding
 
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+
 
 class EmbeddingService:
     """Service for generating and storing vector embeddings.
 
-    The sentence-transformers dependency is intentionally optional for this MVP slice. Metadata
-    and registry tests should not need to download a model; vector generation raises a clear
-    runtime error unless the optional dependency is installed by an operator.
+    The default model is a deterministic hashed bag-of-words embedding. It is dependency-light,
+    testable, and good enough for MVP semantic retrieval contracts. Operators can still pass a
+    sentence-transformers model name when that optional dependency is installed.
     """
 
-    DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    DEFAULT_MODEL = "dgentic-hash-embedding-v1"
     EMBEDDING_DIMENSION = 384
 
     def __init__(self, session: Session, model_name: str | None = None):
         self.session = session
         self.model_name = model_name or self.DEFAULT_MODEL
-        self._model: Any | None = None
+        self._model = None
 
     @property
-    def model(self) -> Any:
+    def model(self):
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -41,8 +44,27 @@ class EmbeddingService:
 
     def generate_embedding(self, text: str) -> list[float]:
         content = text or "[empty]"
+        if self.model_name == self.DEFAULT_MODEL:
+            return self._generate_hash_embedding(content)
         embedding = self.model.encode(content, convert_to_tensor=False)
         return embedding.tolist()
+
+    def _generate_hash_embedding(self, text: str) -> list[float]:
+        vector = [0.0] * self.EMBEDDING_DIMENSION
+        tokens = _TOKEN_RE.findall(text.lower())
+        if not tokens:
+            tokens = ["empty"]
+
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:4], "big") % self.EMBEDDING_DIMENSION
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[index] += sign
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            return vector
+        return [value / norm for value in vector]
 
     def store_embedding(self, metadata_id: UUID | str, embedding: list[float]) -> VectorEmbedding:
         vector_record = VectorEmbedding(

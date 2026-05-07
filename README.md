@@ -93,7 +93,7 @@ The backend currently exposes:
 - `POST /agents`, `GET /agents`, `GET /agents/{agent_id}`, `GET /agents/{agent_id}/children`, `PATCH /agents/{agent_id}/status`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
 - `POST /api/v1/memory/metadata`, `GET /api/v1/memory/metadata`, `GET /api/v1/memory/metadata/{metadata_id}`, `PATCH /api/v1/memory/metadata/{metadata_id}`, and `DELETE /api/v1/memory/metadata/{metadata_id}` for SQLAlchemy-backed metadata index CRUD.
-- `POST /api/v1/memory/retrieve/hybrid`, `POST /api/v1/memory/retrieve/vector`, and `GET /api/v1/memory/retrieve/metadata` for retrieval service contracts. Semantic vector generation requires an optional embedding dependency.
+- `POST /api/v1/memory/retrieve/hybrid`, `POST /api/v1/memory/retrieve/vector`, and `GET /api/v1/memory/retrieve/metadata` for dependency-light metadata, hybrid, and vector retrieval service contracts.
 - `POST /tools`, `POST /tools/generate`, `POST /tools/{name}/execute`, `GET /tools`, and `PATCH /tools/{name}/governance` for local tool registration, generation, execution, listing, and deprecation/disable governance.
 - `POST /api/v1/tools/registry`, `GET /api/v1/tools/registry`, `GET /api/v1/tools/registry/{tool_id}`, `POST /api/v1/tools/registry/check-duplicate`, `POST /api/v1/tools/registry/{tool_id}/usage`, and `POST /api/v1/tools/registry/{tool_id}/deprecate` for SQLAlchemy-backed tool registry services.
 - `POST /sessions/summary`, `GET /sessions/summary`, and `GET /logs` for session and observability contracts.
@@ -143,6 +143,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Sub-agent lifecycle tracking, parent-child relationships, status updates, and reconciliation contracts.
 - Dynamic local tool generation and execution under `localmcp/`, tool registry persistence, governance status, duplicate detection, and reliability counters.
 - Memory records, session summaries, event logs, and local JSON state persistence for MVP workflows.
+- SQLAlchemy metadata indexing with CRUD APIs, deterministic hash embeddings, metadata fallback hybrid retrieval, stored vector retrieval, and focused retrieval/API tests.
 - Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, strict role write-boundary governance, and mandatory checklist/progress-update governance.
 - Release distribution process with versioned release notes and zip bundles.
 
@@ -151,7 +152,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - CLI integration: approvals, policy rules, polling, cancellation, context-aware rules, and environment controls exist; streaming output, restart-resilient process supervision, stale-running reconciliation, broader Windows/POSIX parsing validation, and approval/environment review UX remain.
 - Filesystem runtime: guarded UTF-8 text read/write exists; binary operations, deletes, moves, richer workflows, and stronger permission granularity remain.
 - Provider system: Ollama and LM Studio runtime calls exist; external provider adapters, secure credential storage, rate-limit handling, and streaming generation remain.
-- Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, and retrieval service contracts exist; tested semantic retrieval, vector backend productionization, compression, and long-term memory lifecycle management remain production follow-up work.
+- Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, deterministic semantic retrieval fallback, stored vector retrieval, and retrieval API tests exist; production vector backend, compression, performance validation, and long-term memory lifecycle management remain production follow-up work.
 - Tool runtime: local tool generation, execution, governance, reliability tracking, SQLAlchemy tool registry services, duplicate checks, usage tracking, and registry routes exist; stronger sandbox isolation, permission enforcement depth, generated-tool registry integration, and production-safe dependency isolation remain.
 - Agent orchestration: lifecycle contracts and documentation exist; autonomous execution coordination, machine-readable role-boundary enforcement, and production multi-agent scheduling remain.
 - Persistence: local JSON collections and SQLite-compatible SQLAlchemy service prototypes exist; production database support, migrations, indexing, concurrency controls, and backup/restore remain.

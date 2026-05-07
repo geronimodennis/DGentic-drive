@@ -206,6 +206,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/memory/metadata `
   -d '{"entity_type":"memory","entity_id":"memory-1","tags":["sprint","metadata"],"category":"planning","description":"Sprint metadata record.","relevance_score":0.8}'
 ```
 
+Run dependency-light hybrid retrieval over metadata text. The default embedding model is deterministic and does not require model downloads:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/memory/retrieve/hybrid `
+  -H "Content-Type: application/json" `
+  -d '{"query":"sprint metadata retrieval","tags":["sprint"],"similarity_threshold":0.1}'
+```
+
 Register a tool in the SQLAlchemy-backed registry:
 
 ```powershell
@@ -288,11 +296,12 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- State is persisted as local JSON collections, but production-grade migrations, indexing, and concurrency controls still need to be added.
+- State is persisted as local JSON collections and SQLite-compatible metadata prototypes, but production-grade migrations, vector backend integration, indexing, and concurrency controls still need to be added.
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute, start asynchronous runs, poll run status, cancel process-local runs, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, streaming output API, or restart-resilient process supervision.
+- Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

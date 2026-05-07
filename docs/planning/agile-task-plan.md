@@ -252,8 +252,8 @@ Tasks:
 - Add compression strategy design.
 
 Current implementation status:
-- Completed: vector embedding record model, optional embedding service wrapper, cosine similarity helper, retrieval service structure, metadata-only retrieval, hybrid/vector API route definitions, and architecture documentation draft.
-- Remaining: tested semantic retrieval behavior, optional dependency installation strategy, production vector backend decision, compression/summarization workflow, retrieval API tests, and performance validation.
+- Completed: vector embedding record model, dependency-light deterministic hash embedding service, optional sentence-transformers wrapper path, cosine similarity helper, retrieval service structure, metadata-only retrieval, hybrid metadata-text fallback when stored vectors are absent, stored vector search, hybrid/vector API route definitions, architecture documentation draft, focused service tests, and hybrid retrieval API tests.
+- Remaining: production vector backend decision, optional external embedding model packaging/operations strategy, compression/summarization workflow, migrations, and performance validation.
 
 ## Epic 7: Tool Runtime And Self-Extensibility
 

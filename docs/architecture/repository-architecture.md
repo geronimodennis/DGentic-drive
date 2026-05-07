@@ -27,6 +27,12 @@ dgentic/
       guardrails.py
       main.py
       memory.py
+      memory/
+        embedding_service.py
+        metadata_service.py
+        models.py
+        retrieval_service.py
+        schemas.py
       planner.py
       provider_runtime.py
       providers.py
@@ -36,6 +42,8 @@ dgentic/
       storage.py
       tool_runtime.py
       tools.py
+      tools/
+        registry_service.py
   tests/
   .env.example
   .gitignore
@@ -53,6 +61,7 @@ Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
+- `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
 - `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, and executable, exact-command, contains, and argument-aware command matching.
 - `cli_runtime.py`: CLI approvals, root-bound synchronous and asynchronous command execution, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
@@ -62,8 +71,10 @@ Current modules:
 - `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
 - `provider_runtime.py`: Ollama and LM Studio chat/completion request execution.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
-- `memory.py`: In-memory memory record indexing and search.
-- `tools.py`: Local tool manifest registration, guarded tool generation, duplicate detection, and governance updates.
+- `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
+- `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
+- `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
+- `tools/`: SQLAlchemy-backed tool registry service with duplicate detection, usage tracking, reliability scoring, and source-path validation.
 - `tool_runtime.py`: Generated tool subprocess execution and reliability counter updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
@@ -149,11 +160,25 @@ Current endpoints:
 - `POST /agents/reconcile`: Reconciles sub-agent output reports.
 - `POST /memory`: Adds an in-memory memory record.
 - `POST /memory/search`: Searches memory records by text and tags.
+- `POST /api/v1/memory/metadata`: Creates a SQLAlchemy-backed metadata index record.
+- `GET /api/v1/memory/metadata`: Lists metadata index records with filters.
+- `GET /api/v1/memory/metadata/{metadata_id}`: Retrieves a metadata index record and updates access tracking.
+- `PATCH /api/v1/memory/metadata/{metadata_id}`: Updates a metadata index record.
+- `DELETE /api/v1/memory/metadata/{metadata_id}`: Deletes a metadata index record.
+- `POST /api/v1/memory/retrieve/hybrid`: Runs the hybrid retrieval contract. Semantic embedding generation currently requires an optional embedding dependency.
+- `POST /api/v1/memory/retrieve/vector`: Runs the vector retrieval contract. Semantic embedding generation currently requires an optional embedding dependency.
+- `GET /api/v1/memory/retrieve/metadata`: Runs metadata-only retrieval.
 - `POST /tools`: Registers a local tool manifest.
 - `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files.
 - `POST /tools/{name}/execute`: Executes a registered generated tool and updates reliability counters.
 - `GET /tools`: Lists registered tool manifests.
 - `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
+- `POST /api/v1/tools/registry`: Registers a SQLAlchemy-backed tool registry entry.
+- `GET /api/v1/tools/registry`: Lists SQLAlchemy-backed tool registry entries.
+- `GET /api/v1/tools/registry/{tool_id}`: Retrieves a tool registry entry.
+- `POST /api/v1/tools/registry/check-duplicate`: Checks duplicate tools by name, interface signature, and tag overlap.
+- `POST /api/v1/tools/registry/{tool_id}/usage`: Records tool usage and updates reliability.
+- `POST /api/v1/tools/registry/{tool_id}/deprecate`: Marks a tool registry entry as deprecated.
 - `POST /sessions/summary`: Creates a session summary.
 - `GET /sessions/summary`: Lists session summaries.
 - `GET /logs`: Lists recorded events, optionally filtered by event type.
@@ -176,7 +201,7 @@ Quality gates:
 
 ## Local State
 
-DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`.
+DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`. SQLAlchemy-backed metadata and registry services use `.dgentic/dgentic.db` by default for the local MVP database.
 
 Current collections:
 
@@ -190,6 +215,7 @@ Current collections:
 - `cli-approvals.json`
 - `cli-command-policy-rules.json`
 - `cli-command-runs.json`
+- `dgentic.db`
 
 ## Architecture Decisions
 
@@ -198,6 +224,7 @@ Current collections:
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
+- Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice; production database target, migrations, and vector storage remain follow-up decisions.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.

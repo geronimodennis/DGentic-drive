@@ -241,6 +241,38 @@ Invoke-RestMethod `
   -Body '{"path":"notes/sprint.txt"}'
 ```
 
+## Use Metadata And Tool Registry Services
+
+Create and query a SQLAlchemy-backed metadata index record:
+
+```powershell
+$metadata = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/memory/metadata `
+  -ContentType "application/json" `
+  -Body '{"entity_type":"memory","entity_id":"memory-1","tags":["sprint","metadata"],"category":"planning","description":"Sprint metadata record.","relevance_score":0.8}'
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memory/metadata/$($metadata.id)"
+```
+
+Register a tool in the SQLAlchemy-backed registry and record usage:
+
+```powershell
+$tool = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/tools/registry `
+  -ContentType "application/json" `
+  -Body '{"tool_name":"example-tool","version":"1.0.0","source_path":"localmcp/example-tool","interface_signature":"sha256:example","permission_level":"approval_required","tags":["example"]}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/tools/registry/$($tool.id)/usage" `
+  -ContentType "application/json" `
+  -Body '{"status":"success","execution_time_ms":25}'
+```
+
+Semantic vector retrieval routes exist as contracts, but embedding generation requires installing an optional embedding dependency before use.
+
 ## Run Tests
 
 ```powershell

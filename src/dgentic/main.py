@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from dgentic.api.memory_routes import router as memory_router
 from dgentic.api.routes import router
 from dgentic.settings import get_settings
 
@@ -12,6 +13,7 @@ def create_app() -> FastAPI:
         summary="DGentic autonomous AI agent platform API.",
     )
     app.include_router(router)
+    app.include_router(memory_router)
     return app
 
 

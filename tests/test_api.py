@@ -397,6 +397,91 @@ def test_agent_memory_tool_and_session_registries() -> None:
     assert summary_response.status_code == 201
 
 
+def test_metadata_index_api_crud(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "memory-1",
+            "tags": ["sprint", "metadata"],
+            "category": "planning",
+            "description": "Sprint metadata record.",
+            "relevance_score": 0.8,
+        },
+    )
+    metadata = create_response.json()
+    get_response = client.get(f"/api/v1/memory/metadata/{metadata['id']}")
+    list_response = client.get("/api/v1/memory/metadata?category=planning")
+    patch_response = client.patch(
+        f"/api/v1/memory/metadata/{metadata['id']}",
+        json={"relevance_score": 0.9},
+    )
+    delete_response = client.delete(f"/api/v1/memory/metadata/{metadata['id']}")
+
+    assert create_response.status_code == 201
+    assert metadata["entity_id"] == "memory-1"
+    assert get_response.status_code == 200
+    assert get_response.json()["access_count"] == 1
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+    assert patch_response.status_code == 200
+    assert patch_response.json()["relevance_score"] == 0.9
+    assert delete_response.status_code == 204
+    get_settings.cache_clear()
+
+
+def test_tool_registry_api_duplicate_usage_and_deprecation(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/api/v1/tools/registry",
+        json={
+            "tool_name": "example-tool",
+            "version": "1.0.0",
+            "source_path": "localmcp/example-tool",
+            "interface_signature": "sha256:example",
+            "permission_level": "approval_required",
+            "tags": ["example"],
+        },
+    )
+    tool = create_response.json()
+    duplicate_response = client.post(
+        "/api/v1/tools/registry/check-duplicate",
+        json={
+            "tool_name": "example-tool",
+            "interface_signature": "sha256:example",
+        },
+    )
+    usage_response = client.post(
+        f"/api/v1/tools/registry/{tool['id']}/usage",
+        json={"status": "success", "execution_time_ms": 25},
+    )
+    deprecate_response = client.post(f"/api/v1/tools/registry/{tool['id']}/deprecate")
+
+    assert create_response.status_code == 201
+    assert tool["tool_name"] == "example-tool"
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["is_duplicate"] is True
+    assert usage_response.status_code == 200
+    assert usage_response.json()["usage_count"] == 1
+    assert usage_response.json()["reliability_score"] == 1.0
+    assert deprecate_response.status_code == 200
+    assert deprecate_response.json()["deprecated"] is True
+    get_settings.cache_clear()
+
+
 def test_agent_lifecycle_tracks_parent_child_and_completion(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     get_settings.cache_clear()

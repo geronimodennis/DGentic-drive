@@ -198,6 +198,22 @@ curl -X POST http://127.0.0.1:8000/tools/pdf-generator/execute `
   -d '{"payload":{"title":"Example"},"approved":true}'
 ```
 
+Create a SQLAlchemy-backed metadata index record:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/memory/metadata `
+  -H "Content-Type: application/json" `
+  -d '{"entity_type":"memory","entity_id":"memory-1","tags":["sprint","metadata"],"category":"planning","description":"Sprint metadata record.","relevance_score":0.8}'
+```
+
+Register a tool in the SQLAlchemy-backed registry:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/tools/registry `
+  -H "Content-Type: application/json" `
+  -d '{"tool_name":"example-tool","version":"1.0.0","source_path":"localmcp/example-tool","interface_signature":"sha256:example","permission_level":"approval_required","tags":["example"]}'
+```
+
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
 
 Local MVP state is written to `.dgentic/` by default. Set `DGENTIC_DATA_DIR` to move state elsewhere.

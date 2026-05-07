@@ -92,7 +92,10 @@ The backend currently exposes:
 - `GET /providers`, `GET /providers/{provider_id}/health`, `POST /providers/generate`, and `POST /routing/decide` for Ollama/LM Studio probes, generation calls, and scored provider routing.
 - `POST /agents`, `GET /agents`, `GET /agents/{agent_id}`, `GET /agents/{agent_id}/children`, `PATCH /agents/{agent_id}/status`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
+- `POST /api/v1/memory/metadata`, `GET /api/v1/memory/metadata`, `GET /api/v1/memory/metadata/{metadata_id}`, `PATCH /api/v1/memory/metadata/{metadata_id}`, and `DELETE /api/v1/memory/metadata/{metadata_id}` for SQLAlchemy-backed metadata index CRUD.
+- `POST /api/v1/memory/retrieve/hybrid`, `POST /api/v1/memory/retrieve/vector`, and `GET /api/v1/memory/retrieve/metadata` for retrieval service contracts. Semantic vector generation requires an optional embedding dependency.
 - `POST /tools`, `POST /tools/generate`, `POST /tools/{name}/execute`, `GET /tools`, and `PATCH /tools/{name}/governance` for local tool registration, generation, execution, listing, and deprecation/disable governance.
+- `POST /api/v1/tools/registry`, `GET /api/v1/tools/registry`, `GET /api/v1/tools/registry/{tool_id}`, `POST /api/v1/tools/registry/check-duplicate`, `POST /api/v1/tools/registry/{tool_id}/usage`, and `POST /api/v1/tools/registry/{tool_id}/deprecate` for SQLAlchemy-backed tool registry services.
 - `POST /sessions/summary`, `GET /sessions/summary`, and `GET /logs` for session and observability contracts.
 
 Local state is stored under `.dgentic/` by default and is ignored by Git. Override it with `DGENTIC_DATA_DIR`.
@@ -148,10 +151,10 @@ README status policy: keep this section updated after every sprint, release, or 
 - CLI integration: approvals, policy rules, polling, cancellation, context-aware rules, and environment controls exist; streaming output, restart-resilient process supervision, stale-running reconciliation, broader Windows/POSIX parsing validation, and approval/environment review UX remain.
 - Filesystem runtime: guarded UTF-8 text read/write exists; binary operations, deletes, moves, richer workflows, and stronger permission granularity remain.
 - Provider system: Ollama and LM Studio runtime calls exist; external provider adapters, secure credential storage, rate-limit handling, and streaming generation remain.
-- Memory and retrieval: memory record storage and text/tag search exist; semantic retrieval, vector indexing, compression, and long-term memory lifecycle management remain.
-- Tool runtime: local tool generation, execution, governance, and reliability tracking exist; stronger sandbox isolation, permission enforcement depth, and production-safe dependency isolation remain.
+- Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, and retrieval service contracts exist; tested semantic retrieval, vector backend productionization, compression, and long-term memory lifecycle management remain production follow-up work.
+- Tool runtime: local tool generation, execution, governance, reliability tracking, SQLAlchemy tool registry services, duplicate checks, usage tracking, and registry routes exist; stronger sandbox isolation, permission enforcement depth, generated-tool registry integration, and production-safe dependency isolation remain.
 - Agent orchestration: lifecycle contracts and documentation exist; autonomous execution coordination, machine-readable role-boundary enforcement, and production multi-agent scheduling remain.
-- Persistence: local JSON collections exist; production database support, migrations, indexing, concurrency controls, and backup/restore remain.
+- Persistence: local JSON collections and SQLite-compatible SQLAlchemy service prototypes exist; production database support, migrations, indexing, concurrency controls, and backup/restore remain.
 
 ### Not Yet Implemented
 

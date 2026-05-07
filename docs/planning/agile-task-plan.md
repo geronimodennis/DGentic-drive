@@ -233,6 +233,10 @@ Tasks:
 - Select database backend.
 - Implement indexing service.
 
+Current implementation status:
+- Completed: SQLAlchemy metadata model, SQLite-compatible local MVP storage, metadata CRUD/filter service, access tracking, Pydantic request/response schemas, metadata API routes, focused service tests, and API CRUD tests.
+- Remaining: production database decision, migrations, event log integration for metadata updates, and concurrency/indexing hardening.
+
 ### Story 6.2: Build Hybrid Retrieval
 
 As a user, I want DGentic to combine structured index lookup with semantic vector search so relevant memory is found quickly.
@@ -246,6 +250,10 @@ Tasks:
 - Select vector backend.
 - Implement retrieval query flow.
 - Add compression strategy design.
+
+Current implementation status:
+- Completed: vector embedding record model, optional embedding service wrapper, cosine similarity helper, retrieval service structure, metadata-only retrieval, hybrid/vector API route definitions, and architecture documentation draft.
+- Remaining: tested semantic retrieval behavior, optional dependency installation strategy, production vector backend decision, compression/summarization workflow, retrieval API tests, and performance validation.
 
 ## Epic 7: Tool Runtime And Self-Extensibility
 
@@ -262,6 +270,10 @@ Tasks:
 - Define local tool manifest.
 - Implement registration workflow.
 - Add governance metadata.
+
+Current implementation status:
+- Completed: SQLAlchemy tool registry model, registration/list/get service, duplicate checks by name/signature/tag overlap, usage/reliability tracking, deprecation workflow, `localmcp/` source path validation, API routes, focused service tests, and API duplicate/usage/deprecation tests.
+- Remaining: integration with generated `localmcp/` tool creation flow, migration strategy, and production permission/governance enforcement.
 
 ### Story 7.2: Execute Tools Safely
 

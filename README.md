@@ -16,6 +16,7 @@ The current repository contains the project specification, planning documents, a
 - [Developer setup](docs/how-to/developer-setup.md)
 - [Repository architecture](docs/architecture/repository-architecture.md)
 - [Release distribution](docs/how-to/release-distribution.md)
+- [0.2.5 release notes](docs/releases/0.2.5.md)
 - [0.2.4 release notes](docs/releases/0.2.4.md)
 - [0.2.3 release notes](docs/releases/0.2.3.md)
 - [0.2.2 release notes](docs/releases/0.2.2.md)

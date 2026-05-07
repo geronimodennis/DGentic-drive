@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Release Distribution 0.2.5
+
+Status: DGentic 0.2.5 git release distribution created.
+
+Completed:
+- Bumped package, API, backend `__version__`, and generated tool default version metadata to `0.2.5`.
+- Added release notes in `docs/releases/0.2.5.md`.
+- Built source distribution: `dist/dgentic-0.2.5.tar.gz`.
+- Built wheel distribution: `dist/dgentic-0.2.5-py3-none-any.whl`.
+- Updated artifact checksums in `dist/SHA256SUMS.txt`.
+- Created release bundle: `releases/dgentic-0.2.5.zip`.
+- Updated README, documentation index, release distribution guide, and progress log.
+
+Verification:
+- `uv run pytest` passed with 46 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+- `uv build` created both wheel and source distribution.
+- Clean virtual environment install from `dist/dgentic-0.2.5-py3-none-any.whl` succeeded.
+- Packaged `dgentic-server` command started successfully on port 8015.
+- Packaged `/health` endpoint returned `status: ok`.
+
+Artifact hashes:
+- `dgentic-0.2.5.tar.gz`: `852308F97DFE70944202FCD4CCF6F84717994B4BDA8E90D1F75E98B68D95613F`
+- `dgentic-0.2.5-py3-none-any.whl`: `37906AC92927AF96016EB6CCAE2EABBC2FF91F9E151C7FD981F1B54D5F954B27`
+- `dgentic-0.2.5.zip`: `13D4077924452B7348914E9C9E1217A9E513BD789C484CD622469E7BB98CB562`
+
+Blocker:
+- GitHub Release asset upload still requires GitHub CLI, a GitHub token, or the GitHub plugin in the execution environment.
+
+---
+
 ### Release Distribution 0.2.4
 
 Status: DGentic 0.2.4 release distribution created.

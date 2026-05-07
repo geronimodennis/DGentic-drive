@@ -4,6 +4,22 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Agent Checklist And Progress Governance Update
+
+Status: agent workflow rules updated.
+
+Checklist:
+- Completed: Added mandatory checklist creation to autonomous coordination rules.
+- Completed: Added mandatory progress update rule for work completion, blockers, handoffs, and follow-up backlog items.
+- Completed: Updated PM responsibilities so sprint closure requires a completed checklist and updated progress documentation.
+- Completed: Updated autonomous mode, sprint lifecycle, workflow index, and agent response template.
+- Completed: Updated README current status to mention checklist/progress governance.
+
+Verification:
+- Documentation-only governance change; no runtime tests required.
+
+---
+
 ### Sprint 6 Reconciliation And PM Handoff
 
 Status: repository reconciled; PM has initiated the next active sprint around memory and tool registry foundations.

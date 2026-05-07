@@ -12,8 +12,23 @@ Agents must:
 - Stay inside the write scope defined in `governance/role-boundaries.md`.
 - Hand off work to the owning role instead of editing out-of-scope files.
 - Continuously update statuses.
+- Create and maintain a visible checklist for every sprint, story, or delegated task.
+- Update the project progress record whenever checklist status changes, work is completed, blockers are found, or follow-up work is created.
 - Create backlog items automatically.
 - Learn from previous sprint failures.
+
+## Checklist And Progress Rule
+
+Every agent must create a checklist before executing meaningful work.
+
+The checklist must:
+
+- Identify the current sprint, story, or task.
+- Show required workflow gates for the agent's role.
+- Be updated as work moves from pending to in progress to completed.
+- Record blockers, handoffs, validation results, and follow-up backlog items.
+
+The PM Agent owns the shared sprint checklist, but each agent owns the checklist for its assigned work. Progress updates must be recorded in `docs/progress/project-progress-log.md` or the active sprint/progress document before a story is considered ready for closure.
 
 ## Cross-Role Handoff Rule
 

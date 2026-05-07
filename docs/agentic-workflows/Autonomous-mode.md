@@ -26,6 +26,9 @@ Rules:
 - QA agents must not create or modify production source, runtime implementation files, schemas, API implementation, or production configuration.
 - If QA needs source changes, QA must fail the story and hand off to Developer with failing evidence.
 - If Developer needs test changes, Developer must hand off to QA with expected behavior and coverage needs.
+- Always create a checklist for the sprint, story, or delegated task before execution.
+- Always update checklist status as work progresses.
+- Always update the project progress record when work completes, blockers appear, handoffs happen, or follow-up backlog items are created.
 - Create or update docs when behavior changes.
 - QA adds or updates tests for implemented behavior.
 - Run quality checks.

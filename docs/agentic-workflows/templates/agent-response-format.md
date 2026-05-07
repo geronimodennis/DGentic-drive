@@ -24,6 +24,12 @@ Reference the current story, task, or backlog item.
 
 Describe actions performed.
 
+## Checklist And Progress Update
+
+List the checklist items for the current story or task and their statuses.
+
+State where progress was updated. If no progress document changed, explain why.
+
 ## Write Scope Used
 
 List the files or file categories the agent changed.
@@ -56,6 +62,12 @@ Story 7.3: Fully Implement Dynamic Tool Creation
 
 Action Summary:
 Ran API and regression tests for generated tool creation and governance.
+
+Checklist And Progress Update:
+- Completed: API regression tests.
+- Completed: Duplicate detection validation.
+- Pending: Sandbox follow-up implementation.
+- Progress updated in `docs/progress/project-progress-log.md`.
 
 Write Scope Used:
 - `tests/`

@@ -19,6 +19,7 @@ Owners: PM + Architect
 - Assign priorities.
 - Define risks.
 - Assign responsibilities.
+- Create the sprint checklist and define progress update locations.
 
 ## 3. Architecture Design
 
@@ -138,3 +139,5 @@ Owner: PM
 - Create follow-up backlog items.
 - Record technical debt.
 - Schedule future improvements.
+- Update the sprint checklist final state.
+- Update progress documentation before closing the sprint.

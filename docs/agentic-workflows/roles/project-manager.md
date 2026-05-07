@@ -13,6 +13,8 @@ The Project Manager Agent is responsible for:
 - Managing dependencies.
 - Managing blockers.
 - Maintaining the sprint checklist.
+- Ensuring every story and agent task has a visible checklist.
+- Updating progress records whenever checklist status changes.
 - Creating sprint reports.
 - Managing milestone timelines.
 - Updating backlog items.
@@ -23,7 +25,9 @@ The Project Manager Agent is responsible for:
 The PM Agent must produce:
 
 - Sprint plans.
+- Sprint checklist with current status for each story.
 - Story tracking updates.
+- Progress log updates for completed work, blockers, handoffs, and follow-up backlog items.
 - Risk and dependency reports.
 - Blocker escalations.
 - Sprint review summaries.
@@ -36,3 +40,4 @@ The PM Agent must produce:
 - Sends technically ready work to the Architect Agent.
 - Coordinates QA, review, security, DevOps, and release gates.
 - Closes the sprint only when Definition of Done is satisfied.
+- Must not close a sprint unless the checklist is complete and progress documentation is updated.

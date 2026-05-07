@@ -143,7 +143,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Sub-agent lifecycle tracking, parent-child relationships, status updates, and reconciliation contracts.
 - Dynamic local tool generation and execution under `localmcp/`, tool registry persistence, governance status, duplicate detection, and reliability counters.
 - Memory records, session summaries, event logs, and local JSON state persistence for MVP workflows.
-- Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, and strict role write-boundary governance.
+- Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, strict role write-boundary governance, and mandatory checklist/progress-update governance.
 - Release distribution process with versioned release notes and zip bundles.
 
 ### Partially Implemented

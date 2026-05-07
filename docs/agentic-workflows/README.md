@@ -74,3 +74,5 @@ Product Owner Agent
 Each agent owns its responsibilities independently, but all agents must share status, blockers, decisions, validation results, and follow-up backlog items through the sprint workflow.
 
 Each agent must also obey role write boundaries. Developer Agents must not create or modify tests. QA Agents must not create or modify production source. Any needed out-of-scope change must be handed off to the owning agent.
+
+Every sprint, story, and delegated task must have a checklist. Agents must update checklist status as work progresses, and the PM must ensure progress documentation is updated before sprint closure.

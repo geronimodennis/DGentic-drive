@@ -125,6 +125,38 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/execute"
 ```
 
+Configure persisted command policy rules when the built-in defaults are too broad or too narrow. Rules are evaluated by ascending priority and can match by executable, exact command, command substring, or argument substring:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/cli/policy/rules `
+  -ContentType "application/json" `
+  -Body '{"name":"Block unsafe flag","match_type":"argument_contains","pattern":"--unsafe","permission_mode":"blocked","reason":"Unsafe flag is blocked by workspace policy.","priority":5}'
+```
+
+Check that the argument-aware rule applies:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/guardrails/commands `
+  -ContentType "application/json" `
+  -Body '{"command":"cmd /c echo --unsafe"}'
+```
+
+List or disable configured policy rules:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/cli/policy/rules
+
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
+  -ContentType "application/json" `
+  -Body '{"enabled":false}'
+```
+
 ## Check Local Providers
 
 ```powershell
@@ -204,7 +236,7 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound with approval records, but there is no interactive approval UI or cancellation API yet.
+- CLI execution is policy-enforced and root-bound with configurable policy rules and approval records, but there is no interactive approval UI, cancellation API, or streaming/polling output API yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence exists, but no production database, semantic memory index, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

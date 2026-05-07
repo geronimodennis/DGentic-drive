@@ -4,6 +4,77 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Release Distribution 0.2.1
+
+Status: DGentic 0.2.1 release distribution created.
+
+Completed:
+- Bumped package, API, and backend `__version__` metadata to `0.2.1`.
+- Added release notes in `docs/releases/0.2.1.md`.
+- Built source distribution: `dist/dgentic-0.2.1.tar.gz`.
+- Built wheel distribution: `dist/dgentic-0.2.1-py3-none-any.whl`.
+- Updated artifact checksums in `dist/SHA256SUMS.txt`.
+- Created release bundle: `releases/dgentic-0.2.1.zip`.
+- Updated release distribution documentation.
+
+Verification:
+- `uv run pytest` passed with 36 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+- `uv build` created both wheel and source distribution.
+- Clean virtual environment install from `dist/dgentic-0.2.1-py3-none-any.whl` succeeded.
+- Packaged `dgentic-server` command started successfully on port 8011.
+- Packaged `/health` endpoint returned `status: ok`.
+
+Artifact hashes:
+- `dgentic-0.2.1.tar.gz`: `CB58CC46824F96D25470315C5F993395F160ACB539943A0FBD8FAA3E6B06C092`
+- `dgentic-0.2.1-py3-none-any.whl`: `A11B3E418D9D6ECC513089E5934D433648DD1FF7D88EA464DC48FB1ACA53D33B`
+- `dgentic-0.2.1.zip`: `16183EEC508197244A52E0A63591AB9CC249E10FFC164AFE750C93235113D200`
+
+---
+
+### CLI Command Policy Configuration Pass
+
+Status: configurable command policy storage and argument-aware matching are implemented for the backend MVP.
+
+Completed:
+- Added persisted CLI command policy rule schemas with executable, exact-command, contains, and argument-substring match types.
+- Added rule priority, enabled/disabled state, permission mode, reason, and matched-rule metadata on command policy decisions.
+- Added persisted local state collection: `cli-command-policy-rules.json`.
+- Added `POST /cli/policy/rules`, `GET /cli/policy/rules`, and `PATCH /cli/policy/rules/{rule_id}`.
+- Integrated configured rules into guarded command checks, CLI approvals, and CLI execution while preserving built-in defaults.
+- Added tests for default override behavior, argument-aware blocking, disabling rules, CLI runtime enforcement, and API rule persistence.
+- Updated README, architecture documentation, usage guide, developer setup guide, Agile task plan, and progress log.
+
+Verification:
+- `uv run pytest tests/test_command_policy.py tests/test_api.py -q` passed with 20 tests.
+
+Remaining production work:
+- Add CLI cancellation and output streaming/polling.
+- Add agent/context-aware CLI permissions.
+- Add controlled and auditable command environment variables.
+- Broaden safe parsing validation across Windows and POSIX execution modes.
+
+---
+
+### Agentic Workflow Documentation Update
+
+Status: autonomous multi-agent Agile organization documentation added.
+
+Completed:
+- Added `docs/agentic-workflows/` as the source for agentic tasking and workflows.
+- Added role files for PO, PM, Architect, Developer, QA, Reviewer, Security, DevOps, and Release Manager agents.
+- Added sprint lifecycle and release management workflow documents.
+- Added governance documents for story statuses, Definition of Done, coordination, continuous learning, and risk management.
+- Added the required agent response format template.
+- Updated the root README and documentation index.
+
+Next steps:
+- Connect these workflow definitions to future backend agent orchestration APIs.
+- Add machine-readable workflow/status schemas when the orchestration layer needs enforcement.
+
+---
+
 ### Parallel Backend Hardening Pass
 
 Status: multiple backend workers completed independent slices and the API integration is wired.
@@ -30,7 +101,7 @@ Verification:
 
 Remaining production work:
 - Add CLI cancellation and output streaming/polling.
-- Add configurable command policy storage and argument-aware rules.
+- Add agent/context-aware CLI permissions and controlled command environments.
 - Add external provider adapters and credential management.
 - Add stronger tool sandbox isolation.
 - Add UI surfaces for approvals, agents, tools, and provider activity.
@@ -46,9 +117,9 @@ Completed:
 - Captured approval records, approve/deny endpoints, persisted command run history, configurable command policy, argument-aware rules, safe parsing, output truncation/redaction, streaming or polling, cancellation, agent-aware permissions, environment controls, root boundary enforcement, tests, and documentation requirements.
 
 Next steps:
-- Implement pending CLI approvals and approve/deny endpoints.
-- Add persisted command run history.
-- Replace the current executable-only policy with configurable argument-aware rules.
+- Add CLI cancellation and output streaming/polling.
+- Add agent/context-aware CLI permissions and controlled command environments.
+- Broaden safe parsing validation across Windows and POSIX execution modes.
 
 ---
 
@@ -124,8 +195,8 @@ Remaining production work:
 - Add chat/completion calls for Ollama and LM Studio.
 - Add external provider adapters with secure credential handling and rate-limit metadata.
 - Add a real approval queue/UI instead of the current `approved: true` API field.
-- Expand CLI policy from executable-level classification to command/argument-aware rules.
-- Add command output truncation, streaming, and redaction policies.
+- Add command cancellation and output streaming/polling policies.
+- Add agent/context-aware CLI permissions and controlled command environments.
 
 ---
 

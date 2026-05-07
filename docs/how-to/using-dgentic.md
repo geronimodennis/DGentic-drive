@@ -67,6 +67,24 @@ curl -X POST http://127.0.0.1:8000/guardrails/commands `
   -d '{"command":"git status"}'
 ```
 
+Create a persisted argument-aware CLI policy rule:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/policy/rules `
+  -H "Content-Type: application/json" `
+  -d '{"name":"Block unsafe flag","match_type":"argument_contains","pattern":"--unsafe","permission_mode":"blocked","reason":"Unsafe flag is blocked by workspace policy.","priority":5}'
+```
+
+```powershell
+curl http://127.0.0.1:8000/cli/policy/rules
+```
+
+```powershell
+curl -X PATCH http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
+  -H "Content-Type: application/json" `
+  -d '{"enabled":false}'
+```
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/execute `
   -H "Content-Type: application/json" `
@@ -175,7 +193,7 @@ Configure strict operating boundaries before running autonomous tasks:
 - Workspace `rootDir`
 - Filesystem read, write, and delete permissions
 - CLI execution mode
-- Command blacklist or approval policy
+- Configurable CLI allow, approval, and block rules with executable and argument-aware matching
 - Network policy and domain rules
 - Tool creation and execution permissions
 
@@ -225,7 +243,7 @@ DGentic should persist session state so future sessions can resume with context,
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can queue, approve, deny, execute, and persist command runs, but there is not yet a user-facing approval UI or cancellation API.
+- CLI guardrails can configure persisted policy rules, queue, approve, deny, execute, and persist command runs, but there is not yet a user-facing approval UI, cancellation API, or streaming/polling output API.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

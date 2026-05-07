@@ -14,12 +14,12 @@ uv build
 
 This creates:
 
-- `dist/dgentic-0.2.0.tar.gz`
-- `dist/dgentic-0.2.0-py3-none-any.whl`
+- `dist/dgentic-0.2.1.tar.gz`
+- `dist/dgentic-0.2.1-py3-none-any.whl`
 
 The current release bundle is:
 
-- `releases/dgentic-0.2.0.zip`
+- `releases/dgentic-0.2.1.zip`
 
 ## Verify The Wheel
 
@@ -27,7 +27,7 @@ Create a clean virtual environment and install the wheel:
 
 ```powershell
 python -m venv .release-test
-.\.release-test\Scripts\python -m pip install dist\dgentic-0.2.0-py3-none-any.whl
+.\.release-test\Scripts\python -m pip install dist\dgentic-0.2.1-py3-none-any.whl
 ```
 
 Run a smoke test:
@@ -56,6 +56,6 @@ Then open:
 
 ## Current Release
 
-Current release notes: `docs/releases/0.2.0.md`.
+Current release notes: `docs/releases/0.2.1.md`.
 
 The release bundle checksum is published with the GitHub release asset.

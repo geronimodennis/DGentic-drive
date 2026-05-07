@@ -20,6 +20,7 @@ dgentic/
     dgentic/
       api/
       agents.py
+      command_policy.py
       events.py
       cli_runtime.py
       execution.py
@@ -51,12 +52,13 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
-- `api/routes.py`: HTTP routes for health checks, tasks, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
-- `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, providers, routing, agents, memory, tools, sessions, and logs.
+- `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
+- `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, providers, routing, agents, memory, tools, sessions, and logs.
+- `command_policy.py`: Persisted CLI policy rule storage and executable, exact-command, contains, and argument-aware command matching.
 - `cli_runtime.py`: CLI approvals, root-bound command execution, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
-- `guardrails.py`: Filesystem and CLI policy classification plus guarded UTF-8 text file reads, writes, and command execution.
+- `guardrails.py`: Filesystem policy evaluation plus guarded UTF-8 text file reads, writes, and command execution compatibility wrappers.
 - `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
 - `provider_runtime.py`: Ollama and LM Studio chat/completion request execution.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
@@ -70,7 +72,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, CLI approvals and run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable CLI policy rules, CLI approvals and run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -122,6 +124,9 @@ Current endpoints:
 - `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
 - `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
 - `POST /guardrails/commands`: Classifies CLI command risk.
+- `POST /cli/policy/rules`: Creates a persisted CLI policy rule.
+- `GET /cli/policy/rules`: Lists persisted CLI policy rules in evaluation order.
+- `PATCH /cli/policy/rules/{rule_id}`: Updates a persisted CLI policy rule.
 - `POST /cli/execute`: Executes allowed or explicitly approved commands inside `rootDir`.
 - `POST /cli/approvals`: Creates a pending approval for approval-required commands.
 - `GET /cli/approvals`: Lists CLI approval records.
@@ -180,6 +185,7 @@ Current collections:
 - `tools.json`
 - `sessions.json`
 - `cli-approvals.json`
+- `cli-command-policy-rules.json`
 - `cli-command-runs.json`
 
 ## Architecture Decisions
@@ -192,4 +198,5 @@ Current collections:
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
-- Execute CLI commands only through command policy evaluation, root-bound working directories, approval records, sanitized output capture, persisted run history, and audit logging.
+- Execute CLI commands only through configurable command policy evaluation, root-bound working directories, approval records, sanitized output capture, persisted run history, and audit logging.
+- Keep built-in CLI defaults for blocked and approval-required executables, but let persisted rules override or refine those defaults by executable, exact command, command substring, or argument substring.

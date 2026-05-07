@@ -16,6 +16,11 @@ from dgentic.cli_runtime import (
     CommandRun,
     cli_runtime_service,
 )
+from dgentic.command_policy import (
+    create_command_policy_rule,
+    list_command_policy_rules,
+    update_command_policy_rule,
+)
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import (
@@ -42,6 +47,9 @@ from dgentic.schemas import (
     CommandExecutionResult,
     CommandPolicyDecision,
     CommandPolicyRequest,
+    CommandPolicyRule,
+    CommandPolicyRuleRequest,
+    CommandPolicyRuleUpdate,
     FileAccessDecision,
     FileAccessRequest,
     FileReadRequest,
@@ -144,6 +152,27 @@ def write_file(request: FileWriteRequest) -> FileWriteResponse:
 @router.post("/guardrails/commands", response_model=CommandPolicyDecision)
 def check_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     return evaluate_command_policy(request)
+
+
+@router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)
+def create_cli_policy_rule(request: CommandPolicyRuleRequest) -> CommandPolicyRule:
+    return create_command_policy_rule(request)
+
+
+@router.get("/cli/policy/rules", response_model=list[CommandPolicyRule])
+def get_cli_policy_rules() -> list[CommandPolicyRule]:
+    return list_command_policy_rules()
+
+
+@router.patch("/cli/policy/rules/{rule_id}", response_model=CommandPolicyRule)
+def patch_cli_policy_rule(
+    rule_id: str,
+    update: CommandPolicyRuleUpdate,
+) -> CommandPolicyRule:
+    rule = update_command_policy_rule(rule_id, update)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
+    return rule
 
 
 @router.post("/cli/execute", response_model=CommandExecutionResult)

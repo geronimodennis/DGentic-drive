@@ -213,6 +213,10 @@ Tasks:
 - Add agent/context-aware permission checks.
 - Add tests and documentation updates.
 
+Current implementation status:
+- Completed: CLI approvals, approve/deny/execute endpoints, persisted command run history, output redaction/truncation, persisted command policy rules, executable/exact/contains/argument-aware matching, and focused tests.
+- Remaining: command cancellation, streaming or polling output, agent/context-aware permissions, controlled command environment variables, and broader safe parsing validation across Windows/POSIX shells.
+
 ## Epic 6: Memory And Retrieval
 
 ### Story 6.1: Build Metadata Index

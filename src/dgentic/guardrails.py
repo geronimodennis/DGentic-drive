@@ -2,13 +2,13 @@ import shlex
 import subprocess
 from datetime import UTC, datetime
 
+from dgentic.command_policy import evaluate_command_policy as evaluate_configured_command_policy
 from dgentic.events import event_log
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandExecutionResult,
     CommandPolicyDecision,
     CommandPolicyRequest,
-    CommandRisk,
     FileAccessDecision,
     FileAccessRequest,
     FileReadRequest,
@@ -19,18 +19,6 @@ from dgentic.schemas import (
     PermissionMode,
 )
 from dgentic.settings import get_settings
-
-BLOCKED_COMMANDS = {
-    "format",
-    "mkfs",
-    "shutdown",
-    "restart-computer",
-    "remove-item",
-    "rm",
-    "rmdir",
-    "del",
-}
-APPROVAL_COMMANDS = {"git", "pip", "uv", "npm", "pnpm", "yarn", "python", "powershell"}
 
 
 def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
@@ -121,37 +109,7 @@ def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
 
 
 def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
-    command = request.command.strip()
-    executable = command.split()[0].lower()
-
-    if executable in BLOCKED_COMMANDS:
-        decision = CommandPolicyDecision(
-            command=command,
-            risk=CommandRisk.blocked,
-            permission_mode=PermissionMode.blocked,
-            reason=f"{executable} is blocked by the command policy.",
-        )
-    elif executable in APPROVAL_COMMANDS:
-        decision = CommandPolicyDecision(
-            command=command,
-            risk=CommandRisk.approval_required,
-            permission_mode=PermissionMode.approval_required,
-            reason=f"{executable} can change runtime or project state and needs approval.",
-        )
-    else:
-        decision = CommandPolicyDecision(
-            command=command,
-            risk=CommandRisk.safe,
-            permission_mode=PermissionMode.autopilot_safe,
-            reason="Command is classified as read-only or low risk.",
-        )
-
-    event_log.record(
-        LogEventType.cli,
-        "Evaluated CLI command policy.",
-        metadata=decision.model_dump(),
-    )
-    return decision
+    return evaluate_configured_command_policy(request)
 
 
 def execute_guarded_command(request: CommandExecutionRequest) -> CommandExecutionResult:

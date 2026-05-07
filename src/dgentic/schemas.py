@@ -71,6 +71,13 @@ class CommandRisk(StrEnum):
     blocked = "blocked"
 
 
+class CommandPolicyMatchType(StrEnum):
+    executable = "executable"
+    exact = "exact"
+    contains = "contains"
+    argument_contains = "argument_contains"
+
+
 class MemoryKind(StrEnum):
     note = "note"
     decision = "decision"
@@ -213,7 +220,7 @@ class AgentReconciliation(BaseModel):
 
 class ToolManifest(BaseModel):
     name: str
-    version: str = "0.2.0"
+    version: str = "0.2.1"
     description: str
     entrypoint: str
     permission_mode: PermissionMode
@@ -235,7 +242,7 @@ class ToolGenerationRequest(BaseModel):
     trigger_source: ToolTriggerSource
     permission_mode: PermissionMode = PermissionMode.approval_required
     tags: list[str] = Field(default_factory=list)
-    version: str = "0.2.0"
+    version: str = "0.2.1"
     source_code: str | None = None
     interface: dict[str, Any] = Field(default_factory=dict)
     overwrite: bool = False
@@ -304,11 +311,57 @@ class CommandPolicyRequest(BaseModel):
         return value
 
 
+class CommandPolicyRuleRequest(BaseModel):
+    name: str = Field(min_length=1)
+    match_type: CommandPolicyMatchType = CommandPolicyMatchType.executable
+    pattern: str = Field(min_length=1)
+    permission_mode: PermissionMode
+    reason: str = Field(min_length=1)
+    enabled: bool = True
+    priority: int = Field(default=100, ge=0, le=10_000)
+
+    @field_validator("name", "pattern", "reason")
+    @classmethod
+    def policy_text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Policy rule text fields must not be blank.")
+        return value
+
+
+class CommandPolicyRule(CommandPolicyRuleRequest):
+    id: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CommandPolicyRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    match_type: CommandPolicyMatchType | None = None
+    pattern: str | None = Field(default=None, min_length=1)
+    permission_mode: PermissionMode | None = None
+    reason: str | None = Field(default=None, min_length=1)
+    enabled: bool | None = None
+    priority: int | None = Field(default=None, ge=0, le=10_000)
+
+    @field_validator("name", "pattern", "reason")
+    @classmethod
+    def optional_policy_text_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Policy rule text fields must not be blank.")
+        return value
+
+
 class CommandPolicyDecision(BaseModel):
     command: str
     risk: CommandRisk
     permission_mode: PermissionMode
     reason: str
+    matched_rule_id: str | None = None
+    matched_rule_name: str | None = None
 
 
 class CommandExecutionRequest(BaseModel):

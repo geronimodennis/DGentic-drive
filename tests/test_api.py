@@ -206,6 +206,52 @@ def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monke
     get_settings.cache_clear()
 
 
+def test_cli_policy_rule_api_persists_and_controls_command_decisions(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/policy/rules",
+        json={
+            "name": "Block unsafe flag",
+            "match_type": "argument_contains",
+            "pattern": "--unsafe",
+            "permission_mode": "blocked",
+            "reason": "Unsafe flag is blocked by workspace policy.",
+            "priority": 5,
+        },
+    )
+    rule_id = create_response.json()["id"]
+    decision_response = client.post(
+        "/guardrails/commands",
+        json={"command": "cmd /c echo --unsafe"},
+    )
+    list_response = client.get("/cli/policy/rules")
+    update_response = client.patch(
+        f"/cli/policy/rules/{rule_id}",
+        json={"enabled": False},
+    )
+    disabled_decision_response = client.post(
+        "/guardrails/commands",
+        json={"command": "cmd /c echo --unsafe"},
+    )
+
+    assert create_response.status_code == 201
+    assert decision_response.status_code == 200
+    assert decision_response.json()["permission_mode"] == "blocked"
+    assert decision_response.json()["matched_rule_id"] == rule_id
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == rule_id
+    assert update_response.status_code == 200
+    assert update_response.json()["enabled"] is False
+    assert disabled_decision_response.json()["permission_mode"] == "autopilot_safe"
+    get_settings.cache_clear()
+
+
 def test_agent_memory_tool_and_session_registries() -> None:
     client = TestClient(create_app())
 

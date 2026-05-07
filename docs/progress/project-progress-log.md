@@ -4,6 +4,52 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-07
 
+### Backlog Refinement For Production Feature Completion
+
+Status: completed.
+
+Current story:
+- PM backlog refinement for completing all partially implemented feature groups.
+
+Checklist:
+- Completed: Captured partially implemented feature gaps from the root README.
+- Completed: Collaborated with PO, Architect/Security, and QA/ReleaseManager perspectives.
+- Completed: Created `docs/planning/backlog-needs-to-be-done.md` as the refined backlog source.
+- Completed: Added production completion sprint sequencing to the Agile task plan.
+- Completed: Updated root README and documentation index links.
+- Completed: Tracked follow-up work for Sprint 8 and later production completion sprints.
+
+Refined backlog items:
+- BL-000: Authentication, authorization, and security baseline.
+- BL-001: Production persistence foundation.
+- BL-002: CLI streaming and restart-resilient supervision.
+- BL-003: CLI parsing and approval review UX contracts.
+- BL-004: Filesystem runtime completion.
+- BL-005: Tool runtime safety and registry integration.
+- BL-006: Provider system productionization.
+- BL-007: Memory and retrieval production lifecycle.
+- BL-008: Agent orchestration autonomy.
+
+Sprint sequence:
+- Sprint 8: Production Security And Persistence Foundation.
+- Sprint 9: CLI Runtime Hardening.
+- Sprint 10: Filesystem Runtime Completion.
+- Sprint 11: Tool Runtime Safety And Registry Integration.
+- Sprint 12: Provider Productionization.
+- Sprint 13: Memory Production Lifecycle.
+- Sprint 14: Autonomous Agent Orchestration.
+
+Key refinement decisions:
+- Auth/security and persistence must lead before expanding runtime power.
+- CLI approval-required commands need bound approval IDs instead of broad boolean approval.
+- Tool runtime sandboxing is a high-risk dependency before production autonomous reuse.
+- Agent orchestration remains last because it depends on policy-enforced CLI, filesystem, tool, provider, memory, and persistence foundations.
+
+Verification:
+- Documentation-only planning change; runtime tests not required.
+
+---
+
 ### Sprint 7 Semantic Retrieval Kickoff
 
 Status: completed.

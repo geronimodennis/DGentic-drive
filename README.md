@@ -11,6 +11,7 @@ The current repository contains the project specification, planning documents, a
 - [Agentic tasking and workflows](docs/agentic-workflows/README.md)
 - [Agent role boundary rules](docs/agentic-workflows/governance/role-boundaries.md)
 - [Agile task plan](docs/planning/agile-task-plan.md)
+- [Backlog list and needs to be done](docs/planning/backlog-needs-to-be-done.md)
 - [Project progress log](docs/progress/project-progress-log.md)
 - [How to use DGentic](docs/how-to/using-dgentic.md)
 - [Developer setup](docs/how-to/developer-setup.md)
@@ -68,7 +69,7 @@ Start with [docs/DGentic-goal.md](docs/DGentic-goal.md). It describes the intend
 
 ### Plan Implementation Work
 
-Use [docs/planning/agile-task-plan.md](docs/planning/agile-task-plan.md) as the backlog and sprint planning source. The plan is organized into epics, user stories, acceptance criteria, and milestone phases.
+Use [docs/planning/agile-task-plan.md](docs/planning/agile-task-plan.md) as the Agile source and [docs/planning/backlog-needs-to-be-done.md](docs/planning/backlog-needs-to-be-done.md) as the refined backlog for completing partially implemented feature groups. The plan is organized into epics, user stories, acceptance criteria, and milestone phases.
 
 ### Track Project Progress
 
@@ -145,6 +146,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Memory records, session summaries, event logs, and local JSON state persistence for MVP workflows.
 - SQLAlchemy metadata indexing with CRUD APIs, deterministic hash embeddings, metadata fallback hybrid retrieval, stored vector retrieval, and focused retrieval/API tests.
 - Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, strict role write-boundary governance, and mandatory checklist/progress-update governance.
+- Refined backlog and sprint sequence for completing the partially implemented feature groups, starting with production auth/security and persistence.
 - Release distribution process with versioned release notes and zip bundles.
 
 ### Partially Implemented

@@ -10,6 +10,21 @@ Build DGentic as an autonomous AI agent platform that can orchestrate local and 
 
 Use iterative Agile delivery with short, testable increments. Each sprint should produce a demonstrable slice of the platform, beginning with the orchestrator and safety boundaries before adding autonomy, memory, tools, and user interfaces.
 
+## Production Completion Backlog
+
+The refined backlog for completing partially implemented feature groups is maintained in [backlog-needs-to-be-done.md](backlog-needs-to-be-done.md).
+
+Current production-completion sprint sequence:
+- Sprint 8: Production Security And Persistence Foundation.
+- Sprint 9: CLI Runtime Hardening.
+- Sprint 10: Filesystem Runtime Completion.
+- Sprint 11: Tool Runtime Safety And Registry Integration.
+- Sprint 12: Provider Productionization.
+- Sprint 13: Memory Production Lifecycle.
+- Sprint 14: Autonomous Agent Orchestration.
+
+These sprints track the remaining work for authentication/authorization, CLI integration, filesystem runtime, provider system, memory/retrieval, tool runtime, agent orchestration, and persistence. PM must update the backlog document, this Agile plan, the root README current status, and the project progress log when each sprint starts or closes.
+
 ## Roles
 
 - Product owner: Defines priorities, acceptance criteria, and release readiness.

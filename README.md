@@ -121,6 +121,46 @@ Once implemented, DGentic should be used through one or more supported interface
 
 ## Current Status
 
-Status: backend MVP sprint surface started.
+Status: backend MVP sprint surface active.
 
-The FastAPI backend now includes core Pydantic schemas, deterministic planning and execution endpoints, guardrail policy checks, guarded text file read/write endpoints, guarded CLI execution with approvals, asynchronous command runs, polling, cancellation, persisted command policy rules, shell-wrapper command inspection, argument-aware command matching, agent-role scoped command policies, controlled command environments with audited override keys, and run history, Ollama and LM Studio health/model probes and generation calls, scored provider routing, sub-agent lifecycle tracking, dynamic local tool generation and execution under `localmcp/`, persisted local JSON state for task plans, runs, memory, tools, sessions, agents, and logs, plus backend tests. Remaining work includes streaming command output, restart-resilient process supervision and stale-running reconciliation, broader safe parsing validation, stronger storage migrations, external provider adapters, interactive approval UX, richer filesystem operations, stronger tool sandboxing, semantic retrieval, web UI, and VS Code extension work.
+README status policy: keep this section updated after every sprint, release, or meaningful implementation change. Always list implemented features, partially implemented features, and features that are not yet implemented.
+
+### Implemented
+
+- Core FastAPI backend application, Pydantic schemas, health checks, and backend test baseline.
+- Deterministic task planning and execution run APIs with local JSON persistence.
+- Guardrail policy checks for filesystem and command access.
+- Guarded UTF-8 text file read/write operations inside `rootDir`.
+- Guarded CLI execution with approvals, approval queue, approve/deny/execute endpoints, run history, output redaction/truncation, asynchronous run polling, and process-local cancellation.
+- Persisted CLI command policy rules with executable, exact-command, contains, argument-aware, and agent-role scoped matching.
+- Shell-wrapper command inspection for common wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations.
+- Controlled CLI command environment overrides with blocked sensitive runtime keys and audited environment key metadata.
+- Ollama and LM Studio health/model probes, local generation calls, and scored provider routing.
+- Sub-agent lifecycle tracking, parent-child relationships, status updates, and reconciliation contracts.
+- Dynamic local tool generation and execution under `localmcp/`, tool registry persistence, governance status, duplicate detection, and reliability counters.
+- Memory records, session summaries, event logs, and local JSON state persistence for MVP workflows.
+- Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, and strict role write-boundary governance.
+- Release distribution process with versioned release notes and zip bundles.
+
+### Partially Implemented
+
+- CLI integration: approvals, policy rules, polling, cancellation, context-aware rules, and environment controls exist; streaming output, restart-resilient process supervision, stale-running reconciliation, broader Windows/POSIX parsing validation, and approval/environment review UX remain.
+- Filesystem runtime: guarded UTF-8 text read/write exists; binary operations, deletes, moves, richer workflows, and stronger permission granularity remain.
+- Provider system: Ollama and LM Studio runtime calls exist; external provider adapters, secure credential storage, rate-limit handling, and streaming generation remain.
+- Memory and retrieval: memory record storage and text/tag search exist; semantic retrieval, vector indexing, compression, and long-term memory lifecycle management remain.
+- Tool runtime: local tool generation, execution, governance, and reliability tracking exist; stronger sandbox isolation, permission enforcement depth, and production-safe dependency isolation remain.
+- Agent orchestration: lifecycle contracts and documentation exist; autonomous execution coordination, machine-readable role-boundary enforcement, and production multi-agent scheduling remain.
+- Persistence: local JSON collections exist; production database support, migrations, indexing, concurrency controls, and backup/restore remain.
+
+### Not Yet Implemented
+
+- Web frontend/dashboard.
+- VS Code extension.
+- Dedicated CLI client interface.
+- Interactive approval UI.
+- Production deployment infrastructure and CI/CD pipeline.
+- External AI provider adapters beyond current local-provider runtime contracts.
+- Production authentication, authorization, secret management, and encrypted credential storage.
+- Network/domain guardrails.
+- Full autonomous backlog management and sprint execution inside the backend runtime.
+- Runtime monitoring, metrics, alerting, and rollback automation.

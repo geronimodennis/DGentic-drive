@@ -51,6 +51,17 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens configured with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`.
+
+Example protected request in production mode:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/tasks/plan `
+  -H "Authorization: Bearer task-token" `
+  -H "Content-Type: application/json" `
+  -d '{"objective":"Create a guarded task plan for indexing project memory."}'
+```
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `
   -H "Content-Type: application/json" `
@@ -247,6 +258,7 @@ Configure local and external model providers:
 Configure strict operating boundaries before running autonomous tasks:
 
 - Workspace `rootDir`
+- Bearer-token authentication and route capabilities for production/staging APIs
 - Filesystem read, write, and delete permissions
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
@@ -296,6 +308,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
+- Production/staging API routes have a bearer-token capability gate, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and SQLite-compatible metadata prototypes, but production-grade migrations, vector backend integration, indexing, and concurrency controls still need to be added.
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.

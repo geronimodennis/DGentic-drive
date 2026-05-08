@@ -14,7 +14,7 @@ This backlog turns the current partially implemented feature gaps into trackable
 - Completed: Split each group into completion stories with acceptance criteria.
 - Completed: Identified dependencies and recommended sprint order.
 - Completed: Added Definition of Done gates for implementation, QA, review, security, DevOps, docs, and release readiness.
-- Pending: Execute Sprint 8.
+- In progress: Execute Sprint 8.
 - Pending: Update this backlog after each completed sprint.
 
 ## Priority Order
@@ -57,6 +57,10 @@ Definition of Done:
 - Tests cover auth required, forbidden actions, allowed actions, audit actor capture, and secret masking.
 - README, developer setup, architecture docs, and progress log are updated.
 - Security review confirms production exposure is not anonymous by default.
+
+Current implementation status:
+- Completed: dependency-light bearer token auth dependency, production/staging auth-on default, development auth-off default, public route exemptions, route capability mapping, admin wildcard capability, principal attachment on request state, and focused tests for public routes, 401/403 behavior, allowed capability access, admin access, invalid-token no-echo behavior, and settings helpers.
+- Remaining: persisted identity records, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, startup fail-closed validation for production token configuration, and external secret manager integration.
 
 ### BL-001: Production Persistence Foundation
 
@@ -279,6 +283,10 @@ Exit criteria:
 - Critical state repository pattern is defined.
 - Restart persistence and migration tests pass.
 - README and docs/progress are updated.
+
+Current Sprint 8 status:
+- Completed: BL-000 first implementation slice for production/staging bearer token route capability gates.
+- In progress: BL-001 production persistence foundation remains the next Sprint 8 work item.
 
 ### Sprint 9: CLI Runtime Hardening
 

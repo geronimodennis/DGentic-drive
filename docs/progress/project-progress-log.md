@@ -2,6 +2,62 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+## 2026-05-08
+
+### Sprint 8 Production Security And Persistence Foundation Kickoff
+
+Status: in progress; BL-000 implementation slice complete and verified.
+
+Current stories:
+- BL-000: Authentication, authorization, and security baseline.
+- BL-001: Production persistence foundation.
+
+Sprint goal:
+- Add the first production-mode security gate for sensitive backend routes while preserving explicit local development usability.
+
+Checklist:
+- Completed: PM initiated Sprint 8 from the refined production completion backlog.
+- Completed: Architect/Security, QA, and ReleaseManager refinement agents were assembled for implementation guidance.
+- Completed: Dev implemented source-only production-mode auth and capability enforcement.
+- Completed: QA added tests only for public routes, missing token, invalid token, missing capability, allowed capability, admin access, settings helpers, and no token leakage.
+- Completed: PM updated README, developer setup, usage, architecture, backlog/progress docs, and current feature status.
+- Completed: Ran quality gates.
+- Completed: Commit and push completed sprint slice.
+
+Feature tracking:
+- Implemented before sprint: policy-enforced CLI/filesystem/tool/provider/memory route contracts, but no production auth gate.
+- Partially implemented before sprint: production security baseline existed only as backlog/refinement documentation.
+- Not yet implemented before sprint: route-level authentication, capability authorization, actor-bound audit propagation, production persistence migrations, backup/restore, and repository migration strategy.
+
+Current slice boundary:
+- In scope: dependency-light bearer token auth, configurable development bypass, route capability grouping, 401/403 behavior, and documentation.
+- Out of scope for this slice: full production database migrations, backup/restore, external secret manager integration, interactive user management, and frontend approval UX.
+
+Completed in this slice:
+- Added `src/dgentic/auth.py` with bearer-token parsing, route capability mapping, public path handling, admin/wildcard capability support, and 401/403 responses.
+- Added production/staging auth-on default through `effective_auth_enabled`, while preserving development auth-off by default and explicit override support.
+- Attached authenticated principals to `request.state.principal` for future audit actor propagation.
+- Wired auth dependency at the FastAPI app level.
+- Added focused auth tests in `tests/test_auth.py`.
+- Updated `.env.example`, README, developer setup, usage, architecture, backlog, and progress docs.
+
+Remaining Sprint 8 work:
+- BL-001 production persistence foundation: database decision, migration baseline, repository pattern, concurrency/indexing strategy, backup/restore planning, and persistence tests.
+- BL-000 production hardening follow-ups: persisted identity, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, startup fail-closed token validation, and secret manager integration.
+
+Verification:
+- `uv run pytest tests\test_auth.py` passed with 31 tests.
+- `uv run pytest` passed with 110 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Role boundary:
+- Dev owns production source only.
+- QA owns tests only.
+- PM owns sprint checklist, backlog/progress, README, and documentation updates.
+
+---
+
 ## 2026-05-07
 
 ### Backlog Refinement For Production Feature Completion

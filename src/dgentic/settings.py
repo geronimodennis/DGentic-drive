@@ -17,8 +17,16 @@ class Settings(BaseSettings):
     root_dir: Path = Field(default=Path("."))
     data_dir: Path = Field(default=Path(".dgentic"))
     autopilot_enabled: bool = False
+    auth_enabled: bool | None = None
+    auth_tokens: str = ""
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
+
+    @property
+    def effective_auth_enabled(self) -> bool:
+        if self.auth_enabled is not None:
+            return self.auth_enabled
+        return self.environment.lower() in {"production", "staging"}
 
 
 @lru_cache

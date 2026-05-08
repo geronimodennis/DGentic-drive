@@ -32,8 +32,34 @@ Default settings:
 - `DGENTIC_ROOT_DIR=.`
 - `DGENTIC_DATA_DIR=.dgentic`
 - `DGENTIC_AUTOPILOT_ENABLED=false`
+- `DGENTIC_AUTH_ENABLED` unset, which means auth is off in development and on in staging/production
+- `DGENTIC_AUTH_TOKENS` empty by default
 - `DGENTIC_OLLAMA_BASE_URL=http://127.0.0.1:11434`
 - `DGENTIC_LM_STUDIO_BASE_URL=http://127.0.0.1:1234`
+
+## Configure API Authentication
+
+Local development is usable without authentication by default. In `staging` and `production`, DGentic enables bearer-token capability checks unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
+
+Token configuration uses semicolon-separated token entries and comma-separated capabilities:
+
+```powershell
+$env:DGENTIC_ENVIRONMENT = "production"
+$env:DGENTIC_AUTH_TOKENS = "admin-token=admin;task-token=tasks;cli-token=cli"
+```
+
+Use a bearer token when calling protected routes:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/tasks/plan `
+  -Headers @{ Authorization = "Bearer task-token" } `
+  -ContentType "application/json" `
+  -Body '{"objective":"Create a guarded plan for indexing project memory."}'
+```
+
+Capability groups currently include `admin`, `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
 
 ## Run The Backend
 

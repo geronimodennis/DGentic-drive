@@ -20,6 +20,7 @@ dgentic/
     dgentic/
       api/
       agents.py
+      auth.py
       command_policy.py
       events.py
       cli_runtime.py
@@ -60,6 +61,7 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
+- `auth.py`: Production/staging bearer-token authentication and route capability mapping.
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
@@ -79,7 +81,7 @@ Current modules:
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
 - `storage.py`: JSON collection persistence helper for MVP local state.
-- `settings.py`: Environment-based backend settings.
+- `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
 ### `tests/`
 
@@ -122,6 +124,13 @@ scripts/
 These are intentionally deferred until the backend foundation is stable enough to define real integration contracts.
 
 ## Backend API Surface
+
+Authentication:
+
+- `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json` are public.
+- Development mode is auth-off by default.
+- Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
+- Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS`, using capabilities such as `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
 
 Current endpoints:
 
@@ -225,6 +234,7 @@ Current collections:
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice; production database target, migrations, and vector storage remain follow-up decisions.
+- Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.

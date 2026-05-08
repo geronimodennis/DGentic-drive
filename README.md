@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates, guardrail checks, guarded text file operations, guarded CLI execution and approvals, asynchronous CLI runs with polling and cancellation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, and local JSON state persistence.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates, guardrail checks, guarded text file operations, guarded CLI execution and approvals, asynchronous CLI runs with polling and cancellation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, local JSON state persistence, and a migration-managed SQLAlchemy persistence baseline for metadata and tool registry tables.
 
 ## Documentation
 
@@ -101,7 +101,7 @@ The backend currently exposes:
 
 Authentication is off by default in `development`, on by default in `staging` and `production`, and can be explicitly controlled with `DGENTIC_AUTH_ENABLED`. Protected routes use bearer tokens from `DGENTIC_AUTH_TOKENS`, for example `admin-token=admin;task-token=tasks`.
 
-Local state is stored under `.dgentic/` by default and is ignored by Git. Override it with `DGENTIC_DATA_DIR`.
+Local state is stored under `.dgentic/` by default and is ignored by Git. Override JSON state with `DGENTIC_DATA_DIR` and SQLAlchemy state with `DGENTIC_DATABASE_URL` when needed.
 
 ### Add New Documentation
 
@@ -147,7 +147,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Sub-agent lifecycle tracking, parent-child relationships, status updates, and reconciliation contracts.
 - Dynamic local tool generation and execution under `localmcp/`, tool registry persistence, governance status, duplicate detection, and reliability counters.
 - Memory records, session summaries, event logs, and local JSON state persistence for MVP workflows.
-- SQLAlchemy metadata indexing with CRUD APIs, deterministic hash embeddings, metadata fallback hybrid retrieval, stored vector retrieval, and focused retrieval/API tests.
+- SQLAlchemy metadata indexing with CRUD APIs, deterministic hash embeddings, metadata fallback hybrid retrieval, stored vector retrieval, configurable database URLs, schema migration ledger baseline, and focused retrieval/database/API tests.
 - Agentic workflow documentation, role files, sprint lifecycle rules, release workflow, strict role write-boundary governance, and mandatory checklist/progress-update governance.
 - Refined backlog and sprint sequence for completing the partially implemented feature groups, starting with production auth/security and persistence.
 - Release distribution process with versioned release notes and zip bundles.
@@ -160,7 +160,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, deterministic semantic retrieval fallback, stored vector retrieval, and retrieval API tests exist; production vector backend, compression, performance validation, and long-term memory lifecycle management remain production follow-up work.
 - Tool runtime: local tool generation, execution, governance, reliability tracking, SQLAlchemy tool registry services, duplicate checks, usage tracking, and registry routes exist; stronger sandbox isolation, permission enforcement depth, generated-tool registry integration, and production-safe dependency isolation remain.
 - Agent orchestration: lifecycle contracts and documentation exist; autonomous execution coordination, machine-readable role-boundary enforcement, and production multi-agent scheduling remain.
-- Persistence: local JSON collections and SQLite-compatible SQLAlchemy service prototypes exist; production database support, migrations, indexing, concurrency controls, and backup/restore remain.
+- Persistence: local JSON collections and a migration-managed SQLite-compatible SQLAlchemy baseline exist; production database driver packaging, migration expansion beyond the baseline, JSON-store migration, indexing/concurrency hardening, and backup/restore automation remain.
 - Security/auth: production and staging auth default-on route capability gates exist; persisted identity, token rotation, bound approval identities, encrypted credential storage, and full audit actor propagation remain.
 
 ### Not Yet Implemented

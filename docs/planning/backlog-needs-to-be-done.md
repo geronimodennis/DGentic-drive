@@ -59,7 +59,7 @@ Definition of Done:
 - Security review confirms production exposure is not anonymous by default.
 
 Current implementation status:
-- Completed: dependency-light bearer token auth dependency, production/staging auth-on default, development auth-off default, public route exemptions, route capability mapping, admin wildcard capability, principal attachment on request state, and focused tests for public routes, 401/403 behavior, allowed capability access, admin access, invalid-token no-echo behavior, and settings helpers.
+- Completed: dependency-light bearer token auth dependency, production/staging auth-on default, development auth-off default, public route exemptions, route capability mapping, admin wildcard capability, principal attachment on request state, focused tests for public routes, 401/403 behavior, allowed capability access, admin access, invalid-token no-echo behavior, and settings helpers.
 - Remaining: persisted identity records, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, startup fail-closed validation for production token configuration, and external secret manager integration.
 
 ### BL-001: Production Persistence Foundation
@@ -90,6 +90,10 @@ Definition of Done:
 - Tests cover migrations, repository behavior, restart persistence, and failure rollback.
 - README, developer setup, architecture docs, and progress log are updated.
 - Security review validates that secrets are not persisted in plain text.
+
+Current implementation status:
+- Completed: BL-001a migration-managed persistence baseline with `DGENTIC_DATABASE_URL`, default SQLite URL resolution under `rootDir/dataDir`, SQLite parent directory creation, SQLite-safe engine connect args, cached engine reset helper, idempotent `schema_migrations` ledger, baseline id `0001_metadata_tool_registry_baseline`, applied-migration listing helper, and focused database tests for URL behavior, migration table creation, idempotence, and restart persistence.
+- Remaining: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, backup/restore automation, retention cleanup, and failure rollback tests for future migrations.
 
 ### BL-002: CLI Streaming And Restart-Resilient Supervision
 
@@ -286,7 +290,8 @@ Exit criteria:
 
 Current Sprint 8 status:
 - Completed: BL-000 first implementation slice for production/staging bearer token route capability gates.
-- In progress: BL-001 production persistence foundation remains the next Sprint 8 work item.
+- Completed: BL-001a migration-managed persistence baseline.
+- Remaining: BL-001 broad production persistence foundation remains partially implemented for production database operations, JSON-store migration, backup/restore, concurrency, and future migration rollout.
 
 ### Sprint 9: CLI Runtime Hardening
 

@@ -28,6 +28,7 @@ dgentic/
       guardrails.py
       main.py
       memory.py
+      migrations.py
       memory/
         embedding_service.py
         metadata_service.py
@@ -80,6 +81,7 @@ Current modules:
 - `tool_runtime.py`: Generated tool subprocess execution and reliability counter updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
+- `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
 - `storage.py`: JSON collection persistence helper for MVP local state.
 - `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
@@ -210,7 +212,7 @@ Quality gates:
 
 ## Local State
 
-DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`. SQLAlchemy-backed metadata and registry services use `.dgentic/dgentic.db` by default for the local MVP database.
+DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`. SQLAlchemy-backed metadata and registry services use `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default for the local MVP database and can be pointed at another SQLAlchemy database with `DGENTIC_DATABASE_URL`.
 
 Current collections:
 
@@ -226,6 +228,8 @@ Current collections:
 - `cli-command-runs.json`
 - `dgentic.db`
 
+SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`.
+
 ## Architecture Decisions
 
 - Start with a backend-first monorepo because orchestration, permissions, schemas, and logs define the core product contracts.
@@ -233,7 +237,7 @@ Current collections:
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
-- Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice; production database target, migrations, and vector storage remain follow-up decisions.
+- Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs and a schema migration ledger. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, and vector storage remain follow-up work.
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.

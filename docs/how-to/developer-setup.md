@@ -31,6 +31,7 @@ Default settings:
 - `DGENTIC_ENVIRONMENT=development`
 - `DGENTIC_ROOT_DIR=.`
 - `DGENTIC_DATA_DIR=.dgentic`
+- `DGENTIC_DATABASE_URL` unset, which means SQLAlchemy uses SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db`
 - `DGENTIC_AUTOPILOT_ENABLED=false`
 - `DGENTIC_AUTH_ENABLED` unset, which means auth is off in development and on in staging/production
 - `DGENTIC_AUTH_TOKENS` empty by default
@@ -60,6 +61,22 @@ Invoke-RestMethod `
 ```
 
 Capability groups currently include `admin`, `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
+
+## Configure Database Persistence
+
+By default, SQLAlchemy-backed metadata and tool registry services use SQLite at:
+
+```text
+DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db
+```
+
+Override the database URL when needed:
+
+```powershell
+$env:DGENTIC_DATABASE_URL = "sqlite:///C:/workspace/dgentic-state/dgentic.db"
+```
+
+On first use, DGentic initializes the current SQLAlchemy metadata tables and records the baseline migration in `schema_migrations` as `0001_metadata_tool_registry_baseline`. Production PostgreSQL remains the planned database target, but driver packaging, production migrations beyond the baseline, JSON-store migration, backup/restore automation, and concurrency hardening remain follow-up work.
 
 ## Run The Backend
 

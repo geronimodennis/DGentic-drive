@@ -62,6 +62,8 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
   -d '{"objective":"Create a guarded task plan for indexing project memory."}'
 ```
 
+SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. The current schema baseline is tracked in `schema_migrations`.
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `
   -H "Content-Type: application/json" `
@@ -309,7 +311,7 @@ DGentic should persist session state so future sessions can resume with context,
 
 - DGentic has backend MVP contracts, not production autonomy.
 - Production/staging API routes have a bearer-token capability gate, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
-- State is persisted as local JSON collections and SQLite-compatible metadata prototypes, but production-grade migrations, vector backend integration, indexing, and concurrency controls still need to be added.
+- State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, backup/restore automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     root_dir: Path = Field(default=Path("."))
     data_dir: Path = Field(default=Path(".dgentic"))
+    database_url: str | None = None
     autopilot_enabled: bool = False
     auth_enabled: bool | None = None
     auth_tokens: str = ""
@@ -27,6 +28,18 @@ class Settings(BaseSettings):
         if self.auth_enabled is not None:
             return self.auth_enabled
         return self.environment.lower() in {"production", "staging"}
+
+    @property
+    def effective_database_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+
+        data_dir = self.data_dir
+        if not data_dir.is_absolute():
+            data_dir = self.root_dir / data_dir
+
+        database_path = data_dir / "dgentic.db"
+        return f"sqlite:///{database_path.as_posix()}"
 
 
 @lru_cache

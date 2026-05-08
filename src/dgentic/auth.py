@@ -5,7 +5,7 @@ from hmac import compare_digest
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from dgentic.settings import get_settings
+from dgentic.settings import Settings, get_settings
 
 CAPABILITY_ADMIN = "admin"
 CAPABILITY_AGENTS = "agents"
@@ -56,6 +56,10 @@ class Principal:
     capabilities: frozenset[str]
 
 
+class AuthConfigurationError(RuntimeError):
+    """Raised when authentication is enabled without usable credentials."""
+
+
 def parse_token_map(raw_config: str) -> dict[str, frozenset[str]]:
     token_map: dict[str, frozenset[str]] = {}
     for entry in raw_config.replace("\n", ";").split(";"):
@@ -82,6 +86,20 @@ def capability_for_path(path: str) -> str | None:
 
 def has_capability(principal: Principal, capability: str) -> bool:
     return bool(principal.capabilities & frozenset({capability, CAPABILITY_ADMIN, CAPABILITY_ALL}))
+
+
+def validate_auth_configuration(settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    if not settings.effective_auth_enabled:
+        return
+
+    if parse_token_map(settings.auth_tokens):
+        return
+
+    raise AuthConfigurationError(
+        "DGentic authentication is enabled but no bearer tokens are configured. "
+        "Set DGENTIC_AUTH_TOKENS or explicitly disable auth outside production."
+    )
 
 
 def _unauthorized() -> HTTPException:

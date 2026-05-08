@@ -1,7 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from dgentic.auth import capability_for_path, parse_token_map
+from dgentic.auth import (
+    AuthConfigurationError,
+    capability_for_path,
+    parse_token_map,
+    validate_auth_configuration,
+)
 from dgentic.main import create_app
 from dgentic.settings import Settings, get_settings
 
@@ -126,7 +131,7 @@ def test_public_routes_remain_public_in_production_auth_mode(
     monkeypatch: pytest.MonkeyPatch,
     path: str,
 ) -> None:
-    client = client_with_auth_env(monkeypatch, environment="production", auth_tokens="")
+    client = client_with_auth_env(monkeypatch, environment="production")
 
     response = client.get(path)
 
@@ -154,6 +159,24 @@ def test_parse_token_map_handles_semicolons_newlines_and_multiple_capabilities()
         "task-token": frozenset({"tasks"}),
         "admin-token": frozenset({"admin", "logs"}),
     }
+
+
+def test_auth_configuration_fails_closed_when_enabled_without_tokens() -> None:
+    settings = Settings(environment="production", auth_tokens="")
+
+    with pytest.raises(AuthConfigurationError, match="no bearer tokens are configured"):
+        validate_auth_configuration(settings)
+
+
+def test_create_app_fails_closed_when_production_auth_has_no_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "")
+    get_settings.cache_clear()
+
+    with pytest.raises(AuthConfigurationError, match="no bearer tokens are configured"):
+        create_app()
 
 
 @pytest.mark.parametrize(

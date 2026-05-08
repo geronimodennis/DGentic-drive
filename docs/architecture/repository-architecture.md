@@ -62,7 +62,7 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
-- `auth.py`: Production/staging bearer-token authentication and route capability mapping.
+- `auth.py`: Production/staging bearer-token authentication, route capability mapping, and startup fail-closed configuration validation.
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
@@ -82,6 +82,7 @@ Current modules:
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
+- `database.py`: Configurable SQLAlchemy engine/session helper, migration initialization, cached database reset, SQLite path resolution, and file-backed SQLite backup/restore helpers.
 - `storage.py`: JSON collection persistence helper for MVP local state.
 - `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
@@ -133,6 +134,7 @@ Authentication:
 - Development mode is auth-off by default.
 - Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 - Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS`, using capabilities such as `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
+- When auth is enabled, startup fails closed if `DGENTIC_AUTH_TOKENS` does not contain at least one valid `token=capabilities` entry.
 
 Current endpoints:
 
@@ -228,7 +230,7 @@ Current collections:
 - `cli-command-runs.json`
 - `dgentic.db`
 
-SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`.
+SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`. File-backed SQLite local databases can be backed up and restored with `backup_sqlite_database()` and `restore_sqlite_database()` for operator smoke workflows; scheduled, remote, and PostgreSQL-native backup automation remains future production work.
 
 ## Architecture Decisions
 
@@ -237,8 +239,8 @@ SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline 
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, registry entry, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
-- Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs and a schema migration ledger. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, and vector storage remain follow-up work.
-- Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled.
+- Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, scheduled backup automation, and vector storage remain follow-up work.
+- Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.

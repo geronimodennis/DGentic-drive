@@ -4,16 +4,16 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-08
 
-### Sprint 8 Production Security And Persistence Foundation Kickoff
+### Sprint 8 Production Security And Persistence Foundation
 
-Status: in progress; BL-000 and BL-001a implementation slices complete and verified.
+Status: completed; Sprint 8 is closed with follow-up hardening moved to the refined backlog.
 
 Current stories:
 - BL-000: Authentication, authorization, and security baseline.
 - BL-001: Production persistence foundation.
 
 Sprint goal:
-- Add the first production-mode security gate for sensitive backend routes while preserving explicit local development usability.
+- Add the first production-mode security gate for sensitive backend routes and the persistence foundation needed for migration-managed state while preserving explicit local development usability.
 
 Checklist:
 - Completed: PM initiated Sprint 8 from the refined production completion backlog.
@@ -22,24 +22,31 @@ Checklist:
 - Completed: QA added tests only for public routes, missing token, invalid token, missing capability, allowed capability, admin access, settings helpers, and no token leakage.
 - Completed: Dev implemented source-only migration-managed persistence baseline.
 - Completed: QA added tests only for database URL resolution, migration ledger creation/idempotence, reset behavior, SQLite file creation, and restart persistence.
+- Completed: Dev implemented source-only auth startup fail-closed validation when auth is enabled without usable tokens.
+- Completed: QA added tests only for auth configuration validation and production create-app fail-closed behavior.
+- Completed: Dev implemented source-only file-backed SQLite backup/restore helpers.
+- Completed: QA added tests only for SQLite backup/restore round trip and non-SQLite backup rejection.
 - Completed: PM updated README, developer setup, usage, architecture, backlog/progress docs, and current feature status for BL-001a.
 - Completed: Commit and push BL-000 auth baseline slice.
 - Completed: Commit and push BL-001a persistence baseline slice.
+- Completed: PM updated README, developer setup, usage, architecture, backlog/progress docs, and current feature status for Sprint 8 closeout.
 
 Feature tracking:
 - Implemented before sprint: policy-enforced CLI/filesystem/tool/provider/memory route contracts, but no production auth gate.
 - Partially implemented before sprint: production security baseline and production persistence existed only as backlog/refinement documentation plus SQLite-compatible service prototypes.
-- Not yet implemented before sprint: route-level authentication, capability authorization, actor-bound audit propagation, database URL override, migration ledger baseline, backup/restore, and repository migration strategy.
+- Implemented by Sprint 8 close: route-level authentication, capability authorization, startup fail-closed token validation, database URL override, migration ledger baseline, restart persistence smoke coverage, and local SQLite backup/restore smoke helpers.
+- Still partially implemented after Sprint 8: actor-bound audit propagation, persisted identity, token lifecycle, repository migration strategy, production PostgreSQL packaging, expanded migrations, concurrency/indexing hardening, and scheduled/remote backup automation.
 
 Current slice boundary:
-- In scope: dependency-light bearer token auth, configurable development bypass, route capability grouping, 401/403 behavior, and documentation.
-- Out of scope for this slice: full production database migrations, backup/restore, external secret manager integration, interactive user management, and frontend approval UX.
+- In scope: dependency-light bearer token auth, configurable development bypass, route capability grouping, 401/403 behavior, startup token validation, migration baseline, local SQLite backup/restore smoke path, and documentation.
+- Out of scope for this slice: full production database migrations, external secret manager integration, interactive user management, PostgreSQL backup automation, and frontend approval UX.
 
 Completed in this slice:
 - Added `src/dgentic/auth.py` with bearer-token parsing, route capability mapping, public path handling, admin/wildcard capability support, and 401/403 responses.
 - Added production/staging auth-on default through `effective_auth_enabled`, while preserving development auth-off by default and explicit override support.
 - Attached authenticated principals to `request.state.principal` for future audit actor propagation.
 - Wired auth dependency at the FastAPI app level.
+- Added startup fail-closed validation when auth is enabled without a usable `DGENTIC_AUTH_TOKENS` map.
 - Added focused auth tests in `tests/test_auth.py`.
 - Updated `.env.example`, README, developer setup, usage, architecture, backlog, and progress docs.
 
@@ -50,16 +57,16 @@ Completed in BL-001a:
 - Added `list_applied_migrations()` for deterministic migration visibility.
 - Added focused database tests in `tests/test_database.py`.
 - Recorded the persistence decision that SQLite remains local/dev/test default while PostgreSQL remains the production target pending driver packaging and broader migration work.
+- Added file-backed SQLite backup/restore helpers and focused smoke tests.
 
-Remaining Sprint 8 work:
-- BL-000 production hardening follow-ups: persisted identity, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, startup fail-closed token validation, and secret manager integration.
-- BL-001 production persistence follow-ups: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, backup/restore automation, retention cleanup, and failure rollback tests for future migrations.
+Follow-up backlog after Sprint 8 closure:
+- BL-000 production hardening follow-ups: persisted identity, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, and secret manager integration.
+- BL-001 production persistence follow-ups: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, scheduled/remote backup automation, retention cleanup, and failure rollback tests for future migrations.
 
 Verification:
-- `uv run pytest tests\test_auth.py` passed with 31 tests.
-- `.\.venv\Scripts\python.exe -m pytest tests\test_database.py` passed with 10 tests.
-- `uv run pytest tests\test_database.py` passed with 10 tests.
-- `uv run pytest` passed with 120 tests.
+- `uv run pytest tests\test_auth.py` passed with 33 tests.
+- `uv run pytest tests\test_database.py` passed with 12 tests.
+- `uv run pytest` passed with 124 tests.
 - `uv run ruff check .` passed.
 - `uv run ruff format --check .` passed.
 

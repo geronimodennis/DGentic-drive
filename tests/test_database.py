@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy import create_engine, func, inspect, select
 
 from dgentic import database
-from dgentic.database import _connect_args, get_db_session, reset_database_state
+from dgentic.database import (
+    _connect_args,
+    backup_sqlite_database,
+    get_db_session,
+    reset_database_state,
+    restore_sqlite_database,
+)
 from dgentic.memory.models import MemoryMetadata
 from dgentic.migrations import (
     BASELINE_MIGRATION_ID,
@@ -173,6 +179,55 @@ def test_metadata_record_persists_after_session_close_and_database_state_reset(
 
     assert persisted.description == "Persists across engine reset"
     assert persisted.tags == ["qa"]
+
+
+def test_sqlite_backup_and_restore_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    session = get_db_session()
+    session.add(
+        MemoryMetadata(
+            entity_type="memory",
+            entity_id="backup-memory",
+            tags=["backup"],
+            description="Available after restore",
+        )
+    )
+    session.commit()
+    session.close()
+
+    backup_path = backup_sqlite_database(tmp_path / "backups" / "dgentic-backup.db")
+
+    session = get_db_session()
+    stored = session.execute(
+        select(MemoryMetadata).where(MemoryMetadata.entity_id == "backup-memory")
+    ).scalar_one()
+    session.delete(stored)
+    session.commit()
+    session.close()
+
+    restored_path = restore_sqlite_database(backup_path)
+
+    restored_session = get_db_session()
+    try:
+        restored = restored_session.execute(
+            select(MemoryMetadata).where(MemoryMetadata.entity_id == "backup-memory")
+        ).scalar_one()
+    finally:
+        restored_session.close()
+
+    assert restored_path == tmp_path / ".dgentic" / "dgentic.db"
+    assert restored.description == "Available after restore"
+    assert restored.tags == ["backup"]
+
+
+def test_sqlite_backup_rejects_non_sqlite_database_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("DGENTIC_DATABASE_URL", "postgresql://user:pass@example.test/dgentic")
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="file-backed SQLite"):
+        backup_sqlite_database(tmp_path / "backup.db")
 
 
 def test_sqlite_connect_args_helper_and_explicit_sqlite_url(tmp_path):

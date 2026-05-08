@@ -51,7 +51,7 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
-In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens configured with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`.
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens configured with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`. When authentication is enabled, startup fails closed if no usable token map is configured.
 
 Example protected request in production mode:
 
@@ -62,7 +62,7 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
   -d '{"objective":"Create a guarded task plan for indexing project memory."}'
 ```
 
-SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. The current schema baseline is tracked in `schema_migrations`.
+SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. The current schema baseline is tracked in `schema_migrations`, and file-backed SQLite state can be backed up or restored with the local `backup_sqlite_database` and `restore_sqlite_database` helpers.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `
@@ -260,7 +260,7 @@ Configure local and external model providers:
 Configure strict operating boundaries before running autonomous tasks:
 
 - Workspace `rootDir`
-- Bearer-token authentication and route capabilities for production/staging APIs
+- Bearer-token authentication, route capabilities, and startup token validation for production/staging APIs
 - Filesystem read, write, and delete permissions
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
@@ -310,8 +310,8 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
-- State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, backup/restore automation, and concurrency controls still need to be added.
+- Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
+- State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.

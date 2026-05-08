@@ -42,6 +42,8 @@ Default settings:
 
 Local development is usable without authentication by default. In `staging` and `production`, DGentic enables bearer-token capability checks unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 
+When authentication is enabled, DGentic requires at least one valid `token=capabilities` entry in `DGENTIC_AUTH_TOKENS`. Startup fails closed if auth is enabled without usable tokens.
+
 Token configuration uses semicolon-separated token entries and comma-separated capabilities:
 
 ```powershell
@@ -76,7 +78,23 @@ Override the database URL when needed:
 $env:DGENTIC_DATABASE_URL = "sqlite:///C:/workspace/dgentic-state/dgentic.db"
 ```
 
-On first use, DGentic initializes the current SQLAlchemy metadata tables and records the baseline migration in `schema_migrations` as `0001_metadata_tool_registry_baseline`. Production PostgreSQL remains the planned database target, but driver packaging, production migrations beyond the baseline, JSON-store migration, backup/restore automation, and concurrency hardening remain follow-up work.
+On first use, DGentic initializes the current SQLAlchemy metadata tables and records the baseline migration in `schema_migrations` as `0001_metadata_tool_registry_baseline`. Production PostgreSQL remains the planned database target, but driver packaging, production migrations beyond the baseline, JSON-store migration, scheduled backup automation, and concurrency hardening remain follow-up work.
+
+## Backup And Restore Local SQLite State
+
+For local/operator smoke workflows using the default file-backed SQLite database, create a backup with:
+
+```powershell
+uv run python -c "from dgentic.database import backup_sqlite_database; backup_sqlite_database('backups/dgentic.db')"
+```
+
+Restore from a backup with:
+
+```powershell
+uv run python -c "from dgentic.database import restore_sqlite_database; restore_sqlite_database('backups/dgentic.db')"
+```
+
+These helpers are intended for file-backed SQLite state. PostgreSQL-native backup, retention, and scheduled remote backup automation remain production follow-up work.
 
 ## Run The Backend
 
@@ -351,5 +369,5 @@ uv run ruff format .
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous polling, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, streaming output API, or restart-resilient process supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
-- Local JSON persistence and SQLite-compatible semantic memory prototypes exist, but no production database migrations, production vector backend, frontend, or VS Code extension exists yet.
+- Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

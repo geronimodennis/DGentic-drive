@@ -14,8 +14,8 @@ This backlog turns the current partially implemented feature gaps into trackable
 - Completed: Split each group into completion stories with acceptance criteria.
 - Completed: Identified dependencies and recommended sprint order.
 - Completed: Added Definition of Done gates for implementation, QA, review, security, DevOps, docs, and release readiness.
-- In progress: Execute Sprint 8.
-- Pending: Update this backlog after each completed sprint.
+- Completed: Execute Sprint 8.
+- Completed: Update this backlog after Sprint 8 closeout.
 
 ## Priority Order
 
@@ -59,8 +59,8 @@ Definition of Done:
 - Security review confirms production exposure is not anonymous by default.
 
 Current implementation status:
-- Completed: dependency-light bearer token auth dependency, production/staging auth-on default, development auth-off default, public route exemptions, route capability mapping, admin wildcard capability, principal attachment on request state, focused tests for public routes, 401/403 behavior, allowed capability access, admin access, invalid-token no-echo behavior, and settings helpers.
-- Remaining: persisted identity records, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, startup fail-closed validation for production token configuration, and external secret manager integration.
+- Completed: dependency-light bearer token auth dependency, production/staging auth-on default, development auth-off default, public route exemptions, route capability mapping, admin wildcard capability, startup fail-closed validation when auth is enabled without tokens, principal attachment on request state, focused tests for public routes, 401/403 behavior, allowed capability access, admin access, invalid-token no-echo behavior, token-configuration validation, and settings helpers.
+- Remaining: persisted identity records, token hashing at rest, token rotation/expiry, full audit actor propagation, bound approval identities, and external secret manager integration.
 
 ### BL-001: Production Persistence Foundation
 
@@ -93,7 +93,8 @@ Definition of Done:
 
 Current implementation status:
 - Completed: BL-001a migration-managed persistence baseline with `DGENTIC_DATABASE_URL`, default SQLite URL resolution under `rootDir/dataDir`, SQLite parent directory creation, SQLite-safe engine connect args, cached engine reset helper, idempotent `schema_migrations` ledger, baseline id `0001_metadata_tool_registry_baseline`, applied-migration listing helper, and focused database tests for URL behavior, migration table creation, idempotence, and restart persistence.
-- Remaining: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, backup/restore automation, retention cleanup, and failure rollback tests for future migrations.
+- Completed: BL-001b file-backed SQLite backup/restore smoke helpers with tests and operator documentation.
+- Remaining: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, scheduled/remote backup automation, retention cleanup, and failure rollback tests for future migrations.
 
 ### BL-002: CLI Streaming And Restart-Resilient Supervision
 
@@ -289,9 +290,11 @@ Exit criteria:
 - README and docs/progress are updated.
 
 Current Sprint 8 status:
-- Completed: BL-000 first implementation slice for production/staging bearer token route capability gates.
+- Closed: Sprint 8 completed the production security and persistence foundation exit criteria for the MVP backend.
+- Completed: BL-000 first implementation slice for production/staging bearer token route capability gates and startup fail-closed token validation.
 - Completed: BL-001a migration-managed persistence baseline.
-- Remaining: BL-001 broad production persistence foundation remains partially implemented for production database operations, JSON-store migration, backup/restore, concurrency, and future migration rollout.
+- Completed: BL-001b file-backed SQLite backup/restore smoke helpers.
+- Moved to follow-up backlog: persisted identity, token rotation, external secret management, production PostgreSQL packaging, expanded migrations, JSON-store migration, concurrency/indexing hardening, scheduled/remote backup automation, retention cleanup, and failure rollback tests.
 
 ### Sprint 9: CLI Runtime Hardening
 

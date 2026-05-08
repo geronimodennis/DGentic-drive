@@ -293,6 +293,53 @@ def test_cli_async_run_api_polls_and_cancels(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_cli_async_run_output_api_returns_redacted_chunks(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    start_response = client.post(
+        "/cli/runs",
+        json={
+            "command": (
+                "python -c \"import time; print('TOKEN=abc123', flush=True); "
+                "time.sleep(0.5); print('done', flush=True)\""
+            ),
+            "approved": True,
+            "timeout_seconds": 5,
+        },
+    )
+    run_id = start_response.json()["id"]
+
+    for _attempt in range(40):
+        output_response = client.get(f"/cli/runs/{run_id}/output")
+        assert output_response.status_code == 200
+        if output_response.json()["chunks"]:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Async API command did not expose output chunks.")
+
+    body = output_response.json()
+    assert body["run_id"] == run_id
+    assert body["next_sequence"] >= 1
+    assert any("TOKEN=[REDACTED]" in chunk["text"] for chunk in body["chunks"])
+    assert all("abc123" not in chunk["text"] for chunk in body["chunks"])
+
+    after_response = client.get(
+        f"/cli/runs/{run_id}/output",
+        params={"after_sequence": body["next_sequence"]},
+    )
+    assert after_response.status_code == 200
+    assert all(
+        chunk["sequence"] > body["next_sequence"] for chunk in after_response.json()["chunks"]
+    )
+    get_settings.cache_clear()
+
+
 def test_cli_execute_api_records_context_and_environment_keys(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

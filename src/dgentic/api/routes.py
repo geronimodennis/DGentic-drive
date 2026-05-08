@@ -14,6 +14,7 @@ from dgentic.cli_runtime import (
     CommandApproval,
     CommandApprovalStatus,
     CommandRun,
+    CommandRunOutput,
     cli_runtime_service,
 )
 from dgentic.command_policy import (
@@ -207,6 +208,19 @@ def get_cli_run(run_id: str) -> CommandRun:
     if run is None:
         raise HTTPException(status_code=404, detail=f"Command run not found: {run_id}")
     return run
+
+
+@router.get("/cli/runs/{run_id}/output", response_model=CommandRunOutput)
+def get_cli_run_output(run_id: str, after_sequence: int = 0) -> CommandRunOutput:
+    try:
+        return cli_runtime_service.get_command_run_output(
+            run_id,
+            after_sequence=after_sequence,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/cli/runs/{run_id}/cancel", response_model=CommandRun)

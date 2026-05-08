@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from threading import Lock, Thread
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from dgentic.settings import get_settings
 from dgentic.storage import JsonCollection
 
 DEFAULT_MAX_OUTPUT_CHARS = 10_000
+DEFAULT_MAX_OUTPUT_CHUNKS = 200
 TRUNCATION_MARKER = "\n[output truncated]"
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"\b(?P<key>TOKEN|PASSWORD|SECRET)\s*=\s*(?P<value>[^\s;&|]+)",
@@ -65,6 +67,15 @@ class CommandRunStatus(StrEnum):
     completed = "completed"
     timed_out = "timed_out"
     cancelled = "cancelled"
+    stale = "stale"
+
+
+class CommandOutputChunk(BaseModel):
+    sequence: int
+    stream: Literal["stdout", "stderr"]
+    text: str
+    truncated: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class CommandApproval(BaseModel):
@@ -80,6 +91,8 @@ class CommandApproval(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     environment_keys: list[str] = Field(default_factory=list)
+    matched_rule_id: str | None = None
+    matched_rule_name: str | None = None
     decided_by: str | None = None
     denial_reason: str | None = None
     run_id: str | None = None
@@ -101,6 +114,8 @@ class CommandRun(BaseModel):
     stderr: str = ""
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+    output_chunks: list[CommandOutputChunk] = Field(default_factory=list)
+    last_output_at: datetime | None = None
     permission_mode: PermissionMode
     duration_ms: int
     requested_by: str | None = None
@@ -111,6 +126,13 @@ class CommandRun(BaseModel):
     started_at: datetime
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
+
+
+class CommandRunOutput(BaseModel):
+    run_id: str
+    status: CommandRunStatus
+    chunks: list[CommandOutputChunk] = Field(default_factory=list)
+    next_sequence: int
 
 
 def redact_sensitive_values(text: str) -> str:
@@ -241,6 +263,7 @@ class CliRuntimeService:
         self._active_processes: dict[str, subprocess.Popen] = {}
         self._cancelled_run_ids: set[str] = set()
         self._active_lock = Lock()
+        self.reconcile_stale_command_runs()
 
     def create_approval(
         self,
@@ -279,6 +302,8 @@ class CliRuntimeService:
             agent_role=request.agent_role,
             task_id=request.task_id,
             environment_keys=environment_keys,
+            matched_rule_id=decision.matched_rule_id,
+            matched_rule_name=decision.matched_rule_name,
         )
         self._approvals.upsert(approval)
         event_log.record(
@@ -294,6 +319,8 @@ class CliRuntimeService:
                 "agent_role": approval.agent_role,
                 "task_id": approval.task_id,
                 "environment_keys": approval.environment_keys,
+                "matched_rule_id": approval.matched_rule_id,
+                "matched_rule_name": approval.matched_rule_name,
             },
         )
         return approval
@@ -438,6 +465,20 @@ class CliRuntimeService:
     def get_command_run(self, run_id: str) -> CommandRun | None:
         return self._runs.get(run_id)
 
+    def get_command_run_output(self, run_id: str, after_sequence: int = 0) -> CommandRunOutput:
+        if after_sequence < 0:
+            raise ValueError("after_sequence must be greater than or equal to 0.")
+
+        run = self._get_run_or_raise(run_id)
+        chunks = [chunk for chunk in run.output_chunks if chunk.sequence > after_sequence]
+        next_sequence = chunks[-1].sequence if chunks else after_sequence
+        return CommandRunOutput(
+            run_id=run.id,
+            status=run.status,
+            chunks=chunks,
+            next_sequence=next_sequence,
+        )
+
     def cancel_command_run(self, run_id: str) -> CommandRun:
         run = self._get_run_or_raise(run_id)
         if run.status != CommandRunStatus.running:
@@ -491,6 +532,51 @@ class CliRuntimeService:
 
     def list_command_runs(self) -> list[CommandRun]:
         return self._runs.list()
+
+    def reconcile_stale_command_runs(self) -> list[CommandRun]:
+        now = datetime.now(UTC)
+        reconciled: list[CommandRun] = []
+        for run in self._runs.list():
+            if run.status != CommandRunStatus.running:
+                continue
+            with self._active_lock:
+                is_active = run.id in self._active_processes
+            if is_active:
+                continue
+
+            message = (
+                "Command run was marked stale because no active process is registered "
+                "in this backend process."
+            )
+            stderr = f"{run.stderr}\n{message}" if run.stderr else message
+            sanitized_stderr, stderr_truncated = sanitize_output(
+                stderr,
+                max_chars=self.max_output_chars,
+            )
+            run.status = CommandRunStatus.stale
+            run.exit_code = -1
+            run.stderr = sanitized_stderr
+            run.stderr_truncated = run.stderr_truncated or stderr_truncated
+            run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
+            run.completed_at = now
+            self._runs.upsert(run)
+            event_log.record(
+                LogEventType.cli,
+                "Reconciled stale CLI command run.",
+                subject_id=run.id,
+                metadata={
+                    "command": redact_sensitive_values(run.command),
+                    "cwd": str(run.cwd),
+                    "process_id": run.process_id,
+                    "status": run.status,
+                    "requested_by": run.requested_by,
+                    "agent_id": run.agent_id,
+                    "agent_role": run.agent_role,
+                    "task_id": run.task_id,
+                },
+            )
+            reconciled.append(run)
+        return reconciled
 
     def _authorize_request(
         self,
@@ -666,11 +752,22 @@ class CliRuntimeService:
         started_at: datetime,
     ) -> None:
         status = CommandRunStatus.completed
+        stdout_thread = Thread(
+            target=self._read_output_pipe,
+            args=(run_id, "stdout", process.stdout),
+            daemon=True,
+        )
+        stderr_thread = Thread(
+            target=self._read_output_pipe,
+            args=(run_id, "stderr", process.stderr),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
         try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as exc:
-            stdout = _text_output(exc.stdout)
-            stderr = _text_output(exc.stderr)
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
             with self._active_lock:
                 was_cancelled = run_id in self._cancelled_run_ids
             if was_cancelled:
@@ -678,21 +775,28 @@ class CliRuntimeService:
             else:
                 status = CommandRunStatus.timed_out
             if process.poll() is None:
+                _terminate_process_tree(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 process.kill()
-            timeout_stdout, timeout_stderr = process.communicate()
-            stdout = f"{stdout}{_text_output(timeout_stdout)}"
-            stderr = f"{stderr}{_text_output(timeout_stderr)}"
+                process.wait(timeout=5)
             if was_cancelled:
-                cancel_message = "Command was cancelled."
-                stderr = f"{stderr}\n{cancel_message}" if stderr else cancel_message
+                self._append_output_chunk(run_id, "stderr", "Command was cancelled.")
             else:
-                timeout_message = f"Command timed out after {timeout_seconds} seconds."
-                stderr = f"{stderr}\n{timeout_message}" if stderr else timeout_message
+                self._append_output_chunk(
+                    run_id,
+                    "stderr",
+                    f"Command timed out after {timeout_seconds} seconds.",
+                )
         else:
             with self._active_lock:
                 was_cancelled = run_id in self._cancelled_run_ids
             if was_cancelled:
                 status = CommandRunStatus.cancelled
+
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
 
         with self._active_lock:
             self._active_processes.pop(run_id, None)
@@ -705,19 +809,77 @@ class CliRuntimeService:
         self._finalize_async_run(
             run_id=run_id,
             exit_code=exit_code,
-            stdout=_text_output(stdout),
-            stderr=_text_output(stderr),
             status=status,
             duration_ms=duration_ms,
         )
+
+    def _read_output_pipe(
+        self,
+        run_id: str,
+        stream: Literal["stdout", "stderr"],
+        pipe,
+    ) -> None:
+        if pipe is None:
+            return
+        for chunk in iter(pipe.readline, ""):
+            self._append_output_chunk(run_id, stream, _text_output(chunk))
+        tail = pipe.read()
+        if tail:
+            self._append_output_chunk(run_id, stream, _text_output(tail))
+
+    def _append_output_chunk(
+        self,
+        run_id: str,
+        stream: Literal["stdout", "stderr"],
+        text: str,
+    ) -> None:
+        if not text:
+            return
+
+        sanitized_text, chunk_truncated = sanitize_output(
+            text,
+            max_chars=self.max_output_chars,
+        )
+        if not sanitized_text:
+            return
+
+        with self._active_lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                return
+
+            now = datetime.now(UTC)
+            chunk = CommandOutputChunk(
+                sequence=len(run.output_chunks) + 1,
+                stream=stream,
+                text=sanitized_text,
+                truncated=chunk_truncated,
+                created_at=now,
+            )
+            if stream == "stdout":
+                combined = f"{run.stdout}{sanitized_text}"
+                run.stdout, stdout_truncated = sanitize_output(
+                    combined,
+                    max_chars=self.max_output_chars,
+                )
+                run.stdout_truncated = run.stdout_truncated or stdout_truncated or chunk_truncated
+            else:
+                combined = f"{run.stderr}{sanitized_text}"
+                run.stderr, stderr_truncated = sanitize_output(
+                    combined,
+                    max_chars=self.max_output_chars,
+                )
+                run.stderr_truncated = run.stderr_truncated or stderr_truncated or chunk_truncated
+
+            run.output_chunks = [*run.output_chunks, chunk][-DEFAULT_MAX_OUTPUT_CHUNKS:]
+            run.last_output_at = now
+            self._runs.upsert(run)
 
     def _finalize_async_run(
         self,
         *,
         run_id: str,
         exit_code: int,
-        stdout: str,
-        stderr: str,
         status: CommandRunStatus,
         duration_ms: int,
     ) -> None:
@@ -726,11 +888,11 @@ class CliRuntimeService:
             return
 
         sanitized_stdout, stdout_truncated = sanitize_output(
-            stdout,
+            run.stdout,
             max_chars=self.max_output_chars,
         )
         sanitized_stderr, stderr_truncated = sanitize_output(
-            stderr,
+            run.stderr,
             max_chars=self.max_output_chars,
         )
         completed_at = datetime.now(UTC)
@@ -738,8 +900,8 @@ class CliRuntimeService:
         run.exit_code = exit_code
         run.stdout = sanitized_stdout
         run.stderr = sanitized_stderr
-        run.stdout_truncated = stdout_truncated
-        run.stderr_truncated = stderr_truncated
+        run.stdout_truncated = run.stdout_truncated or stdout_truncated
+        run.stderr_truncated = run.stderr_truncated or stderr_truncated
         run.duration_ms = duration_ms
         run.completed_at = completed_at
         if status == CommandRunStatus.cancelled and run.cancelled_at is None:

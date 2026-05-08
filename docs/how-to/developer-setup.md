@@ -198,7 +198,7 @@ Invoke-RestMethod `
 
 Approval records keep agent/task context, but environment values are rejected by the approval queue because queued approval storage does not persist runtime secrets. Execute with `approved: true` after reviewing the environment keys when an environment override is required.
 
-Long-running commands can be started asynchronously, polled, and cancelled. Policy checks and `rootDir` working-directory checks still run before the process starts:
+Long-running commands can be started asynchronously, polled for status and output chunks, and cancelled. Policy checks and `rootDir` working-directory checks still run before the process starts:
 
 ```powershell
 $run = Invoke-RestMethod `
@@ -209,10 +209,14 @@ $run = Invoke-RestMethod `
 
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/cli/runs/$($run.id)"
 
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/cli/runs/$($run.id)/output?after_sequence=0"
+
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/cli/runs/$($run.id)/cancel"
 ```
+
+Output chunks include sequence numbers and redacted stdout/stderr text. Persisted runs that are still marked `running` without a process in the current backend process are reconciled to `stale` on runtime service initialization.
 
 Configure persisted command policy rules when the built-in defaults are too broad or too narrow. Rules are evaluated by ascending priority and can match by executable, exact command, command substring, or argument substring. Rules can also be scoped to agent roles:
 
@@ -367,7 +371,7 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous polling, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, streaming output API, or restart-resilient process supervision yet.
+- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, bound approval ID enforcement for all approval-required commands, or full restart-resilient process supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

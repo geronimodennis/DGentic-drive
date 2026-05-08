@@ -16,6 +16,8 @@ This backlog turns the current partially implemented feature gaps into trackable
 - Completed: Added Definition of Done gates for implementation, QA, review, security, DevOps, docs, and release readiness.
 - Completed: Execute Sprint 8.
 - Completed: Update this backlog after Sprint 8 closeout.
+- Completed: Initiate Sprint 9.
+- In progress: Execute Sprint 9.
 
 ## Priority Order
 
@@ -123,6 +125,10 @@ Definition of Done:
 - Tests cover output streaming/polling, stale reconciliation, cancellation, timeout, redaction, and restart behavior.
 - CLI docs, README current status, and progress log are updated.
 
+Current implementation status:
+- Completed: BL-002a chunked async CLI output polling with redacted stdout/stderr chunks, output sequence cursors, persisted output chunks on command runs, and stale-running reconciliation for orphaned persisted runs.
+- Remaining: approval-required commands still need bound approval IDs instead of broad `approved: true`, full restart-resilient process supervision beyond stale marking, persisted process recovery strategy, and production multi-worker lifecycle semantics.
+
 ### BL-003: CLI Parsing And Approval Review UX Contracts
 
 Feature group: CLI integration.
@@ -144,6 +150,10 @@ Acceptance criteria:
 Definition of Done:
 - Tests cover Windows/POSIX parsing, wrappers, quoting, environment review metadata, and approval decision auditing.
 - Usage and developer docs include examples.
+
+Current implementation status:
+- Completed: approval records now expose safe matched policy review metadata through matched rule id/name, existing command/cwd/role/task/environment-key fields, and no persisted environment values.
+- Remaining: broader Windows/POSIX parsing matrix, quoting edge cases, explicit approval review contracts for UI consumers, and richer reviewer decision metadata.
 
 ### BL-004: Filesystem Runtime Completion
 
@@ -310,6 +320,12 @@ Exit criteria:
 - Stale process reconciliation works after restart.
 - Approval review metadata supports UI consumers.
 - Windows/POSIX parser tests pass.
+
+Current Sprint 9 status:
+- In progress: Sprint 9 initiated.
+- Completed: BL-002a output chunk polling and stale-running reconciliation.
+- Partially completed: BL-003 approval records expose matched policy review metadata.
+- Remaining: bound approval IDs, full restart-resilient process supervision semantics, broader Windows/POSIX parsing validation, and approval review UI contracts.
 
 ### Sprint 10: Filesystem Runtime Completion
 

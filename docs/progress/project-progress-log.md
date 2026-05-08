@@ -4,6 +4,49 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-08
 
+### Sprint 9 CLI Runtime Hardening Kickoff
+
+Status: in progress; BL-002a output polling and stale reconciliation slice implemented and under verification.
+
+Current stories:
+- BL-002: CLI streaming and restart-resilient supervision.
+- BL-003: CLI parsing and approval review UX contracts.
+
+Sprint goal:
+- Make long-running CLI execution observable and safer across backend restarts while preparing approval records for UI review consumers.
+
+Checklist:
+- Completed: PM initiated Sprint 9 from the refined production completion backlog.
+- Completed: Architect selected BL-002a as the first slice because command observability and stale reconciliation are prerequisites for stronger supervision.
+- Completed: Dev implemented source-only chunked async CLI output polling.
+- Completed: Dev implemented source-only stale-running reconciliation for orphaned persisted runs.
+- Completed: Dev added source-only matched policy metadata on approval records.
+- Completed: QA added tests only for output chunk polling, redaction, stale reconciliation, approval metadata, and API output polling.
+- Completed: PM updated README, setup/usage, architecture, backlog/progress docs, and current feature status.
+- Completed: Run full quality gates.
+- Completed: Commit and push Sprint 9 initiation slice.
+
+Feature tracking:
+- Implemented before sprint: CLI approvals, policy rules, status polling, cancellation, context-aware policy, environment controls, and run persistence.
+- Implemented in this slice: redacted output chunks, output sequence polling, stale-running reconciliation, and matched policy review metadata.
+- Still partially implemented after this slice: bound approval ID enforcement, full restart-resilient process supervision, broader Windows/POSIX parsing validation, and approval review UI contracts.
+
+Verification:
+- `uv run pytest tests\test_cli_runtime.py` passed with 14 tests.
+- `uv run pytest tests\test_api.py -q` passed with 24 tests.
+- `uv run pytest tests\test_cli_runtime.py tests\test_api.py -q` passed with 38 tests.
+- `uv run ruff check src\dgentic\cli_runtime.py src\dgentic\api\routes.py tests\test_cli_runtime.py tests\test_api.py` passed.
+- `uv run pytest` passed with 128 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+
+Role boundary:
+- Dev owns production source only.
+- QA owns tests only.
+- PM owns sprint checklist, backlog/progress, README, and documentation updates.
+
+---
+
 ### Sprint 8 Production Security And Persistence Foundation
 
 Status: completed; Sprint 8 is closed with follow-up hardening moved to the refined backlog.

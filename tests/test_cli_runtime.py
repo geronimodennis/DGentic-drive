@@ -1,15 +1,23 @@
 import subprocess
 import time
+from datetime import UTC, datetime
 
 import pytest
 
 from dgentic.cli_runtime import (
     CliRuntimeService,
     CommandApprovalStatus,
+    CommandRun,
     CommandRunStatus,
     sanitize_output,
 )
-from dgentic.schemas import CommandExecutionRequest, PermissionMode
+from dgentic.command_policy import create_command_policy_rule
+from dgentic.schemas import (
+    CommandExecutionRequest,
+    CommandPolicyMatchType,
+    CommandPolicyRuleRequest,
+    PermissionMode,
+)
 from dgentic.settings import get_settings
 
 
@@ -41,6 +49,38 @@ def test_create_approval_persists_pending_approval(runtime) -> None:
     assert approval.requested_by == "operator"
     assert service.list_approvals(CommandApprovalStatus.pending)[0].id == approval.id
     assert (data_dir / "cli-approvals.json").exists()
+
+
+def test_create_approval_includes_safe_policy_review_metadata(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Review Python version checks",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="python",
+            permission_mode=PermissionMode.approval_required,
+            reason="Python execution requires reviewer approval.",
+            agent_roles=["developer"],
+            priority=5,
+        )
+    )
+
+    approval = service.create_approval(
+        CommandExecutionRequest(
+            command="python --version",
+            agent_role="developer",
+            agent_id="agent-dev-1",
+            task_id="sprint-9",
+        ),
+        requested_by="operator",
+    )
+
+    assert approval.policy_reason == "Python execution requires reviewer approval."
+    assert approval.matched_rule_id == rule.id
+    assert approval.matched_rule_name == "Review Python version checks"
+    assert approval.agent_role == "developer"
+    assert approval.agent_id == "agent-dev-1"
+    assert approval.task_id == "sprint-9"
 
 
 def test_create_approval_rejects_safe_and_out_of_root_commands(runtime, tmp_path) -> None:
@@ -262,6 +302,51 @@ def test_async_command_run_can_be_polled_after_completion(runtime) -> None:
     assert (data_dir / "cli-command-runs.json").exists()
 
 
+def test_async_command_run_streams_redacted_output_chunks(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command=(
+                "python -c \"import time; print('TOKEN=abc123', flush=True); "
+                "time.sleep(0.5); print('done', flush=True)\""
+            ),
+            approved=True,
+            timeout_seconds=5,
+        )
+    )
+
+    for _attempt in range(40):
+        output = service.get_command_run_output(run.id)
+        if output.chunks:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Async command did not stream output chunks.")
+
+    assert output.run_id == run.id
+    assert output.status in {CommandRunStatus.running, CommandRunStatus.completed}
+    assert output.next_sequence >= 1
+    assert any("TOKEN=[REDACTED]" in chunk.text for chunk in output.chunks)
+    assert all("abc123" not in chunk.text for chunk in output.chunks)
+
+    later_output = service.get_command_run_output(run.id, after_sequence=output.next_sequence)
+    assert all(chunk.sequence > output.next_sequence for chunk in later_output.chunks)
+
+    for _attempt in range(40):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.status == CommandRunStatus.completed:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Async streaming command did not complete.")
+
+    assert "TOKEN=[REDACTED]" in polled.stdout
+    assert "abc123" not in polled.stdout
+    assert polled.last_output_at is not None
+
+
 def test_async_command_run_can_be_cancelled(runtime) -> None:
     service, _root_dir, _data_dir = runtime
 
@@ -287,3 +372,31 @@ def test_async_command_run_can_be_cancelled(runtime) -> None:
 
     assert polled.status == CommandRunStatus.cancelled
     assert polled.exit_code is not None
+
+
+def test_reconcile_stale_command_runs_marks_orphaned_running_records(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    stale_run = CommandRun(
+        id="cmdrun-stale",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=999999,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        requested_by="operator",
+        agent_role="developer",
+        task_id="sprint-9",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(stale_run)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(stale_run.id)
+
+    assert [run.id for run in reconciled] == [stale_run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.exit_code == -1
+    assert stored.completed_at is not None
+    assert "marked stale" in stored.stderr

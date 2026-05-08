@@ -77,6 +77,38 @@ Role boundary:
 
 ---
 
+### Release Distribution 0.2.6
+
+Status: DGentic 0.2.6 release distribution created and git tag prepared.
+
+Completed:
+- Bumped package, API, backend `__version__`, lockfile, and generated tool default version metadata to `0.2.6`.
+- Added release notes in `docs/releases/0.2.6.md`.
+- Built source distribution: `dist/dgentic-0.2.6.tar.gz`.
+- Built wheel distribution: `dist/dgentic-0.2.6-py3-none-any.whl`.
+- Updated artifact checksums in `dist/SHA256SUMS.txt`.
+- Created release bundle: `releases/dgentic-0.2.6.zip`.
+- Updated README, documentation index, release distribution guide, and progress log.
+
+Verification:
+- `uv run pytest` passed with 124 tests.
+- `uv run ruff check .` passed.
+- `uv run ruff format --check .` passed.
+- `uv build` created both wheel and source distribution.
+- Clean virtual environment install from `dist/dgentic-0.2.6-py3-none-any.whl` succeeded.
+- Packaged `dgentic-server` command started successfully on port 8016.
+- Packaged `/health` endpoint returned `status: ok`.
+
+Artifact hashes:
+- `dgentic-0.2.6.tar.gz`: `0199059AE52BE935BB8356BF3CB16D7D04F0FB263CDAD576FF2911CF9FC4AF9D`
+- `dgentic-0.2.6-py3-none-any.whl`: `53B6A600E371E08190DCA3C30AC89D26FB131FA31CD98C55514A69146D80774C`
+- `dgentic-0.2.6.zip`: `B57291B808FF5F6CA7C326B3F74D0D3D177B60C91222B51A8F4BD574552E1689`
+
+Blocker:
+- GitHub Release asset upload still requires GitHub CLI, a GitHub token, or the GitHub plugin in the execution environment.
+
+---
+
 ## 2026-05-07
 
 ### Backlog Refinement For Production Feature Completion

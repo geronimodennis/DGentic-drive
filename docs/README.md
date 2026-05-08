@@ -14,6 +14,7 @@ This folder contains the source documentation for the DGentic project.
 - [Repository architecture](architecture/repository-architecture.md): Current monorepo layout and architecture decisions.
 - [Sprint 6 memory architecture](architecture/sprint-6/memory-architecture.md): Metadata index, retrieval, and tool registry architecture draft.
 - [Release distribution](how-to/release-distribution.md): Build and verify release artifacts.
+- [0.2.6 release notes](releases/0.2.6.md): Sprint 8 production security and persistence foundation release notes.
 - [0.2.5 release notes](releases/0.2.5.md): README status policy and implementation status release notes.
 - [0.2.4 release notes](releases/0.2.4.md): CLI context-aware permissions and controlled environment release notes.
 - [0.2.3 release notes](releases/0.2.3.md): Autonomous agent role boundary governance release notes.

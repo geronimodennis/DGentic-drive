@@ -11,7 +11,7 @@ def create_app() -> FastAPI:
     validate_auth_configuration(settings)
     app = FastAPI(
         title=settings.app_name,
-        version="0.2.5",
+        version="0.2.6",
         summary="DGentic autonomous AI agent platform API.",
         dependencies=[Depends(require_route_capability)],
     )

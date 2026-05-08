@@ -220,7 +220,7 @@ class AgentReconciliation(BaseModel):
 
 class ToolManifest(BaseModel):
     name: str
-    version: str = "0.2.5"
+    version: str = "0.2.6"
     description: str
     entrypoint: str
     permission_mode: PermissionMode
@@ -242,7 +242,7 @@ class ToolGenerationRequest(BaseModel):
     trigger_source: ToolTriggerSource
     permission_mode: PermissionMode = PermissionMode.approval_required
     tags: list[str] = Field(default_factory=list)
-    version: str = "0.2.5"
+    version: str = "0.2.6"
     source_code: str | None = None
     interface: dict[str, Any] = Field(default_factory=dict)
     overwrite: bool = False

@@ -14,12 +14,12 @@ uv build
 
 This creates:
 
-- `dist/dgentic-0.2.5.tar.gz`
-- `dist/dgentic-0.2.5-py3-none-any.whl`
+- `dist/dgentic-0.2.6.tar.gz`
+- `dist/dgentic-0.2.6-py3-none-any.whl`
 
 The current release bundle is:
 
-- `releases/dgentic-0.2.5.zip`
+- `releases/dgentic-0.2.6.zip`
 
 ## Verify The Wheel
 
@@ -27,19 +27,19 @@ Create a clean virtual environment and install the wheel:
 
 ```powershell
 python -m venv .release-test
-.\.release-test\Scripts\python -m pip install dist\dgentic-0.2.5-py3-none-any.whl
+.\.release-test\Scripts\python -m pip install dist\dgentic-0.2.6-py3-none-any.whl
 ```
 
 Run a smoke test:
 
 ```powershell
-.\.release-test\Scripts\dgentic-server --host 127.0.0.1 --port 8010
+.\.release-test\Scripts\dgentic-server --host 127.0.0.1 --port 8016
 ```
 
 Then open:
 
-- `http://127.0.0.1:8010/health`
-- `http://127.0.0.1:8010/docs`
+- `http://127.0.0.1:8016/health`
+- `http://127.0.0.1:8016/docs`
 
 ## Release Checklist
 
@@ -56,6 +56,6 @@ Then open:
 
 ## Current Release
 
-Current release notes: `docs/releases/0.2.5.md`.
+Current release notes: `docs/releases/0.2.6.md`.
 
 The release bundle checksum is recorded in `docs/progress/project-progress-log.md`. Publishing it with a GitHub Release asset requires GitHub CLI or a GitHub token in the execution environment.

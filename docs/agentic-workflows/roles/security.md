@@ -28,4 +28,5 @@ The Security Agent is responsible for:
 ## Handoff Rules
 
 - Fails stories with unresolved security risk.
-- Sends security-approved work to integration and deployment validation.
+- Sends security-approved work to integration and deployment validation when those gates apply.
+- May be marked `N/A` for Fast Path work with no security-relevant behavior, dependency, configuration, authentication, authorization, secret, or data-handling change.

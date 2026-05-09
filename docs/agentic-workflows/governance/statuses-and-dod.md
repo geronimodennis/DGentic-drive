@@ -26,7 +26,7 @@ Each story must maintain one of the following states:
 
 ## Definition Of Done
 
-A story is considered `DONE` only if:
+A story is considered `DONE` only if all applicable gates for the selected workflow mode are complete:
 
 - Implementation completed.
 - Unit tests passed.
@@ -38,6 +38,10 @@ A story is considered `DONE` only if:
 - Documentation updated.
 - Release validation completed.
 
+For Fast Path work, non-applicable gates may be marked `N/A` with a short reason. For example, documentation-only work can mark implementation, unit tests, deployment validation, and release validation as `N/A` when no product behavior changes.
+
 ## Enforcement Rule
 
-If any Definition of Done item is missing, the story must not be marked `DONE`.
+If any applicable Definition of Done item is missing, the story must not be marked `DONE`.
+
+Skipped gates must be justified. If the justification becomes invalid, the story must return to the correct status and use the heavier workflow mode.

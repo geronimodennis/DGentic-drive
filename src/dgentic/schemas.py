@@ -377,6 +377,7 @@ class CommandExecutionRequest(BaseModel):
     cwd: Path | None = None
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     approved: bool = False
+    approval_id: str | None = None
     requested_by: str | None = None
     agent_id: str | None = None
     agent_role: str | None = None

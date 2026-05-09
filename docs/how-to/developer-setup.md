@@ -166,7 +166,7 @@ Invoke-RestMethod `
   -Body '{"command":"cmd /c echo context","requested_by":"pm","agent_id":"agent-dev-1","agent_role":"developer","task_id":"story-5.3","environment":{"DGENTIC_TEST_FLAG":"enabled"}}'
 ```
 
-Approval-required commands must include `approved: true`:
+In `development` and `test`, approval-required commands can still use the explicit `approved: true` bypass for local smoke checks:
 
 ```powershell
 Invoke-RestMethod `
@@ -176,14 +176,14 @@ Invoke-RestMethod `
   -Body '{"command":"git status","approved":true,"timeout_seconds":5}'
 ```
 
-Approval-required commands can also use the approval queue:
+In `staging` and `production`, approval-required commands need a single-use approved `approval_id`. Approval records are bound to command, cwd, timeout, requester, agent/task context, environment keys, policy decision metadata, and expiry:
 
 ```powershell
 $approval = Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
   -ContentType "application/json" `
-  -Body '{"command":"python --version","timeout_seconds":10}'
+  -Body '{"command":"python --version","timeout_seconds":10,"requested_by":"operator"}'
 
 Invoke-RestMethod `
   -Method Post `
@@ -191,21 +191,49 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"decided_by":"reviewer"}'
 
+$executeBody = @{
+  command = "python --version"
+  timeout_seconds = 10
+  approval_id = $approval.id
+  requested_by = "operator"
+} | ConvertTo-Json
+
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/execute"
+  -Uri "http://127.0.0.1:8000/cli/execute" `
+  -ContentType "application/json" `
+  -Body $executeBody
 ```
 
-Approval records keep agent/task context, but environment values are rejected by the approval queue because queued approval storage does not persist runtime secrets. Execute with `approved: true` after reviewing the environment keys when an environment override is required.
+Approvals can also be executed through `POST /cli/approvals/{approval_id}/execute` when no environment override is required. Approval requests may include environment overrides for review, but only the environment variable names are persisted; the execution request must include the same environment keys when using `approval_id` directly.
 
 Long-running commands can be started asynchronously, polled for status and output chunks, and cancelled. Policy checks and `rootDir` working-directory checks still run before the process starts:
 
 ```powershell
+$runApproval = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
+  -ContentType "application/json" `
+  -Body '{"command":"python -c \"import time; time.sleep(30)\"","timeout_seconds":60,"requested_by":"operator"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/cli/approvals/$($runApproval.id)/approve" `
+  -ContentType "application/json" `
+  -Body '{"decided_by":"reviewer"}'
+
+$runBody = @{
+  command = "python -c `"import time; time.sleep(30)`""
+  timeout_seconds = 60
+  approval_id = $runApproval.id
+  requested_by = "operator"
+} | ConvertTo-Json
+
 $run = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/cli/runs `
   -ContentType "application/json" `
-  -Body '{"command":"python -c \"import time; time.sleep(30)\"","approved":true,"timeout_seconds":60}'
+  -Body $runBody
 
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/cli/runs/$($run.id)"
 
@@ -371,7 +399,7 @@ uv run ruff format .
 
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, approval records, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, bound approval ID enforcement for all approval-required commands, or full restart-resilient process supervision yet.
+- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI or full restart-resilient process supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

@@ -46,11 +46,13 @@ Developer Agents must:
 - Follow secure coding practices.
 - Maintain scalability.
 - Run existing tests when useful for local validation.
+- Prefer targeted local validation before broad suites unless risk requires broader checks.
 - Validate implementation before submission without modifying QA-owned test files.
 
 ## Handoff Rules
 
 - Receives implementation-ready work from the Architect Agent.
 - Sends completed implementation to QA for test creation, test updates, and validation.
-- Responds to QA, reviewer, and security findings with implementation fixes only.
+- Responds to QA, reviewer, and security finding bundles with implementation fixes only.
+- Fixes bundled findings in one implementation pass when the changes are related and safe to combine.
 - Must request QA changes instead of editing tests directly.

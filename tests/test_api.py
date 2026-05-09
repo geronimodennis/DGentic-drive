@@ -1,4 +1,5 @@
 import time
+from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
@@ -101,7 +102,7 @@ def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) 
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
     monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
-    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", ".dgentic")
     get_settings.cache_clear()
     client = TestClient(create_app())
 
@@ -121,6 +122,18 @@ def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) 
         "/guardrails/filesystem",
         json={"path": "notes/sprint.txt", "action": "delete"},
     )
+    state_read_response = client.post(
+        "/filesystem/read",
+        json={"path": ".dgentic/cli-approval-digest.key"},
+    )
+    state_write_response = client.post(
+        "/filesystem/write",
+        json={"path": ".dgentic/cli-approval-digest.key", "content": "tamper"},
+    )
+    state_delete_policy_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": ".dgentic/cli-approvals.json", "action": "delete"},
+    )
 
     assert write_response.status_code == 200
     assert write_response.json()["bytes_written"] == len("Sprint filesystem note.")
@@ -128,6 +141,9 @@ def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) 
     assert read_response.json()["content"] == "Sprint filesystem note."
     assert outside_response.status_code == 403
     assert delete_policy_response.json()["permission_mode"] == "approval_required"
+    assert state_read_response.status_code == 403
+    assert state_write_response.status_code == 403
+    assert state_delete_policy_response.json()["permission_mode"] == "blocked"
     get_settings.cache_clear()
 
 
@@ -205,6 +221,141 @@ def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monke
     assert execute_response.json()["exit_code"] == 0
     assert runs_response.status_code == 200
     assert any(run["approval_id"] == approval_id for run in runs_response.json())
+    get_settings.cache_clear()
+
+
+def test_cli_approval_api_uses_authenticated_principal_as_reviewer(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    token = "cli-review-token"
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=cli")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+        headers=headers,
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "spoofed-reviewer"},
+        headers=headers,
+    )
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert approve_response.json()["decided_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
+    get_settings.cache_clear()
+
+
+def test_cli_execute_api_requires_bound_approval_id_in_production(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    bypass_response = client.post(
+        "/cli/execute",
+        json={"command": "python --version", "approved": True, "timeout_seconds": 10},
+    )
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    execute_response = client.post(
+        "/cli/execute",
+        json={
+            "command": "python --version",
+            "timeout_seconds": 10,
+            "approval_id": approval_id,
+            "requested_by": "tester",
+        },
+    )
+    second_execute_response = client.post(
+        "/cli/execute",
+        json={
+            "command": "python --version",
+            "timeout_seconds": 10,
+            "approval_id": approval_id,
+            "requested_by": "tester",
+        },
+    )
+
+    assert bypass_response.status_code == 403
+    assert "approval_id" in bypass_response.json()["detail"]
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert execute_response.json()["permission_mode"] == "approval_required"
+    assert second_execute_response.status_code == 403
+    assert "not executable" in second_execute_response.json()["detail"]
+    get_settings.cache_clear()
+
+
+def test_cli_runs_api_accepts_bound_approval_id_in_production(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    command = "python -c \"print('async-approved')\""
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": command, "timeout_seconds": 10},
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    start_response = client.post(
+        "/cli/runs",
+        json={
+            "command": command,
+            "timeout_seconds": 10,
+            "approval_id": approval_id,
+            "requested_by": "tester",
+        },
+    )
+    run_id = start_response.json()["id"]
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert start_response.status_code == 202
+    assert start_response.json()["approval_id"] == approval_id
+
+    for _attempt in range(40):
+        final_response = client.get(f"/cli/runs/{run_id}")
+        if final_response.json()["completed_at"] is not None:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Approved API command run did not finalize.")
+
+    assert final_response.json()["status"] == "completed"
+    assert "async-approved" in final_response.json()["stdout"]
     get_settings.cache_clear()
 
 

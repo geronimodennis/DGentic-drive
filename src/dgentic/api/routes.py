@@ -1,6 +1,6 @@
 import subprocess
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from dgentic.agents import (
     get_agent,
@@ -83,6 +83,13 @@ from dgentic.tool_runtime import ToolExecutionResult, execute_tool
 from dgentic.tools import generate_tool, list_tools, register_tool, update_tool_governance
 
 router = APIRouter()
+
+
+def _approval_decider(http_request: Request, requested_decider: str | None) -> str | None:
+    principal = getattr(http_request.state, "principal", None)
+    if principal is not None:
+        return principal.token_id
+    return requested_decider
 
 
 @router.get("/", response_model=HealthResponse)
@@ -182,6 +189,8 @@ def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
         return cli_runtime_service.execute_command(request)
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=408, detail="Command timed out.") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -194,6 +203,8 @@ def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
 def start_cli_run(request: CommandExecutionRequest) -> CommandRun:
     try:
         return cli_runtime_service.start_command(request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -254,10 +265,14 @@ def get_cli_approvals(status: CommandApprovalStatus | None = None) -> list[Comma
 @router.post("/cli/approvals/{approval_id}/approve", response_model=CommandApproval)
 def approve_cli_approval(
     approval_id: str,
-    request: CommandApprovalDecisionRequest,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
 ) -> CommandApproval:
     try:
-        return cli_runtime_service.approve_approval(approval_id, decided_by=request.decided_by)
+        return cli_runtime_service.approve_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -267,13 +282,14 @@ def approve_cli_approval(
 @router.post("/cli/approvals/{approval_id}/deny", response_model=CommandApproval)
 def deny_cli_approval(
     approval_id: str,
-    request: CommandApprovalDecisionRequest,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
 ) -> CommandApproval:
     try:
         return cli_runtime_service.deny_approval(
             approval_id,
-            decided_by=request.decided_by,
-            reason=request.reason,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -1,6 +1,6 @@
 # Agentic Tasking And Workflows
 
-Version: 0.2.0
+Version: 0.3.0
 
 This folder defines the DGentic autonomous multi-agent Agile engineering organization.
 
@@ -23,6 +23,18 @@ The system must:
 - Track milestones.
 - Learn from retrospectives.
 - Improve future sprints autonomously.
+
+## Execution Modes
+
+Use the shortest workflow that safely satisfies the task. Escalate to a heavier mode when risk, ambiguity, or release impact requires it.
+
+| Mode | Use For | Required Gates |
+| --- | --- | --- |
+| Fast Path | Docs, small fixes, low-risk refactors, local-only changes | PM triage, Dev or doc owner, targeted QA/checks, brief review |
+| Standard | Normal feature work, multi-file changes, behavior changes | PO/PM, Architect as needed, Dev, QA, Review, Security as applicable |
+| Full Sprint | Releases, migrations, security-sensitive work, deployment changes, high-risk stories | Full lifecycle, DevOps, Release Manager, retrospective, backlog update |
+
+Default to Fast Path when the task is low-risk and has clear acceptance criteria. Move to Standard or Full Sprint as soon as the work touches security, deployment, public APIs, data migrations, broad architecture, or release packaging.
 
 ## Organization Flow
 
@@ -55,6 +67,7 @@ Product Owner Agent
 
 ### Workflows
 
+- [Fast-path workflow](workflows/fast-path.md)
 - [Sprint lifecycle](workflows/sprint-lifecycle.md)
 - [Release management](workflows/release-management.md)
 
@@ -71,8 +84,8 @@ Product Owner Agent
 
 ## Operating Rule
 
-Each agent owns its responsibilities independently, but all agents must share status, blockers, decisions, validation results, and follow-up backlog items through the sprint workflow.
+Each agent owns its responsibilities independently, but all agents must share status, blockers, decisions, validation results, and follow-up backlog items through the active workflow mode.
 
-Each agent must also obey role write boundaries. Developer Agents must not create or modify tests. QA Agents must not create or modify production source. Any needed out-of-scope change must be handed off to the owning agent.
+Each agent must also obey role write boundaries. Developer Agents must not create or modify tests inside a Developer role block. QA Agents must not create or modify production source inside a QA role block. Any needed out-of-scope change must be handed off to the owning role, either as a separate response or as an explicit next role block in the same autonomous run.
 
-Every sprint, story, and delegated task must have a checklist. Agents must update checklist status as work progresses, and the PM must ensure progress documentation is updated before sprint closure.
+Every sprint, story, and delegated task must have a checklist sized to the selected workflow mode. Agents may batch checklist and progress updates at meaningful transitions instead of writing a new progress entry for every small status change. The PM must ensure progress documentation is updated before sprint closure or before a task is reported complete.

@@ -17,7 +17,11 @@ The Release Manager Agent is responsible for:
 
 ## Required Outputs
 
-The Release Manager Agent must produce:
+The Release Manager Agent must produce outputs when the release gate applies.
+
+For Fast Path or Standard work that is not release-worthy, Release Manager may be marked `N/A`.
+
+When the gate applies, the Release Manager Agent must produce:
 
 - Semantic versioning decisions.
 - Changelog updates.
@@ -28,6 +32,6 @@ The Release Manager Agent must produce:
 
 ## Handoff Rules
 
-- Receives deployment-validated work from DevOps.
-- Creates release artifacts and tags.
-- Sends post-release validation outcomes to PM for sprint closure.
+- Receives deployment-validated work from DevOps when the release gate applies.
+- Creates release artifacts and tags when a release is approved.
+- Sends post-release validation outcomes to PM for sprint closure when a release occurs.

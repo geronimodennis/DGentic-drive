@@ -1,6 +1,10 @@
+from __future__ import annotations
+
+import re
 import shlex
 from datetime import UTC, datetime
-from pathlib import Path
+from fnmatch import fnmatchcase
+from pathlib import PurePosixPath, PureWindowsPath
 from uuid import uuid4
 
 from dgentic.events import event_log
@@ -15,6 +19,7 @@ from dgentic.schemas import (
     LogEventType,
     PermissionMode,
 )
+from dgentic.settings import get_settings
 from dgentic.storage import JsonCollection
 
 BLOCKED_COMMANDS = {
@@ -26,7 +31,11 @@ BLOCKED_COMMANDS = {
     "rm",
     "rmdir",
     "del",
+    "erase",
+    "rd",
+    "ri",
 }
+WINDOWS_EXECUTABLE_EXTENSIONS = frozenset({".bat", ".cmd", ".com", ".exe"})
 APPROVAL_COMMANDS = {
     "git",
     "git.exe",
@@ -47,9 +56,26 @@ APPROVAL_COMMANDS = {
     "pwsh",
     "pwsh.exe",
 }
+READ_ONLY_COMMANDS = {
+    "cat",
+    "dir",
+    "echo",
+    "get-childitem",
+    "get-location",
+    "hostname",
+    "ls",
+    "pwd",
+    "type",
+    "ver",
+    "where",
+    "which",
+    "whoami",
+    "write-host",
+    "write-output",
+}
 SHELL_COMMAND_FLAGS = {
-    "cmd": {"/c"},
-    "cmd.exe": {"/c"},
+    "cmd": {"/c", "/k"},
+    "cmd.exe": {"/c", "/k"},
     "sh": {"-c"},
     "bash": {"-c"},
     "powershell": {"-command", "-c"},
@@ -57,7 +83,150 @@ SHELL_COMMAND_FLAGS = {
     "pwsh": {"-command", "-c"},
     "pwsh.exe": {"-command", "-c"},
 }
-
+SHELL_CONTROL_OPERATORS = frozenset({";", "&", "|", "\n"})
+SHELL_STRUCTURAL_APPROVAL_TOKENS = frozenset({">", "<", "2>", ">>", "<<"})
+SHELL_FLOW_COMMAND_TOKENS = frozenset(
+    {
+        "case",
+        "do",
+        "done",
+        "elif",
+        "else",
+        "esac",
+        "fi",
+        "for",
+        "foreach",
+        "function",
+        "if",
+        "then",
+        "until",
+        "while",
+    }
+)
+SHELL_COMMAND_PREFIX_TOKENS = frozenset(
+    {
+        "!",
+        "builtin",
+        "call",
+        "command",
+        "doas",
+        "env",
+        "exec",
+        "nice",
+        "nohup",
+        "setsid",
+        "start",
+        "start-process",
+        "sudo",
+        "time",
+    }
+)
+SHELL_COMMAND_PREFIX_OPTIONS_WITH_VALUES = {
+    "command": frozenset(),
+    "doas": frozenset({"-c", "-u"}),
+    "env": frozenset({"--chdir", "--ignore-signal", "--split-string", "--unset", "-c", "-s", "-u"}),
+    "exec": frozenset({"-a"}),
+    "nice": frozenset({"--adjustment", "-n"}),
+    "nohup": frozenset(),
+    "setsid": frozenset(),
+    "start": frozenset(
+        {
+            "/affinity",
+            "/d",
+            "/node",
+        }
+    ),
+    "start-process": frozenset(
+        {
+            "-args",
+            "-argumentlist",
+            "-credential",
+            "-file-path",
+            "-filepath",
+            "-path",
+            "-redirectstandarderror",
+            "-redirectstandardinput",
+            "-redirectstandardoutput",
+            "-verb",
+            "-windowstyle",
+            "-workingdirectory",
+        }
+    ),
+    "sudo": frozenset(
+        {
+            "--close-from",
+            "--command-timeout",
+            "--group",
+            "--host",
+            "--login-class",
+            "--prompt",
+            "--role",
+            "--type",
+            "--user",
+            "-c",
+            "-d",
+            "-g",
+            "-h",
+            "-p",
+            "-r",
+            "-t",
+            "-u",
+        }
+    ),
+    "time": frozenset({"--format", "--output", "-f", "-o"}),
+}
+SHELL_COMMAND_APPROVAL_TOKENS = frozenset(
+    {
+        "builtin",
+        "call",
+        "command",
+        "doas",
+        "env",
+        "eval",
+        "exec",
+        "iex",
+        "invoke-expression",
+        "nice",
+        "nohup",
+        "setsid",
+        "source",
+        "start",
+        "start-process",
+        "sudo",
+        "time",
+        *SHELL_FLOW_COMMAND_TOKENS,
+    }
+)
+SHELL_APPROVAL_TOKENS = SHELL_STRUCTURAL_APPROVAL_TOKENS | SHELL_COMMAND_APPROVAL_TOKENS
+SHELL_BLOCK_SCAN_COMMAND_TOKENS = SHELL_FLOW_COMMAND_TOKENS
+START_PROCESS_ARGUMENT_LIST_OPTIONS = frozenset({"-args", "-argument-list", "-argumentlist"})
+START_PROCESS_COMMAND_NAMES = frozenset({"saps", "start", "start-process"})
+START_PROCESS_FILE_PATH_OPTIONS = frozenset({"-file-path", "-filepath", "-path"})
+_SHELL_ASSIGNMENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*$")
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"\b(?P<key>[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
+    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_FLAG_RE = re.compile(
+    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
+    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
+    r"(?:\s+|=|:))"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_ASSIGNMENT_PREFIX_RE = re.compile(
+    r"\b(?:[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
+    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*",
+    re.IGNORECASE,
+)
+_SENSITIVE_FLAG_PREFIX_RE = re.compile(
+    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
+    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
+    r"(?:\s+|=|:))",
+    re.IGNORECASE,
+)
 _rules = JsonCollection("cli-command-policy-rules", CommandPolicyRule)
 
 
@@ -114,26 +283,78 @@ def update_command_policy_rule(
 def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     command = request.command.strip()
     parsed = parse_command(command)
+    default_decision = _default_decision(command, parsed, request)
 
-    for rule in _sorted_rules(_rules.list()):
-        if not rule.enabled:
-            continue
-        if not _rule_applies_to_context(rule, request):
-            continue
-        if _rule_matches(rule, command, parsed):
-            decision = _decision_from_rule(command, rule, request)
+    if parsed.executable not in SHELL_COMMAND_FLAGS:
+        if default_decision.permission_mode in {
+            PermissionMode.blocked,
+            PermissionMode.approval_required,
+        } and (
+            default_decision.permission_mode == PermissionMode.blocked
+            or default_decision.reason
+            == "Command references DGentic state files and needs approval."
+        ):
+            _record_decision(default_decision)
+            return default_decision
+        decision = _decision_from_configured_rules(command, parsed, request)
+        if decision is not None:
             _record_decision(decision)
             return decision
+
+    if parsed.executable in SHELL_COMMAND_FLAGS:
+        wrapper_decision = default_decision
+        if wrapper_decision.permission_mode == PermissionMode.blocked:
+            _record_decision(wrapper_decision)
+            return wrapper_decision
+
+        configured_decision = _decision_from_configured_rules(command, parsed, request)
+        if configured_decision is not None and (
+            configured_decision.permission_mode == PermissionMode.blocked
+        ):
+            _record_decision(configured_decision)
+            return configured_decision
+
+        if wrapper_decision.permission_mode == PermissionMode.approval_required:
+            _record_decision(wrapper_decision)
+            return wrapper_decision
+
+        if configured_decision is not None:
+            _record_decision(configured_decision)
+            return configured_decision
+
+        _record_decision(wrapper_decision)
+        return wrapper_decision
 
     decision = _default_decision(command, parsed, request)
     _record_decision(decision)
     return decision
 
 
+def _decision_from_configured_rules(
+    command: str,
+    parsed: ParsedCommand,
+    request: CommandPolicyRequest,
+) -> CommandPolicyDecision | None:
+    for rule in _sorted_rules(_rules.list()):
+        if not rule.enabled:
+            continue
+        if not _rule_applies_to_context(rule, request):
+            continue
+        if _rule_matches(rule, command, parsed):
+            return _decision_from_rule(command, rule, request)
+    return None
+
+
 class ParsedCommand:
-    def __init__(self, executable: str, arguments: list[str]) -> None:
+    def __init__(
+        self,
+        executable: str,
+        arguments: list[str],
+        original_command: str = "",
+    ) -> None:
         self.executable = executable
         self.arguments = arguments
+        self.original_command = original_command
 
 
 def parse_command(command: str) -> ParsedCommand:
@@ -145,13 +366,26 @@ def parse_command(command: str) -> ParsedCommand:
         return ParsedCommand(executable="", arguments=[])
 
     executable = _normalize_executable(parts[0])
-    return ParsedCommand(executable=executable, arguments=parts[1:])
+    return ParsedCommand(
+        executable=executable,
+        arguments=[_strip_matching_quotes(part) for part in parts[1:]],
+        original_command=command,
+    )
 
 
 def _normalize_executable(token: str) -> str:
-    token = token.strip().strip("\"'")
-    name = Path(token).name or token
+    token = _strip_matching_quotes(token.strip())
+    if "\\" in token or ":" in token:
+        name = PureWindowsPath(token).name or token
+    else:
+        name = PurePosixPath(token).name or token
     return name.lower()
+
+
+def _strip_matching_quotes(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        return token[1:-1]
+    return token
 
 
 def _sorted_rules(rules: list[CommandPolicyRule]) -> list[CommandPolicyRule]:
@@ -205,18 +439,10 @@ def _default_decision(
     request: CommandPolicyRequest,
 ) -> CommandPolicyDecision:
     executable = parsed.executable
-    inner = _parse_inner_shell_command(parsed)
-    if inner is not None:
-        inner_decision = _default_decision(command, inner, request)
-        if inner_decision.permission_mode == PermissionMode.blocked:
-            inner_decision.reason = (
-                f"Inner shell command {inner.executable} is blocked by the command policy."
-            )
-        elif inner_decision.permission_mode == PermissionMode.approval_required:
-            inner_decision.reason = (
-                f"Inner shell command {inner.executable} requires approval by the command policy."
-            )
-        return inner_decision
+    blocked_executable = _blocked_command_name(executable)
+    inner_command = _parse_inner_shell_command(parsed)
+    if inner_command is not None:
+        return _decision_for_inner_shell_command(command, inner_command, request)
 
     if executable in SHELL_COMMAND_FLAGS:
         return CommandPolicyDecision(
@@ -228,12 +454,22 @@ def _default_decision(
             agent_id=request.agent_id,
             task_id=request.task_id,
         )
-    if executable in BLOCKED_COMMANDS:
+    if blocked_executable is not None:
         return CommandPolicyDecision(
             command=command,
             risk=CommandRisk.blocked,
             permission_mode=PermissionMode.blocked,
             reason=f"{executable} is blocked by the command policy.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    if _command_targets_protected_data_dir(command):
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Command references DGentic state files and needs approval.",
             agent_role=request.agent_role,
             agent_id=request.agent_id,
             task_id=request.task_id,
@@ -244,6 +480,16 @@ def _default_decision(
             risk=CommandRisk.approval_required,
             permission_mode=PermissionMode.approval_required,
             reason=f"{executable} can change runtime or project state and needs approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    if executable not in READ_ONLY_COMMANDS:
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason=f"{executable} is not explicitly classified as read-only and needs approval.",
             agent_role=request.agent_role,
             agent_id=request.agent_id,
             task_id=request.task_id,
@@ -259,17 +505,1084 @@ def _default_decision(
     )
 
 
-def _parse_inner_shell_command(parsed: ParsedCommand) -> ParsedCommand | None:
+def _decision_for_inner_shell_command(
+    outer_command: str,
+    inner_command: str,
+    request: CommandPolicyRequest,
+) -> CommandPolicyDecision:
+    if _command_targets_protected_data_dir(inner_command):
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Command references DGentic state files and needs approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    segments, has_control_operator = _split_shell_command_segments(inner_command)
+    substitutions = _extract_shell_substitutions(inner_command)
+    script_scan_decision = _decision_from_shell_script_tokens(outer_command, inner_command, request)
+    if script_scan_decision.permission_mode == PermissionMode.blocked:
+        return script_scan_decision
+    if not segments:
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Shell wrapper has no inspectable inner command.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+
+    approval_decision: CommandPolicyDecision | None = None
+    safe_decision: CommandPolicyDecision | None = None
+    for segment in [*segments, *substitutions]:
+        inner = parse_command(segment)
+        if not inner.executable:
+            continue
+        inner_decision = _default_decision(outer_command, inner, request)
+        if inner_decision.permission_mode == PermissionMode.blocked:
+            inner_decision.reason = (
+                f"Inner shell command {inner.executable} is blocked by the command policy."
+            )
+            return inner_decision
+
+        configured_decision = _decision_from_configured_rules(segment, inner, request)
+        if configured_decision is not None:
+            configured_decision.command = outer_command
+            if configured_decision.permission_mode == PermissionMode.blocked:
+                configured_decision.reason = (
+                    f"Inner shell command {inner.executable} is blocked by configured "
+                    f"command policy: {configured_decision.reason}"
+                )
+                return configured_decision
+            if (
+                configured_decision.permission_mode == PermissionMode.autopilot_safe
+                and script_scan_decision.reason
+                != "Shell script constructs or redirection require approval."
+            ):
+                safe_decision = configured_decision
+                continue
+            if (
+                approval_decision is None
+                and configured_decision.permission_mode == PermissionMode.approval_required
+            ):
+                configured_decision.reason = (
+                    f"Inner shell command {inner.executable} requires approval by configured "
+                    f"command policy: {configured_decision.reason}"
+                )
+                approval_decision = configured_decision
+                continue
+
+        if (
+            approval_decision is None
+            and inner_decision.permission_mode == PermissionMode.approval_required
+        ):
+            inner_decision.reason = (
+                f"Inner shell command {inner.executable} requires approval by the command policy."
+            )
+            approval_decision = inner_decision
+
+    if (
+        safe_decision is not None
+        and not substitutions
+        and not has_control_operator
+        and not _shell_tokens_have_structural_or_source_approval(
+            _shell_script_tokens(inner_command),
+            _shell_command_position_tokens(_shell_script_tokens(inner_command)),
+        )
+    ):
+        return safe_decision
+
+    if (
+        script_scan_decision.permission_mode == PermissionMode.autopilot_safe
+        and not substitutions
+        and not has_control_operator
+        and (approval_decision is None or approval_decision.matched_rule_id is None)
+    ):
+        return script_scan_decision
+
+    if script_scan_decision.permission_mode == PermissionMode.approval_required:
+        return script_scan_decision
+
+    if approval_decision is not None:
+        return approval_decision
+
+    if substitutions:
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Shell command substitution requires approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+
+    if has_control_operator:
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Compound shell commands require approval even when each segment appears safe.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+
+    return CommandPolicyDecision(
+        command=outer_command,
+        risk=CommandRisk.safe,
+        permission_mode=PermissionMode.autopilot_safe,
+        reason="Command is classified as read-only or low risk.",
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
+    )
+
+
+def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
     flags = SHELL_COMMAND_FLAGS.get(parsed.executable)
     if flags is None:
         return None
 
     for index, argument in enumerate(parsed.arguments):
-        if argument.strip().strip("\"'").lower() in flags and index + 1 < len(parsed.arguments):
-            inner_command = " ".join(parsed.arguments[index + 1 :]).strip().strip("\"'")
+        normalized_argument = _strip_matching_quotes(argument.strip()).lower()
+        compact_inner_command = _compact_inner_shell_command(
+            parsed,
+            normalized_argument,
+            index,
+        )
+        if compact_inner_command is not None:
+            return compact_inner_command
+        if _is_shell_command_flag(
+            parsed.executable, normalized_argument, flags
+        ) and index + 1 < len(parsed.arguments):
+            inner_command = _strip_matching_quotes(" ".join(parsed.arguments[index + 1 :]).strip())
             if inner_command:
-                return parse_command(inner_command)
+                if _inner_shell_command_needs_posix_reparse(inner_command):
+                    reparsed_inner_command = _parse_inner_shell_command_with_posix(parsed, flags)
+                    if reparsed_inner_command is not None:
+                        return reparsed_inner_command
+                return inner_command
     return None
+
+
+def _compact_inner_shell_command(
+    parsed: ParsedCommand,
+    normalized_argument: str,
+    index: int,
+) -> str | None:
+    if parsed.executable not in {"cmd", "cmd.exe"}:
+        return None
+    for flag in SHELL_COMMAND_FLAGS[parsed.executable]:
+        if normalized_argument.startswith(flag) and normalized_argument != flag:
+            inline_inner = parsed.arguments[index].strip()[len(flag) :].strip()
+            remaining = " ".join(parsed.arguments[index + 1 :]).strip()
+            inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
+            return _strip_matching_quotes(inner_command) or None
+    return None
+
+
+def _is_shell_command_flag(
+    executable: str,
+    normalized_argument: str,
+    flags: set[str],
+) -> bool:
+    if normalized_argument in flags:
+        return True
+    if executable in {"bash", "sh"}:
+        return _is_posix_clustered_command_flag(normalized_argument)
+    return False
+
+
+def _is_posix_clustered_command_flag(normalized_argument: str) -> bool:
+    if not normalized_argument.startswith("-") or normalized_argument.startswith("--"):
+        return False
+    return "c" in normalized_argument[1:]
+
+
+def _inner_shell_command_needs_posix_reparse(inner_command: str) -> bool:
+    return '\\"' in inner_command or inner_command.count('"') % 2 == 1
+
+
+def _parse_inner_shell_command_with_posix(
+    parsed: ParsedCommand,
+    flags: set[str],
+) -> str | None:
+    if not parsed.original_command:
+        return None
+    try:
+        parts = shlex.split(parsed.original_command, posix=True)
+    except ValueError:
+        return None
+    arguments = [_strip_matching_quotes(part) for part in parts[1:]]
+    for index, argument in enumerate(arguments):
+        if _is_shell_command_flag(
+            parsed.executable, argument.strip().lower(), flags
+        ) and index + 1 < len(arguments):
+            inner_command = _strip_matching_quotes(" ".join(arguments[index + 1 :]).strip())
+            if inner_command:
+                return inner_command
+    return None
+
+
+def _split_shell_command_segments(command: str) -> tuple[list[str], bool]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    has_control_operator = False
+    index = 0
+
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            index += 1
+            continue
+        if char in SHELL_CONTROL_OPERATORS:
+            has_control_operator = True
+            segment = _normalize_shell_segment("".join(current))
+            if segment:
+                segments.append(segment)
+            current = []
+            if char in {"&", "|"} and index + 1 < len(command) and command[index + 1] == char:
+                index += 2
+            else:
+                index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    segment = _normalize_shell_segment("".join(current))
+    if segment:
+        segments.append(segment)
+    return segments, has_control_operator
+
+
+def _normalize_shell_segment(segment: str) -> str:
+    segment = segment.strip()
+    while segment.startswith((". ", "& ")):
+        segment = segment[1:].strip()
+    while segment[:1] in {"{", "("}:
+        segment = segment[1:].strip()
+    while segment[-1:] in {"}", ")"}:
+        segment = segment[:-1].strip()
+    while len(segment) >= 2 and (
+        (segment[0] == "{" and segment[-1] == "}") or (segment[0] == "(" and segment[-1] == ")")
+    ):
+        segment = segment[1:-1].strip()
+    return segment
+
+
+def _extract_shell_substitutions(command: str) -> list[str]:
+    substitutions: list[str] = []
+    index = 0
+    while index < len(command):
+        if command.startswith("$(", index):
+            substitution, end_index = _extract_balanced_substitution(command, index + 2)
+            if substitution:
+                substitutions.append(substitution)
+                substitutions.extend(_extract_shell_substitutions(substitution))
+            index = end_index
+            continue
+        if command.startswith(("<(", ">("), index):
+            substitution, end_index = _extract_balanced_substitution(
+                command,
+                index + 2,
+                extra_openers=("<(", ">("),
+            )
+            if substitution:
+                substitutions.append(substitution)
+                substitutions.extend(_extract_shell_substitutions(substitution))
+            index = end_index
+            continue
+        if command[index] == "`":
+            end_index = _find_backtick_substitution_end(command, index + 1)
+            if end_index == -1:
+                return substitutions
+            substitution = command[index + 1 : end_index].strip()
+            if substitution:
+                substitutions.append(substitution)
+                substitutions.extend(_extract_shell_substitutions(substitution.replace("\\`", "`")))
+            index = end_index + 1
+            continue
+        index += 1
+    return substitutions
+
+
+def _find_backtick_substitution_end(command: str, start_index: int) -> int:
+    index = start_index
+    escaped = False
+    nested_depth = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            if char == "`":
+                if nested_depth == 0:
+                    nested_depth += 1
+                else:
+                    nested_depth -= 1
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if char == "`":
+            if nested_depth == 0:
+                return index
+            nested_depth -= 1
+        index += 1
+    return -1
+
+
+def _decision_from_shell_script_tokens(
+    outer_command: str,
+    inner_command: str,
+    request: CommandPolicyRequest,
+) -> CommandPolicyDecision:
+    tokens = _shell_script_tokens(inner_command)
+    command_token_indexes = _shell_command_position_token_indexes(tokens)
+    command_tokens = [tokens[index] for index in command_token_indexes]
+    for token in command_tokens:
+        normalized = _normalize_executable(token)
+        blocked_command = _blocked_command_name(normalized)
+        if blocked_command is not None:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason=f"Inner shell command {normalized} is blocked by the command policy.",
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+    if any(
+        _strip_matching_quotes(token).lower() in SHELL_BLOCK_SCAN_COMMAND_TOKENS
+        for token in command_tokens
+    ):
+        for token in tokens:
+            normalized = _normalize_executable(token)
+            blocked_command = _blocked_command_name(normalized)
+            if blocked_command is not None:
+                return CommandPolicyDecision(
+                    command=outer_command,
+                    risk=CommandRisk.blocked,
+                    permission_mode=PermissionMode.blocked,
+                    reason=f"Inner shell command {normalized} is blocked by the command policy.",
+                    agent_role=request.agent_role,
+                    agent_id=request.agent_id,
+                    task_id=request.task_id,
+                )
+    nested_shell_blocked_command = _blocked_command_from_nested_shell_invocation(
+        tokens,
+        command_token_indexes,
+    )
+    if nested_shell_blocked_command is not None:
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason=(
+                f"Inner shell command {nested_shell_blocked_command} is blocked "
+                "by the command policy."
+            ),
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    for token in command_tokens:
+        normalized = _normalize_executable(token)
+        payload_blocked_command = _blocked_command_from_start_process_argument_list(
+            normalized,
+            tokens,
+        )
+        if payload_blocked_command is not None:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason=(
+                    f"Inner shell command {payload_blocked_command} is blocked "
+                    "by the command policy."
+                ),
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+    if _shell_tokens_have_structural_or_source_approval(tokens, command_tokens):
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Shell script constructs or redirection require approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    for token in command_tokens:
+        normalized = _normalize_executable(token)
+        if normalized in APPROVAL_COMMANDS:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.approval_required,
+                permission_mode=PermissionMode.approval_required,
+                reason=f"Inner shell command {normalized} requires approval by the command policy.",
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+        if normalized not in READ_ONLY_COMMANDS and normalized not in SHELL_COMMAND_APPROVAL_TOKENS:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.approval_required,
+                permission_mode=PermissionMode.approval_required,
+                reason=(
+                    f"Inner shell command {normalized} is not explicitly classified "
+                    "as read-only and needs approval."
+                ),
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+    if _shell_tokens_require_approval(tokens, command_tokens):
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason="Shell script constructs or redirection require approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    return CommandPolicyDecision(
+        command=outer_command,
+        risk=CommandRisk.safe,
+        permission_mode=PermissionMode.autopilot_safe,
+        reason="Command is classified as read-only or low risk.",
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
+    )
+
+
+def _shell_script_tokens(command: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    index = 0
+
+    def append_current_token() -> None:
+        token = "".join(current).strip()
+        if token:
+            tokens.append(token)
+        current.clear()
+
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            index += 1
+            continue
+        if command.startswith("$(", index):
+            _substitution, end_index = _extract_balanced_substitution(command, index + 2)
+            current.append(command[index:end_index])
+            index = end_index
+            continue
+        if char == "`":
+            end_index = _find_backtick_substitution_end(command, index + 1)
+            if end_index == -1:
+                current.append(char)
+                index += 1
+                continue
+            current.append(command[index : end_index + 1])
+            index = end_index + 1
+            continue
+        if char.isspace():
+            append_current_token()
+            index += 1
+            continue
+        if char in {";", "&", "|", "{", "}", "(", ")", "\n"}:
+            append_current_token()
+            index += 1
+            continue
+        if char in {">", "<"}:
+            append_current_token()
+            if index + 1 < len(command) and command[index + 1] == char:
+                tokens.append(char * 2)
+                index += 2
+            else:
+                tokens.append(char)
+                index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    append_current_token()
+    return tokens
+
+
+def _shell_command_position_tokens(tokens: list[str]) -> list[str]:
+    return [tokens[index] for index in _shell_command_position_token_indexes(tokens)]
+
+
+def _shell_command_position_token_indexes(tokens: list[str]) -> list[int]:
+    command_token_indexes: list[int] = []
+    expects_command = True
+    skip_next = False
+    skip_command_prefix_options = False
+    skip_command_prefix_option_value = False
+    active_command_prefix: str | None = None
+    start_title_skipped = False
+    for index, token in enumerate(tokens):
+        normalized = _strip_matching_quotes(token).lower()
+        if (
+            expects_command
+            and active_command_prefix == "start-process"
+            and _split_powershell_parameter_value(
+                token,
+                START_PROCESS_ARGUMENT_LIST_OPTIONS,
+            )[0]
+            is not None
+            and index + 1 < len(tokens)
+        ):
+            payload_blocked_command = _blocked_command_from_launcher_payload(tokens[index + 1])
+            if payload_blocked_command is not None:
+                command_token_indexes.append(index + 1)
+            skip_command_prefix_option_value = True
+            continue
+        if skip_next:
+            skip_next = False
+            expects_command = False
+            skip_command_prefix_options = False
+            skip_command_prefix_option_value = False
+            active_command_prefix = None
+            continue
+        if skip_command_prefix_option_value:
+            skip_command_prefix_option_value = False
+            continue
+        if normalized in {">", "<", "2>", ">>", "<<"}:
+            skip_next = True
+            continue
+        if expects_command and normalized == "!":
+            continue
+        if expects_command and _is_shell_assignment_token(token):
+            continue
+        if expects_command and skip_command_prefix_options and normalized.startswith(("-", "/")):
+            if _shell_prefix_option_takes_value(active_command_prefix, normalized):
+                skip_command_prefix_option_value = True
+            continue
+        if (
+            expects_command
+            and active_command_prefix == "start"
+            and not start_title_skipped
+            and _is_quoted_token(token)
+        ):
+            start_title_skipped = True
+            continue
+        if expects_command and normalized in SHELL_COMMAND_PREFIX_TOKENS:
+            command_token_indexes.append(index)
+            expects_command = True
+            skip_command_prefix_options = True
+            active_command_prefix = normalized
+            start_title_skipped = False
+            continue
+        if expects_command and normalized in SHELL_FLOW_COMMAND_TOKENS:
+            command_token_indexes.append(index)
+            expects_command = True
+            skip_command_prefix_options = False
+            active_command_prefix = None
+            start_title_skipped = False
+            continue
+        if expects_command:
+            command_token_indexes.append(index)
+            expects_command = normalized in SHELL_COMMAND_APPROVAL_TOKENS
+            skip_command_prefix_options = False
+            skip_command_prefix_option_value = False
+            active_command_prefix = None
+            start_title_skipped = False
+    return command_token_indexes
+
+
+def _shell_tokens_require_approval(tokens: list[str], command_tokens: list[str]) -> bool:
+    if _shell_tokens_have_structural_or_source_approval(tokens, command_tokens):
+        return True
+    if any(
+        _strip_matching_quotes(token).lower() in SHELL_COMMAND_APPROVAL_TOKENS
+        for token in command_tokens
+    ):
+        return True
+    return False
+
+
+def _shell_tokens_have_structural_or_source_approval(
+    tokens: list[str],
+    command_tokens: list[str],
+) -> bool:
+    if any(
+        _strip_matching_quotes(token).lower() in SHELL_STRUCTURAL_APPROVAL_TOKENS
+        for token in tokens
+    ):
+        return True
+    return any(_strip_matching_quotes(token).lower() in {"source", "."} for token in command_tokens)
+
+
+def _blocked_command_from_nested_shell_invocation(
+    tokens: list[str],
+    command_token_indexes: list[int],
+) -> str | None:
+    for command_index in command_token_indexes:
+        shell_executable = _normalize_executable(tokens[command_index])
+        flags = SHELL_COMMAND_FLAGS.get(shell_executable)
+        if flags is None:
+            continue
+        for index in range(command_index + 1, len(tokens)):
+            normalized_token = _strip_matching_quotes(tokens[index]).lower()
+            compact_inner_command = _compact_nested_cmd_shell_command(
+                shell_executable,
+                tokens,
+                normalized_token,
+                index,
+            )
+            if compact_inner_command is not None:
+                compact_tokens = _shell_script_tokens(compact_inner_command)
+                compact_command_indexes = _shell_command_position_token_indexes(compact_tokens)
+                compact_blocked_command = _blocked_command_from_nested_shell_invocation(
+                    compact_tokens,
+                    compact_command_indexes,
+                )
+                if compact_blocked_command is not None:
+                    return compact_blocked_command
+                for compact_command_index in compact_command_indexes:
+                    normalized = _normalize_executable(compact_tokens[compact_command_index])
+                    blocked_command = _blocked_command_name(normalized)
+                    if blocked_command is not None:
+                        return normalized
+                break
+            if not _is_shell_command_flag(shell_executable, normalized_token, flags):
+                continue
+            tail_tokens = tokens[index + 1 :]
+            tail_command = _strip_matching_quotes(" ".join(tail_tokens).strip())
+            if tail_command:
+                nested_tokens = _shell_script_tokens(tail_command)
+                nested_command_indexes = _shell_command_position_token_indexes(nested_tokens)
+                nested_blocked_command = _blocked_command_from_nested_shell_invocation(
+                    nested_tokens,
+                    nested_command_indexes,
+                )
+                if nested_blocked_command is not None:
+                    return nested_blocked_command
+                for tail_command_index in nested_command_indexes:
+                    normalized = _normalize_executable(nested_tokens[tail_command_index])
+                    blocked_command = _blocked_command_name(normalized)
+                    if blocked_command is not None:
+                        return normalized
+            break
+    return None
+
+
+def _compact_nested_cmd_shell_command(
+    shell_executable: str,
+    tokens: list[str],
+    normalized_token: str,
+    index: int,
+) -> str | None:
+    if shell_executable not in {"cmd", "cmd.exe"}:
+        return None
+    for flag in SHELL_COMMAND_FLAGS[shell_executable]:
+        if normalized_token.startswith(flag) and normalized_token != flag:
+            inline_inner = tokens[index].strip()[len(flag) :].strip()
+            remaining = " ".join(tokens[index + 1 :]).strip()
+            inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
+            return _strip_matching_quotes(inner_command) or None
+    return None
+
+
+def _blocked_command_from_start_process_argument_list(
+    command_name: str,
+    tokens: list[str],
+) -> str | None:
+    if command_name not in START_PROCESS_COMMAND_NAMES:
+        return None
+    for index, token in enumerate(tokens[:-1]):
+        parameter_name, inline_value = _split_powershell_parameter_value(
+            token,
+            START_PROCESS_ARGUMENT_LIST_OPTIONS,
+        )
+        if parameter_name is None:
+            continue
+        payload_tokens = tokens[index + 1 :]
+        if inline_value:
+            payload_tokens = [inline_value, *payload_tokens]
+        blocked_command = _blocked_command_from_launcher_payload(
+            _start_process_argument_payload(payload_tokens)
+        )
+        if blocked_command is not None:
+            return blocked_command
+
+    launcher_payload = _start_process_launcher_payload(command_name, tokens)
+    if launcher_payload:
+        blocked_command = _blocked_command_from_launcher_payload(launcher_payload)
+        if blocked_command is not None:
+            return blocked_command
+    return None
+
+
+def _split_powershell_parameter_value(
+    token: str,
+    parameter_names: frozenset[str],
+) -> tuple[str | None, str | None]:
+    cleaned = _strip_matching_quotes(token.strip())
+    lowered = cleaned.lower()
+    if lowered in parameter_names:
+        return lowered, None
+    for separator in (":", "="):
+        if separator not in cleaned:
+            continue
+        name, value = cleaned.split(separator, 1)
+        lowered_name = name.lower()
+        if lowered_name in parameter_names:
+            return lowered_name, value
+    return None, None
+
+
+def _start_process_launcher_payload(command_name: str, tokens: list[str]) -> str:
+    executable: str | None = None
+    argument_tokens: list[str] = []
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        argument_name, argument_inline_value = _split_powershell_parameter_value(
+            token,
+            START_PROCESS_ARGUMENT_LIST_OPTIONS,
+        )
+        if argument_name is not None:
+            argument_tokens = tokens[index + 1 :]
+            if argument_inline_value:
+                argument_tokens = [argument_inline_value, *argument_tokens]
+            break
+
+        file_path_name, file_path_inline_value = _split_powershell_parameter_value(
+            token,
+            START_PROCESS_FILE_PATH_OPTIONS,
+        )
+        if file_path_name is not None:
+            if file_path_inline_value:
+                executable = file_path_inline_value
+            elif index + 1 < len(tokens):
+                executable = tokens[index + 1]
+                index += 1
+            index += 1
+            continue
+
+        normalized = _strip_matching_quotes(token).lower()
+        skips_start_option = (
+            command_name == "start" and executable is None and normalized.startswith("/")
+        )
+        if normalized.startswith("-") or skips_start_option:
+            option_name = normalized.split(":", 1)[0].split("=", 1)[0]
+            if _shell_prefix_option_takes_value("start-process", option_name):
+                index += 2
+            else:
+                index += 1
+            continue
+
+        if executable is None:
+            executable = token
+            index += 1
+            continue
+
+        argument_tokens = tokens[index:]
+        break
+
+    payload_parts: list[str] = []
+    if executable:
+        payload_parts.append(_strip_matching_quotes(executable))
+    argument_payload = _start_process_argument_payload(argument_tokens)
+    if argument_payload:
+        payload_parts.append(argument_payload)
+    return " ".join(payload_parts)
+
+
+def _start_process_argument_payload(tokens: list[str]) -> str:
+    payload_parts: list[str] = []
+    for token in tokens:
+        if token.strip().strip(",") == "@":
+            continue
+        normalized = _strip_matching_quotes(token).lower()
+        if payload_parts and normalized.startswith("-") and "," not in token:
+            break
+        cleaned_parts = [
+            _strip_powershell_array_syntax(_strip_matching_quotes(part.strip()))
+            for part in token.strip().strip(",").split(",")
+            if part.strip()
+        ]
+        payload_parts.extend(cleaned_parts)
+        if "," not in token and len(payload_parts) == len(cleaned_parts):
+            break
+    return " ".join(payload_parts)
+
+
+def _strip_powershell_array_syntax(token: str) -> str:
+    token = token.strip()
+    if token.startswith("@("):
+        token = token[2:].strip()
+    while token.endswith(")"):
+        token = token[:-1].strip()
+    return _strip_matching_quotes(token)
+
+
+def _blocked_command_from_launcher_payload(payload: str) -> str | None:
+    payload_command = _strip_matching_quotes(payload.strip())
+    if not payload_command:
+        return None
+    payload_command = _strip_leading_shell_options(payload_command)
+    tokens = _shell_script_tokens(payload_command)
+    command_token_indexes = _shell_command_position_token_indexes(tokens)
+    nested_blocked_command = _blocked_command_from_nested_shell_invocation(
+        tokens,
+        command_token_indexes,
+    )
+    if nested_blocked_command is not None:
+        return nested_blocked_command
+    for command_index in command_token_indexes:
+        normalized = _normalize_executable(tokens[command_index])
+        blocked_command = _blocked_command_name(normalized)
+        if blocked_command is not None:
+            return normalized
+    return None
+
+
+def _strip_leading_shell_options(command: str) -> str:
+    tokens = _shell_script_tokens(command)
+    while tokens:
+        normalized = _strip_matching_quotes(tokens[0]).lower()
+        if any(
+            normalized == flag
+            for shell_flags in SHELL_COMMAND_FLAGS.values()
+            for flag in shell_flags
+        ):
+            tokens = tokens[1:]
+            continue
+        if normalized in {"-noprofile", "-noninteractive", "-executionpolicy", "-ep"}:
+            tokens = (
+                tokens[2:]
+                if len(tokens) > 1 and normalized in {"-executionpolicy", "-ep"}
+                else tokens[1:]
+            )
+            continue
+        break
+    return " ".join(tokens)
+
+
+def _is_shell_assignment_token(token: str) -> bool:
+    return bool(_SHELL_ASSIGNMENT_TOKEN_RE.match(token))
+
+
+def _is_quoted_token(token: str) -> bool:
+    return len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}
+
+
+def _blocked_command_name(executable: str) -> str | None:
+    if executable in BLOCKED_COMMANDS:
+        return executable
+    path = PureWindowsPath(executable)
+    if path.suffix.lower() not in WINDOWS_EXECUTABLE_EXTENSIONS:
+        return None
+    stem = path.stem.lower()
+    if stem in BLOCKED_COMMANDS:
+        return stem
+    return None
+
+
+def _command_targets_protected_data_dir(command: str) -> bool:
+    settings = get_settings()
+    root_dir = settings.root_dir.resolve()
+    data_dir = settings.data_dir
+    if not data_dir.is_absolute():
+        data_dir = root_dir / data_dir
+    protected_data_dir = data_dir.resolve()
+    for token in _shell_script_tokens(command):
+        candidate_token = _strip_matching_quotes(token)
+        if _token_targets_path(candidate_token, protected_data_dir, root_dir):
+            return True
+    return False
+
+
+def _token_targets_path(
+    token: str,
+    protected_data_dir: PureWindowsPath,
+    root_dir: PureWindowsPath,
+) -> bool:
+    return any(
+        _path_candidate_targets_path(candidate, protected_data_dir, root_dir)
+        for candidate in _path_token_candidates(token)
+    )
+
+
+def _path_token_candidates(token: str) -> list[str]:
+    cleaned = _strip_matching_quotes(token.strip()).replace('"', "").replace("'", "")
+    if not cleaned:
+        return []
+    candidates = [cleaned]
+    if cleaned.startswith("-"):
+        for separator in (":", "="):
+            if separator in cleaned:
+                _name, value = cleaned.split(separator, 1)
+                if value:
+                    candidates.append(value)
+                break
+    return candidates
+
+
+def _path_candidate_targets_path(
+    token: str,
+    protected_data_dir: PureWindowsPath,
+    root_dir: PureWindowsPath,
+) -> bool:
+    if not token or token in SHELL_APPROVAL_TOKENS or token in SHELL_CONTROL_OPERATORS:
+        return False
+    normalized_token = token.replace("/", "\\")
+    lowered_token = normalized_token.lower()
+    if _path_candidate_matches_protected_dir_name(lowered_token, protected_data_dir):
+        return True
+    if (
+        ".dgentic" in lowered_token
+        or "\\state" in lowered_token
+        or lowered_token.startswith("state\\")
+    ):
+        return True
+    try:
+        token_path = PureWindowsPath(normalized_token)
+        if not token_path.is_absolute():
+            token_path = PureWindowsPath(root_dir) / token_path
+        normalized_path = str(token_path).lower()
+        protected_path = str(protected_data_dir).lower()
+        return normalized_path == protected_path or normalized_path.startswith(
+            protected_path.rstrip("\\") + "\\"
+        )
+    except ValueError:
+        return False
+
+
+def _path_candidate_matches_protected_dir_name(
+    lowered_token: str,
+    protected_data_dir: PureWindowsPath,
+) -> bool:
+    protected_names = {".dgentic", protected_data_dir.name.lower()}
+    for segment in re.split(r"\\+", lowered_token):
+        segment = segment.strip()
+        if not segment:
+            continue
+        if any(fnmatchcase(name, segment) for name in protected_names):
+            return True
+    return False
+
+
+def _shell_prefix_option_takes_value(prefix: str | None, option: str) -> bool:
+    if prefix is None:
+        return False
+    if "=" in option:
+        return False
+    options_with_values = SHELL_COMMAND_PREFIX_OPTIONS_WITH_VALUES.get(prefix, frozenset())
+    return option in options_with_values
+
+
+def _extract_balanced_substitution(
+    command: str,
+    start_index: int,
+    *,
+    extra_openers: tuple[str, ...] = (),
+) -> tuple[str, int]:
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    current: list[str] = []
+    index = start_index
+
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            index += 1
+            continue
+        if command.startswith("$(", index) or any(
+            command.startswith(opener, index) for opener in extra_openers
+        ):
+            depth += 1
+            current.append(command[index : index + 2])
+            index += 2
+            continue
+        if char == ")":
+            depth -= 1
+            if depth == 0:
+                return "".join(current).strip(), index + 1
+            current.append(char)
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+
+    return "", len(command)
 
 
 def _risk_for_permission(permission_mode: PermissionMode) -> CommandRisk:
@@ -285,8 +1598,77 @@ def _normalize_agent_roles(agent_roles: list[str]) -> list[str]:
 
 
 def _record_decision(decision: CommandPolicyDecision) -> None:
+    metadata = decision.model_dump(mode="json")
+    metadata["command"] = _redact_sensitive_values(metadata["command"])
     event_log.record(
         LogEventType.cli,
         "Evaluated CLI command policy.",
-        metadata=decision.model_dump(mode="json"),
+        metadata=metadata,
     )
+
+
+def _redact_sensitive_values(text: str) -> str:
+    return _SENSITIVE_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group('key')}=[REDACTED]",
+        _SENSITIVE_FLAG_RE.sub(
+            lambda match: f"{match.group('prefix')}[REDACTED]",
+            _redact_substitution_secret_values(text),
+        ),
+    )
+
+
+def _redact_substitution_secret_values(text: str) -> str:
+    result = text
+    for match in list(_SENSITIVE_ASSIGNMENT_PREFIX_RE.finditer(result))[::-1]:
+        result = _redact_balanced_substitution_value(result, match.end(), "")
+    for match in list(_SENSITIVE_FLAG_PREFIX_RE.finditer(result))[::-1]:
+        result = _redact_balanced_substitution_value(result, match.end(), match.group("prefix"))
+    return result
+
+
+def _redact_balanced_substitution_value(text: str, value_start: int, prefix: str) -> str:
+    if not text.startswith("$(", value_start):
+        return text
+    end_index = _find_balanced_substitution_end(text, value_start + 2)
+    if end_index == -1:
+        return text
+    redacted = f"{prefix}[REDACTED]"
+    return text[: value_start - len(prefix)] + redacted + text[end_index:]
+
+
+def _find_balanced_substitution_end(text: str, start_index: int) -> int:
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    index = start_index
+    while index < len(text):
+        char = text[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if text.startswith("$(", index):
+            depth += 1
+            index += 2
+            continue
+        if char == ")":
+            depth -= 1
+            index += 1
+            if depth == 0:
+                return index
+            continue
+        index += 1
+    return -1

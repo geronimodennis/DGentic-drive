@@ -2,11 +2,11 @@
 
 Date created: 2026-05-07
 Owner: [PM]
-Status: refined backlog for completing partially implemented feature groups.
+Status: refined backlog for completing partially implemented and not-yet-implemented feature groups.
 
 ## Purpose
 
-This backlog turns the current partially implemented feature gaps into trackable Agile work. It is the source list for PM sprint planning until each item is implemented, tested, documented, and moved out of the root README partially implemented section.
+This backlog turns the current partially implemented and not-yet-implemented feature gaps into trackable Agile work. It is the source list for PM sprint planning until each item is implemented, tested, documented, and moved out of the root README partially implemented or not-yet-implemented sections.
 
 ## Refinement Checklist
 
@@ -17,6 +17,7 @@ This backlog turns the current partially implemented feature gaps into trackable
 - Completed: Execute Sprint 8.
 - Completed: Update this backlog after Sprint 8 closeout.
 - Completed: Initiate Sprint 9.
+- Completed: Map all root README not-yet-implemented items into remaining or newly added sprints.
 - In progress: Execute Sprint 9.
 
 ## Priority Order
@@ -29,6 +30,10 @@ This backlog turns the current partially implemented feature gaps into trackable
 6. Provider system productionization.
 7. Memory and retrieval production lifecycle.
 8. Agent orchestration autonomy.
+9. Production identity, secret management, and network guardrails.
+10. Cross-platform web UI, dashboard, and interactive approval experience.
+11. VS Code extension and dedicated CLI client.
+12. Production deployment, CI/CD, observability, alerting, and rollback automation.
 
 Rationale: DGentic already exposes powerful backend operations such as CLI execution, file writes, tool execution, provider calls, approvals, and logs. Authentication/authorization and persistence create the durable, accountable execution base needed before expanding autonomous agents, generated tools, provider routing, and long-running workflows.
 
@@ -127,7 +132,8 @@ Definition of Done:
 
 Current implementation status:
 - Completed: BL-002a chunked async CLI output polling with redacted stdout/stderr chunks, output sequence cursors, persisted output chunks on command runs, and stale-running reconciliation for orphaned persisted runs.
-- Remaining: approval-required commands still need bound approval IDs instead of broad `approved: true`, full restart-resilient process supervision beyond stale marking, persisted process recovery strategy, and production multi-worker lifecycle semantics.
+- Completed: BL-002b single-use bound approval IDs for approval-required command execution outside development/test mode, including command digest, cwd, timeout, requester, agent/task context, environment-key, policy-metadata, and expiry binding.
+- Remaining: full restart-resilient process supervision beyond stale marking, persisted process recovery strategy, and production multi-worker lifecycle semantics.
 
 ### BL-003: CLI Parsing And Approval Review UX Contracts
 
@@ -153,6 +159,7 @@ Definition of Done:
 
 Current implementation status:
 - Completed: approval records now expose safe matched policy review metadata through matched rule id/name, existing command/cwd/role/task/environment-key fields, and no persisted environment values.
+- Selected next slice: BL-003a Windows/POSIX command parsing matrix and approval review contract refinement.
 - Remaining: broader Windows/POSIX parsing matrix, quoting edge cases, explicit approval review contracts for UI consumers, and richer reviewer decision metadata.
 
 ### BL-004: Filesystem Runtime Completion
@@ -280,6 +287,127 @@ Definition of Done:
 - Tests cover task scheduling, dependency ordering, role enforcement, blocker escalation, retry policy, and progress updates.
 - Agentic workflow docs, README current status, architecture docs, and progress log are updated.
 
+### BL-009: Production Identity, Secret Management, And Network Guardrails
+
+Feature group: Cross-cutting production security and network policy.
+
+User value:
+- Operators need real identity records, token lifecycle controls, encrypted secrets, and network egress boundaries before DGentic can safely expose provider credentials, external services, UI approvals, and autonomous network-capable workflows.
+
+Needs to be done:
+- Add persisted operator identity records and role/capability assignment workflows.
+- Hash tokens at rest and add token rotation, expiry, revocation, and audit trails.
+- Bind approval decisions and audit events to authenticated actor identities.
+- Add encrypted credential storage or external secret manager integration for provider and runtime credentials.
+- Add network/domain guardrail policy for web retrieval, provider calls, generated tools, and future UI/API clients.
+- Add allowlist, denylist, approval-required, and audit modes for outbound network access.
+- Add secret masking and no-secret-response tests across auth, providers, approvals, logs, and settings.
+
+Acceptance criteria:
+- Operators can create, rotate, revoke, and expire tokens without storing raw token values.
+- Approval records and audit logs identify the actor responsible for decisions and executions.
+- Provider credentials are stored or referenced through a secure secret strategy and are never returned in API responses.
+- Network access can be allowed, denied, or approval-required by domain/policy.
+- Tests prove secrets are masked and network policy is enforced.
+
+Definition of Done:
+- Tests cover identity persistence, token hashing/rotation/expiry/revocation, actor-bound approvals, secret masking, credential storage boundaries, and network policy decisions.
+- Security review validates identity, secret, and network exposure risk.
+- README, setup docs, architecture docs, usage docs, and progress log are updated.
+
+Current implementation status:
+- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, and principal attachment on request state.
+- Not yet implemented: persisted identities, hashed/rotating expiring tokens, actor-bound approval identities, encrypted credential storage, external secret manager integration, and network/domain guardrails.
+
+### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
+
+Feature group: Interface ecosystem.
+
+User value:
+- Users need a usable cross-platform interface for task submission, sub-agent status, approvals, action logs, provider activity, memory, tools, settings, and runtime health instead of calling backend APIs directly.
+
+Needs to be done:
+- Build the web frontend shell for chat/task workflows, sub-agent progress, and rich output rendering.
+- Add interactive approval UI for CLI, filesystem, tool, provider, and network approval-required actions.
+- Add settings UI for auth/session connection, providers, routing, filesystem boundaries, CLI policy, memory, tools, and agent blueprints.
+- Add dashboard views for runtime status, action logs, provider usage, memory health, tool reliability, and task history.
+- Add API client contracts, authentication handling, loading/error states, and responsive layouts.
+- Add frontend testing strategy and smoke validation against the backend.
+
+Acceptance criteria:
+- A user can submit a task, inspect plan/progress, review approval-required actions, and view action logs through the UI.
+- Approval UI displays safe review metadata without secret values and records reviewer decisions.
+- Settings and dashboard views cover the core backend surfaces needed for MVP operation.
+- UI works on common desktop browser sizes and remains usable on smaller screens.
+
+Definition of Done:
+- Tests or smoke checks cover task flow, approval flow, auth handling, settings persistence/contracts, and dashboard data loading.
+- README, setup docs, usage docs, architecture docs, and progress log are updated.
+- PM confirms the root README not-yet-implemented entries for web frontend/dashboard and interactive approval UI can move to implemented or partially implemented status.
+
+Current implementation status:
+- Not yet implemented: web frontend/dashboard and interactive approval UI.
+
+### BL-011: VS Code Extension And Dedicated CLI Client
+
+Feature group: Developer interfaces.
+
+User value:
+- Developers need DGentic available from their editor and terminal so they can trigger tasks, inspect agents, review approvals, and reuse generated tools without leaving their normal workflow.
+
+Needs to be done:
+- Scaffold a VS Code extension with command palette commands, backend connection settings, token configuration, and sidebar views.
+- Add VS Code task submission, active agent status, memory/tool status, and approval review surfaces.
+- Add generated-tool discovery or launch integration where safe.
+- Build a dedicated CLI client for health checks, task planning/execution, approvals, CLI runs, providers, memory, tools, and logs.
+- Share or align API contracts between the web UI, VS Code extension, and CLI client where practical.
+- Add packaging, installation, and smoke validation for both interfaces.
+
+Acceptance criteria:
+- VS Code users can connect to a DGentic backend, submit a task, inspect active agents, and review approval-required actions.
+- CLI users can perform core operational workflows without manually crafting HTTP requests.
+- Tokens and sensitive settings are masked and not logged.
+- Interface packaging and local install instructions are documented.
+
+Definition of Done:
+- Tests or smoke checks cover extension activation/connection, CLI command flows, auth handling, and approval review.
+- README, setup docs, usage docs, architecture docs, and progress log are updated.
+- PM confirms the root README not-yet-implemented entries for VS Code extension and dedicated CLI client can move to implemented or partially implemented status.
+
+Current implementation status:
+- Not yet implemented: VS Code extension and dedicated CLI client interface.
+
+### BL-012: Production Deployment, CI/CD, Observability, And Rollback
+
+Feature group: DevOps, release, and operations.
+
+User value:
+- Operators need repeatable builds, automated validation, deployable environments, monitoring, alerting, and rollback paths before DGentic can be run as a production service.
+
+Needs to be done:
+- Add CI pipeline for tests, lint, format, packaging, and release artifact checks.
+- Add deployment infrastructure for local/staging/production environments.
+- Add container or service packaging strategy where appropriate.
+- Add runtime metrics for API latency, task/agent state, provider usage, CLI/tool runs, memory health, and errors.
+- Add structured logs, dashboards, alerts, and operational runbooks.
+- Add rollback automation and deployment smoke checks.
+- Add release readiness gates for deployment validation and incident response.
+
+Acceptance criteria:
+- CI runs the documented quality gates and produces actionable results.
+- A staging deployment can be created and smoke-tested reproducibly.
+- Operators can see health, metrics, logs, and alerts for critical runtime surfaces.
+- Rollback procedure is documented and verified through a smoke workflow.
+
+Definition of Done:
+- Tests or pipeline checks cover CI quality gates, package build, deployment smoke checks, metrics exposure, alert configuration, and rollback documentation.
+- README, release docs, architecture docs, operations docs, and progress log are updated.
+- PM confirms the root README not-yet-implemented entries for production deployment/CI/CD and runtime monitoring/metrics/alerting/rollback can move to implemented or partially implemented status.
+
+Current implementation status:
+- Partially implemented: release distribution artifacts, release notes, package builds, and local wheel smoke checks.
+- Not yet implemented: production deployment infrastructure, CI/CD pipeline, runtime monitoring, metrics, alerting, and rollback automation.
+
 ## Proposed Sprint Plan
 
 ### Sprint 8: Production Security And Persistence Foundation
@@ -324,8 +452,10 @@ Exit criteria:
 Current Sprint 9 status:
 - In progress: Sprint 9 initiated.
 - Completed: BL-002a output chunk polling and stale-running reconciliation.
+- Completed: BL-002b bound approval IDs for approval-required commands outside development/test mode.
 - Partially completed: BL-003 approval records expose matched policy review metadata.
-- Remaining: bound approval IDs, full restart-resilient process supervision semantics, broader Windows/POSIX parsing validation, and approval review UI contracts.
+- Selected next slice: BL-003a Windows/POSIX command parsing matrix and approval review contract refinement.
+- Remaining: full restart-resilient process supervision semantics, broader Windows/POSIX parsing validation, and approval review UI contracts.
 
 ### Sprint 10: Filesystem Runtime Completion
 
@@ -392,6 +522,76 @@ Exit criteria:
 - Role-boundary enforcement is machine-readable.
 - Progress and backlog updates are automatic.
 - Sprint closure requires Definition of Done evidence.
+
+### Sprint 15: Production Identity, Secrets, And Network Guardrails
+
+Goal:
+- Complete production identity, secret management, credential safety, actor-bound approvals, and network/domain guardrails.
+
+Stories:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Exit criteria:
+- Tokens are hashed at rest and support rotation, expiry, and revocation.
+- Approval decisions and audit events are bound to authenticated actor identities.
+- Provider/runtime credentials use encrypted storage or an external secret manager strategy.
+- Network/domain guardrails can allow, block, or require approval by policy.
+- Secret masking and no-secret-response tests pass across auth, approvals, providers, logs, and settings.
+
+### Sprint 16: Cross-Platform UI And Approval Dashboard
+
+Goal:
+- Build the cross-platform web frontend, operational dashboard, settings surfaces, and interactive approval experience.
+
+Stories:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Exit criteria:
+- Users can submit tasks, inspect plan/sub-agent progress, review approvals, and view action logs through the web UI.
+- Dashboard surfaces provider, memory, tool, task, CLI, approval, and runtime health data.
+- Settings UI covers provider, routing, filesystem, CLI policy, memory, tools, and agent blueprint configuration.
+- UI approval decisions use safe review metadata and do not expose secrets.
+
+### Sprint 17: VS Code Extension And Dedicated CLI Client
+
+Goal:
+- Add developer-facing editor and terminal interfaces on top of the backend contracts.
+
+Stories:
+- BL-011: VS Code Extension And Dedicated CLI Client.
+
+Exit criteria:
+- VS Code extension can connect to DGentic, submit tasks, show agent/status context, and review approvals.
+- CLI client can run core health, task, approval, CLI-run, provider, memory, tool, session, and log workflows.
+- Extension and CLI auth handling masks tokens and avoids sensitive logs.
+- Local installation and smoke validation are documented.
+
+### Sprint 18: Deployment, CI/CD, Observability, And Rollback
+
+Goal:
+- Make DGentic deployable and operable with automated validation, monitoring, alerting, and rollback procedures.
+
+Stories:
+- BL-012: Production Deployment, CI/CD, Observability, And Rollback.
+
+Exit criteria:
+- CI runs tests, lint, format, package build, and release artifact checks.
+- Staging deployment can be created and smoke-tested reproducibly.
+- Runtime metrics, structured logs, dashboards, and alerts cover critical surfaces.
+- Rollback workflow is documented and smoke-verified.
+
+## Not-Yet-Implemented Coverage Map
+
+- Web frontend/dashboard: BL-010, Sprint 16.
+- VS Code extension: BL-011, Sprint 17.
+- Dedicated CLI client interface: BL-011, Sprint 17.
+- Interactive approval UI: BL-010, Sprint 16.
+- Production deployment infrastructure and CI/CD pipeline: BL-012, Sprint 18.
+- External AI provider adapters beyond current local-provider runtime contracts: BL-006, Sprint 12.
+- Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15.
+- Network/domain guardrails: BL-009, Sprint 15.
+- Full autonomous backlog management and sprint execution inside the backend runtime: BL-008, Sprint 14.
+- Runtime monitoring, metrics, alerting, and rollback automation: BL-012, Sprint 18.
 
 ## Release Readiness Gates
 

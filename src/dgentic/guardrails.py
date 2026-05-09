@@ -1,7 +1,3 @@
-import shlex
-import subprocess
-from datetime import UTC, datetime
-
 from dgentic.command_policy import evaluate_command_policy as evaluate_configured_command_policy
 from dgentic.events import event_log
 from dgentic.schemas import (
@@ -22,7 +18,12 @@ from dgentic.settings import get_settings
 
 
 def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
-    root_dir = get_settings().root_dir.resolve()
+    settings = get_settings()
+    root_dir = settings.root_dir.resolve()
+    data_dir = settings.data_dir
+    if not data_dir.is_absolute():
+        data_dir = root_dir / data_dir
+    protected_data_dir = data_dir.resolve()
     candidate = request.path
     if not candidate.is_absolute():
         candidate = root_dir / candidate
@@ -36,6 +37,14 @@ def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
             allowed=False,
             permission_mode=PermissionMode.blocked,
             reason=f"Path resolves outside configured rootDir: {root_dir}",
+        )
+    elif resolved == protected_data_dir or protected_data_dir in resolved.parents:
+        decision = FileAccessDecision(
+            path=request.path,
+            resolved_path=resolved,
+            allowed=False,
+            permission_mode=PermissionMode.blocked,
+            reason="DGentic state files are protected from guarded filesystem access.",
         )
     elif request.action == "delete":
         decision = FileAccessDecision(
@@ -113,48 +122,6 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
 
 
 def execute_guarded_command(request: CommandExecutionRequest) -> CommandExecutionResult:
-    decision = evaluate_command_policy(CommandPolicyRequest(command=request.command))
-    if decision.permission_mode == PermissionMode.blocked:
-        raise PermissionError(decision.reason)
-    if decision.permission_mode == PermissionMode.approval_required and not request.approved:
-        raise PermissionError("Command requires explicit approval before execution.")
+    from dgentic.cli_runtime import cli_runtime_service
 
-    root_dir = get_settings().root_dir.resolve()
-    cwd = request.cwd or root_dir
-    if not cwd.is_absolute():
-        cwd = root_dir / cwd
-    cwd = cwd.resolve()
-    if cwd != root_dir and root_dir not in cwd.parents:
-        raise PermissionError(f"Command cwd resolves outside configured rootDir: {root_dir}")
-
-    started_at = datetime.now(UTC)
-    completed = subprocess.run(
-        shlex.split(request.command, posix=False),
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=request.timeout_seconds,
-        check=False,
-    )
-    duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
-    result = CommandExecutionResult(
-        command=request.command,
-        cwd=cwd,
-        exit_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-        permission_mode=decision.permission_mode,
-        duration_ms=duration_ms,
-    )
-    event_log.record(
-        LogEventType.cli,
-        "Executed guarded CLI command.",
-        metadata={
-            "command": request.command,
-            "cwd": str(cwd),
-            "exit_code": completed.returncode,
-            "duration_ms": duration_ms,
-            "permission_mode": decision.permission_mode,
-        },
-    )
-    return result
+    return cli_runtime_service.execute_command(request)

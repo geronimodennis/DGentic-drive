@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     autopilot_enabled: bool = False
     auth_enabled: bool | None = None
     auth_tokens: str = ""
+    approval_digest_key: str = ""
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
 

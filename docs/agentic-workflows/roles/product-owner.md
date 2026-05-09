@@ -17,7 +17,11 @@ The Product Owner Agent is responsible for:
 
 ## Required Outputs
 
-The PO Agent must produce:
+The PO Agent must produce outputs sized to the selected workflow mode.
+
+For Fast Path work, a concise goal and acceptance checklist is sufficient when business intent is obvious.
+
+For Standard or Full Sprint work, the PO Agent must produce:
 
 - Epics.
 - Feature requests.

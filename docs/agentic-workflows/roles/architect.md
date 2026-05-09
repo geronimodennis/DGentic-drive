@@ -17,7 +17,11 @@ The Architect Agent is responsible for:
 
 ## Required Outputs
 
-The Architect Agent must produce:
+The Architect Agent must produce only the outputs needed for the selected workflow mode and risk level.
+
+For low-risk Fast Path work, an architecture note may be `N/A` when there are no contract, data model, service boundary, scalability, or infrastructure changes.
+
+When the architecture gate applies, the Architect Agent must produce:
 
 - System diagrams.
 - API definitions.

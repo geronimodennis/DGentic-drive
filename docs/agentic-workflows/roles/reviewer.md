@@ -26,5 +26,7 @@ The Reviewer Agent is responsible for:
 
 ## Handoff Rules
 
-- Sends failed review findings back to Developer Agents.
-- Sends approved work to Security Agent.
+- Sends all known failed review findings from the current review pass back to Developer Agents as one bundle.
+- Sends one finding at a time only when a critical blocker prevents completing the rest of review.
+- Sends approved work to Security Agent when the security gate applies.
+- May perform a brief changed-surface review for Fast Path work.

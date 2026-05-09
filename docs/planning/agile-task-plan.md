@@ -22,8 +22,12 @@ Current production-completion sprint sequence:
 - Sprint 12: Provider Productionization.
 - Sprint 13: Memory Production Lifecycle.
 - Sprint 14: Autonomous Agent Orchestration.
+- Sprint 15: Production Identity, Secrets, And Network Guardrails.
+- Sprint 16: Cross-Platform UI And Approval Dashboard.
+- Sprint 17: VS Code Extension And Dedicated CLI Client.
+- Sprint 18: Deployment, CI/CD, Observability, And Rollback.
 
-These sprints track the remaining work for authentication/authorization, CLI integration, filesystem runtime, provider system, memory/retrieval, tool runtime, agent orchestration, and persistence. PM must update the backlog document, this Agile plan, the root README current status, and the project progress log when each sprint starts or closes.
+These sprints track the remaining work for authentication/authorization, CLI integration, filesystem runtime, provider system, memory/retrieval, tool runtime, agent orchestration, persistence, identity/secrets, network guardrails, web UI/dashboard, VS Code extension, dedicated CLI client, deployment/CI/CD, observability, alerting, and rollback. PM must update the backlog document, this Agile plan, the root README current status, and the project progress log when each sprint starts or closes.
 
 ## Roles
 
@@ -229,7 +233,7 @@ Tasks:
 - Add tests and documentation updates.
 
 Current implementation status:
-- Completed: CLI approvals, approve/deny/execute endpoints, persisted command run history, output redaction/truncation, persisted command policy rules, executable/exact/contains/argument-aware matching, asynchronous run start, run polling by id, process-local cancellation, shell-wrapper policy hardening, agent/context-aware permission decisions, role-scoped policy rules, controlled command environment variables, environment-key audit metadata, and focused tests.
+- Completed: CLI approvals, single-use bound approval IDs outside development/test mode, approve/deny/execute endpoints, persisted command run history, output redaction/truncation, persisted command policy rules, executable/exact/contains/argument-aware matching, asynchronous run start, run polling by id, process-local cancellation, shell-wrapper policy hardening, agent/context-aware permission decisions, role-scoped policy rules, controlled command environment variables, environment-key audit metadata, and focused tests.
 - Remaining: streaming output, restart-resilient process supervision with stale-running reconciliation, broader safe parsing validation across Windows/POSIX shells, and interactive approval/environment review UX.
 
 ## Epic 6: Memory And Retrieval
@@ -379,6 +383,24 @@ Tasks:
 - Implement connection settings.
 - Add sidebar view.
 
+### Story 8.4: Build Dedicated CLI Client
+
+As an operator or developer, I want a dedicated DGentic CLI client so I can perform common backend workflows without manually crafting HTTP requests.
+
+Acceptance criteria:
+- CLI can check health, create task plans, review approvals, start/poll/cancel CLI runs, inspect providers, query memory, manage tools, create session summaries, and view logs.
+- CLI supports backend URL and token configuration.
+- Sensitive token and secret values are masked in output and logs.
+
+Tasks:
+- Define CLI command structure.
+- Implement shared backend API client behavior.
+- Add local install and smoke-test documentation.
+
+Current implementation status:
+- Not yet implemented: web frontend/dashboard, interactive approval UI, VS Code extension, and dedicated CLI client.
+- Planned: Story 8.1 and Story 8.2 are covered by Sprint 16; Story 8.3 and Story 8.4 are covered by Sprint 17.
+
 ## Epic 9: Observability, Analytics, And Post-Session Behavior
 
 ### Story 9.1: Add Action And Performance Logs
@@ -470,6 +492,7 @@ Deliverables:
 - Settings interface.
 - Analytics dashboard.
 - VS Code extension MVP.
+- Dedicated CLI client.
 
 ## Definition Of Ready
 

@@ -1,5 +1,17 @@
 # Complete Sprint Lifecycle
 
+Use this full lifecycle for high-risk stories, release work, deployment changes, security-sensitive work, migrations, or broad architecture changes. For low-risk work, use [Fast Path](fast-path.md). For normal feature work, use only the applicable gates and mark non-applicable gates as `N/A` with a short reason.
+
+## Lifecycle Routing
+
+Before starting, the PM must choose:
+
+- `Fast Path`: low-risk and clear scope.
+- `Standard`: behavior changes or normal feature work.
+- `Full Sprint`: high-risk, release-worthy, deployment, migration, security, or architecture-heavy work.
+
+The workflow may escalate to a heavier mode at any point. It must not downgrade after high risk is discovered unless the PM records why the risk no longer applies.
+
 ## 1. Backlog Grooming
 
 Owners: PO + PM
@@ -66,6 +78,7 @@ Owner: QA
 - Execute tests.
 - Detect missing implementation.
 - Validate edge cases.
+- Batch all known failed validation findings from the current pass into one handoff unless a critical blocker prevents completing validation.
 
 Boundary:
 
@@ -79,6 +92,11 @@ Owner: Reviewer
 - Validate implementation quality.
 - Review architecture consistency.
 - Review maintainability.
+- Batch all known failed review findings from the current pass into one handoff unless a critical blocker prevents completing review.
+
+Loop control:
+
+- After two failed Dev-QA-Review cycles for the same story, PM must triage the remaining issues and decide whether to continue, split scope, block the story, or move non-critical items to the backlog.
 
 ## 8. Security Review
 

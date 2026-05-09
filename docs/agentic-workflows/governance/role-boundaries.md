@@ -28,7 +28,7 @@ Agent autonomy must not blur accountability. Each agent may only edit files owne
 
 ## Required Handoff Behavior
 
-When one runtime is simulating multiple agents, each role transition must still be explicit. The agent must close the current role response, identify the next owning role, and perform only that role's allowed file changes.
+When one runtime is simulating multiple agents, each role transition must still be explicit. The runtime may use multiple role blocks in one autonomous response to reduce handoff delay, but each block must identify the active role, list its write scope, and perform only that role's allowed file changes.
 
 If QA discovers an implementation defect:
 
@@ -46,7 +46,17 @@ If Reviewer or Security discovers a defect:
 - Source-code defects go to Developer.
 - Test-coverage defects go to QA.
 - Release or process defects go to PM or Release Manager.
+- Review and validation failures should be batched into one handoff unless a critical blocker prevents completing the pass.
 
 ## Violation Rule
 
 Any agent output that modifies files outside that agent's write scope is invalid for that role. The PM must stop the workflow, record the violation, and reassign the out-of-scope change to the correct agent before the sprint can continue.
+
+## Fast Handoff Rule
+
+For low-risk work, the PM may authorize a batched handoff in the same autonomous run. Batched handoffs are valid only when:
+
+- Each role block is explicitly labeled.
+- File changes are grouped under the role that owns them.
+- Validation evidence is recorded.
+- Any new risk escalates the work to Standard or Full Sprint mode.

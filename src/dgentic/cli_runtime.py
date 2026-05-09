@@ -1,9 +1,13 @@
+import hashlib
+import hmac
+import json
 import os
 import re
+import secrets
 import shlex
 import signal
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from threading import Lock, Thread
@@ -27,9 +31,35 @@ from dgentic.storage import JsonCollection
 
 DEFAULT_MAX_OUTPUT_CHARS = 10_000
 DEFAULT_MAX_OUTPUT_CHUNKS = 200
+DEFAULT_APPROVAL_TTL_MINUTES = 30
 TRUNCATION_MARKER = "\n[output truncated]"
+REDACTED_SECRET_MARKER = "[REDACTED]"
+APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
+REDACTED_LEGACY_DIGEST_MARKER = "[LEGACY_DIGEST_REDACTED]"
+_APPROVAL_DIGEST_KEY_FILE = "cli-approval-digest.key"
+_DIGEST_KEY_LOCK = Lock()
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
-    r"\b(?P<key>TOKEN|PASSWORD|SECRET)\s*=\s*(?P<value>[^\s;&|]+)",
+    r"\b(?P<key>[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
+    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_FLAG_RE = re.compile(
+    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
+    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
+    r"(?:\s+|=|:))"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_ASSIGNMENT_PREFIX_RE = re.compile(
+    r"\b(?:[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
+    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*",
+    re.IGNORECASE,
+)
+_SENSITIVE_FLAG_PREFIX_RE = re.compile(
+    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
+    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
+    r"(?:\s+|=|:))",
     re.IGNORECASE,
 )
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -81,6 +111,9 @@ class CommandOutputChunk(BaseModel):
 class CommandApproval(BaseModel):
     id: str
     command: str
+    review_command: str = ""
+    command_digest: str = ""
+    environment_digest: str = ""
     cwd: Path
     timeout_seconds: int
     permission_mode: PermissionMode = PermissionMode.approval_required
@@ -98,8 +131,18 @@ class CommandApproval(BaseModel):
     run_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC) + timedelta(minutes=DEFAULT_APPROVAL_TTL_MINUTES)
+    )
     decided_at: datetime | None = None
     executed_at: datetime | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        redacted_command = redact_sensitive_values(self.command)
+        self.command = redacted_command
+        self.review_command = redact_sensitive_values(self.review_command or redacted_command)
+        self.command_digest = _sanitize_approval_digest(self.command_digest)
+        self.environment_digest = _sanitize_approval_digest(self.environment_digest)
 
 
 class CommandRun(BaseModel):
@@ -127,6 +170,9 @@ class CommandRun(BaseModel):
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
 
+    def model_post_init(self, __context: object) -> None:
+        self.command = redact_sensitive_values(self.command)
+
 
 class CommandRunOutput(BaseModel):
     run_id: str
@@ -139,8 +185,78 @@ def redact_sensitive_values(text: str) -> str:
     """Redact basic KEY=value secret assignments from command output."""
 
     return _SENSITIVE_ASSIGNMENT_RE.sub(
-        lambda match: f"{match.group('key')}=[REDACTED]",
-        text,
+        lambda match: f"{match.group('key')}={REDACTED_SECRET_MARKER}",
+        _SENSITIVE_FLAG_RE.sub(
+            lambda match: f"{match.group('prefix')}{REDACTED_SECRET_MARKER}",
+            _redact_substitution_secret_values(text),
+        ),
+    )
+
+
+def _redact_substitution_secret_values(text: str) -> str:
+    result = text
+    for match in list(_SENSITIVE_ASSIGNMENT_PREFIX_RE.finditer(result))[::-1]:
+        result = _redact_balanced_substitution_value(result, match.end(), "")
+    for match in list(_SENSITIVE_FLAG_PREFIX_RE.finditer(result))[::-1]:
+        result = _redact_balanced_substitution_value(result, match.end(), match.group("prefix"))
+    return result
+
+
+def _redact_balanced_substitution_value(text: str, value_start: int, prefix: str) -> str:
+    if not text.startswith("$(", value_start):
+        return text
+    end_index = _find_balanced_substitution_end(text, value_start + 2)
+    if end_index == -1:
+        return text
+    redacted = f"{prefix}{REDACTED_SECRET_MARKER}"
+    return text[: value_start - len(prefix)] + redacted + text[end_index:]
+
+
+def _find_balanced_substitution_end(text: str, start_index: int) -> int:
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    index = start_index
+    while index < len(text):
+        char = text[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if text.startswith("$(", index):
+            depth += 1
+            index += 2
+            continue
+        if char == ")":
+            depth -= 1
+            index += 1
+            if depth == 0:
+                return index
+            continue
+        index += 1
+    return -1
+
+
+def _regex_redact_sensitive_values(text: str) -> str:
+    return _SENSITIVE_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group('key')}={REDACTED_SECRET_MARKER}",
+        _SENSITIVE_FLAG_RE.sub(
+            lambda match: f"{match.group('prefix')}{REDACTED_SECRET_MARKER}",
+            text,
+        ),
     )
 
 
@@ -197,9 +313,8 @@ def _base_command_environment() -> dict[str, str]:
     return env
 
 
-def build_command_environment(overrides: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    env = _base_command_environment()
-    applied_keys: list[str] = []
+def normalize_command_environment_overrides(overrides: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
     for key, value in overrides.items():
         normalized_key = key.strip()
         if not _ENV_NAME_RE.fullmatch(normalized_key):
@@ -209,14 +324,132 @@ def build_command_environment(overrides: dict[str, str]) -> tuple[dict[str, str]
             raise ValueError(f"Environment variable override is not allowed: {normalized_key}")
         if len(value) > 4096:
             raise ValueError(f"Environment variable value is too long: {normalized_key}")
-        env[normalized_key] = value
-        applied_keys.append(normalized_key)
-    return env, sorted(applied_keys)
+        normalized[normalized_key] = value
+    return normalized
+
+
+def build_command_environment(overrides: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    env = _base_command_environment()
+    normalized_overrides = normalize_command_environment_overrides(overrides)
+    env.update(normalized_overrides)
+    return env, sorted(normalized_overrides)
 
 
 def validate_command_environment(overrides: dict[str, str]) -> list[str]:
     _env, environment_keys = build_command_environment(overrides)
     return environment_keys
+
+
+def _approval_digest_key() -> bytes:
+    settings = get_settings()
+    configured_key = settings.approval_digest_key.strip()
+    if configured_key:
+        return configured_key.encode("utf-8")
+
+    data_dir = settings.data_dir
+    if not data_dir.is_absolute():
+        data_dir = settings.root_dir / data_dir
+    key_path = data_dir / _APPROVAL_DIGEST_KEY_FILE
+    with _DIGEST_KEY_LOCK:
+        if key_path.exists():
+            stored_key = key_path.read_text(encoding="utf-8").strip()
+            if stored_key:
+                return stored_key.encode("utf-8")
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        generated_key = secrets.token_hex(32)
+        key_path.write_text(generated_key + "\n", encoding="utf-8")
+        return generated_key.encode("utf-8")
+
+
+def _approval_hmac_digest(encoded_payload: str) -> str:
+    digest = hmac.new(
+        _approval_digest_key(),
+        encoded_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{APPROVAL_DIGEST_PREFIX}{digest}"
+
+
+def _sanitize_approval_digest(digest: str) -> str:
+    if not digest:
+        return ""
+    if digest.startswith(APPROVAL_DIGEST_PREFIX):
+        return digest
+    return REDACTED_LEGACY_DIGEST_MARKER
+
+
+def command_environment_digest(overrides: dict[str, str]) -> str:
+    normalized_overrides = normalize_command_environment_overrides(overrides)
+    encoded = json.dumps(normalized_overrides, sort_keys=True, separators=(",", ":"))
+    return _approval_hmac_digest(encoded)
+
+
+def approval_boolean_bypass_allowed() -> bool:
+    return get_settings().environment.strip().lower() in {"development", "test", "testing"}
+
+
+def _approval_binding_payload(
+    *,
+    command: str,
+    cwd: Path,
+    timeout_seconds: int,
+    requested_by: str | None,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    environment_keys: list[str],
+    environment_digest: str,
+    permission_mode: PermissionMode,
+    matched_rule_id: str | None,
+    matched_rule_name: str | None,
+) -> dict[str, object]:
+    return {
+        "agent_id": agent_id,
+        "agent_role": agent_role,
+        "command": command.strip(),
+        "cwd": str(cwd),
+        "environment_digest": environment_digest,
+        "environment_keys": sorted(environment_keys),
+        "matched_rule_id": matched_rule_id,
+        "matched_rule_name": matched_rule_name,
+        "permission_mode": permission_mode,
+        "requested_by": requested_by,
+        "task_id": task_id,
+        "timeout_seconds": timeout_seconds,
+    }
+
+
+def command_approval_digest(
+    *,
+    command: str,
+    cwd: Path,
+    timeout_seconds: int,
+    requested_by: str | None,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    environment_keys: list[str],
+    environment_digest: str,
+    permission_mode: PermissionMode,
+    matched_rule_id: str | None,
+    matched_rule_name: str | None,
+) -> str:
+    payload = _approval_binding_payload(
+        command=command,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        requested_by=requested_by,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+        environment_keys=environment_keys,
+        environment_digest=environment_digest,
+        permission_mode=permission_mode,
+        matched_rule_id=matched_rule_id,
+        matched_rule_name=matched_rule_name,
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return _approval_hmac_digest(encoded)
 
 
 def _terminate_process_tree(process: subprocess.Popen) -> None:
@@ -283,21 +516,37 @@ class CliRuntimeService:
             raise PermissionError(decision.reason)
         if decision.permission_mode != PermissionMode.approval_required:
             raise ValueError("Only approval-required commands can be queued for approval.")
-        if request.environment:
-            raise ValueError(
-                "Approval queue does not persist environment values; execute with approval "
-                "after reviewing the environment keys."
-            )
         environment_keys = validate_command_environment(request.environment)
+        environment_digest = command_environment_digest(request.environment)
+        cwd = resolve_command_cwd(request.cwd)
+        requested_by_value = requested_by or request.requested_by
+        command_digest = command_approval_digest(
+            command=decision.command,
+            cwd=cwd,
+            timeout_seconds=request.timeout_seconds,
+            requested_by=requested_by_value,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+            environment_keys=environment_keys,
+            environment_digest=environment_digest,
+            permission_mode=decision.permission_mode,
+            matched_rule_id=decision.matched_rule_id,
+            matched_rule_name=decision.matched_rule_name,
+        )
+        review_command = redact_sensitive_values(decision.command)
 
         approval = CommandApproval(
             id=f"approval-{uuid4()}",
-            command=decision.command,
-            cwd=resolve_command_cwd(request.cwd),
+            command=review_command,
+            review_command=review_command,
+            command_digest=command_digest,
+            environment_digest=environment_digest,
+            cwd=cwd,
             timeout_seconds=request.timeout_seconds,
             permission_mode=decision.permission_mode,
             policy_reason=decision.reason,
-            requested_by=requested_by or request.requested_by,
+            requested_by=requested_by_value,
             agent_id=request.agent_id,
             agent_role=request.agent_role,
             task_id=request.task_id,
@@ -312,6 +561,7 @@ class CliRuntimeService:
             subject_id=approval.id,
             metadata={
                 "command": redact_sensitive_values(approval.command),
+                "review_command": approval.review_command,
                 "cwd": str(approval.cwd),
                 "permission_mode": approval.permission_mode,
                 "requested_by": approval.requested_by,
@@ -319,8 +569,11 @@ class CliRuntimeService:
                 "agent_role": approval.agent_role,
                 "task_id": approval.task_id,
                 "environment_keys": approval.environment_keys,
+                "environment_digest": approval.environment_digest,
                 "matched_rule_id": approval.matched_rule_id,
                 "matched_rule_name": approval.matched_rule_name,
+                "command_digest": approval.command_digest,
+                "expires_at": approval.expires_at.isoformat(),
             },
         )
         return approval
@@ -336,6 +589,8 @@ class CliRuntimeService:
             raise ValueError(
                 f"Only pending approvals can be approved; current status is {approval.status}."
             )
+        if self._approval_is_expired(approval):
+            raise ValueError(f"Approval {approval_id} has expired and cannot be approved.")
 
         now = datetime.now(UTC)
         approval.status = CommandApprovalStatus.approved
@@ -386,34 +641,39 @@ class CliRuntimeService:
             raise PermissionError(
                 f"Approval {approval_id} is not executable; current status is {approval.status}."
             )
+        if self._approval_is_expired(approval):
+            raise PermissionError(f"Approval {approval_id} has expired and cannot be executed.")
+        if REDACTED_SECRET_MARKER in approval.command:
+            raise PermissionError(
+                "Approval command is redacted; execute with approval_id and matching command "
+                "through /cli/execute or /cli/runs."
+            )
+        if approval.environment_keys:
+            raise PermissionError(
+                "Approval includes environment keys; execute with approval_id and matching "
+                "environment keys through /cli/execute or /cli/runs."
+            )
 
         request = CommandExecutionRequest(
             command=approval.command,
             cwd=approval.cwd,
             timeout_seconds=approval.timeout_seconds,
-            approved=True,
+            approval_id=approval.id,
             requested_by=approval.requested_by,
             agent_id=approval.agent_id,
             agent_role=approval.agent_role,
             task_id=approval.task_id,
         )
-        result, run = self._execute_request(request, approval_id=approval.id)
-
-        now = datetime.now(UTC)
-        approval.status = CommandApprovalStatus.executed
-        approval.run_id = run.id
-        approval.executed_at = now
-        approval.updated_at = now
-        self._approvals.upsert(approval)
-        return result
+        return self.execute_command(request)
 
     def execute_command(self, request: CommandExecutionRequest) -> CommandExecutionResult:
-        result, _run = self._execute_request(request, approval_id=None)
+        result, run = self._execute_request(request)
+        if run.approval_id is not None:
+            self._mark_approval_executed(run.approval_id, run.id)
         return result
 
     def start_command(self, request: CommandExecutionRequest) -> CommandRun:
-        decision, cwd = self._authorize_request(request)
-        env, environment_keys = build_command_environment(request.environment)
+        decision, cwd, env, environment_keys, approval_id = self._prepare_request(request)
         started_at = datetime.now(UTC)
         process = subprocess.Popen(
             _command_args(decision.command),
@@ -422,6 +682,7 @@ class CliRuntimeService:
         )
         run = CommandRun(
             id=f"cmdrun-{uuid4()}",
+            approval_id=approval_id,
             command=decision.command,
             cwd=cwd,
             status=CommandRunStatus.running,
@@ -436,6 +697,8 @@ class CliRuntimeService:
             started_at=started_at,
         )
         self._runs.upsert(run)
+        if approval_id is not None:
+            self._mark_approval_executed(approval_id, run.id)
         with self._active_lock:
             self._active_processes[run.id] = process
 
@@ -578,10 +841,10 @@ class CliRuntimeService:
             reconciled.append(run)
         return reconciled
 
-    def _authorize_request(
+    def _prepare_request(
         self,
         request: CommandExecutionRequest,
-    ) -> tuple[CommandPolicyDecision, Path]:
+    ) -> tuple[CommandPolicyDecision, Path, dict[str, str], list[str], str | None]:
         decision = evaluate_command_policy(
             CommandPolicyRequest(
                 command=request.command,
@@ -592,18 +855,57 @@ class CliRuntimeService:
         )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
-        if decision.permission_mode == PermissionMode.approval_required and not request.approved:
-            raise PermissionError("Command requires explicit approval before execution.")
-        return decision, resolve_command_cwd(request.cwd)
+        cwd = resolve_command_cwd(request.cwd)
+        env, environment_keys = build_command_environment(request.environment)
+        environment_digest = command_environment_digest(request.environment)
+        approval_id: str | None = None
+        if decision.permission_mode == PermissionMode.approval_required:
+            approval_id = self._authorize_approval_required_request(
+                request,
+                decision=decision,
+                cwd=cwd,
+                environment_keys=environment_keys,
+                environment_digest=environment_digest,
+            )
+        elif request.approval_id:
+            raise ValueError("approval_id is only valid for approval-required commands.")
+        return decision, cwd, env, environment_keys, approval_id
+
+    def _authorize_approval_required_request(
+        self,
+        request: CommandExecutionRequest,
+        *,
+        decision: CommandPolicyDecision,
+        cwd: Path,
+        environment_keys: list[str],
+        environment_digest: str,
+    ) -> str | None:
+        if request.approval_id is not None:
+            approval = self._get_approval_or_raise(request.approval_id)
+            self._claim_bound_approval(
+                approval,
+                request=request,
+                decision=decision,
+                cwd=cwd,
+                environment_keys=environment_keys,
+                environment_digest=environment_digest,
+            )
+            return approval.id
+
+        if request.approved and approval_boolean_bypass_allowed():
+            return None
+        if request.approved:
+            raise PermissionError(
+                "Command requires an approved approval_id before execution; "
+                "the approved boolean bypass is only allowed in development/test mode."
+            )
+        raise PermissionError("Command requires an approved approval_id before execution.")
 
     def _execute_request(
         self,
         request: CommandExecutionRequest,
-        *,
-        approval_id: str | None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
-        decision, cwd = self._authorize_request(request)
-        env, environment_keys = build_command_environment(request.environment)
+        decision, cwd, env, environment_keys, approval_id = self._prepare_request(request)
         started_at = datetime.now(UTC)
         try:
             completed = subprocess.run(
@@ -620,7 +922,7 @@ class CliRuntimeService:
             stderr = _text_output(exc.stderr)
             timeout_message = f"Command timed out after {request.timeout_seconds} seconds."
             stderr = f"{stderr}\n{timeout_message}" if stderr else timeout_message
-            self._record_run(
+            _result, run = self._record_run(
                 command=decision.command,
                 cwd=cwd,
                 approval_id=approval_id,
@@ -637,6 +939,8 @@ class CliRuntimeService:
                 task_id=request.task_id,
                 environment_keys=environment_keys,
             )
+            if run.approval_id is not None:
+                self._mark_approval_executed(run.approval_id, run.id)
             raise
 
         duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
@@ -729,7 +1033,7 @@ class CliRuntimeService:
             },
         )
         result = CommandExecutionResult(
-            command=command,
+            command=redact_sensitive_values(command),
             cwd=cwd,
             exit_code=exit_code,
             stdout=sanitized_stdout,
@@ -926,6 +1230,110 @@ class CliRuntimeService:
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
             },
+        )
+
+    def _validate_bound_approval(
+        self,
+        approval: CommandApproval,
+        *,
+        request: CommandExecutionRequest,
+        decision: CommandPolicyDecision,
+        cwd: Path,
+        environment_keys: list[str],
+        environment_digest: str,
+    ) -> None:
+        if approval.status != CommandApprovalStatus.approved:
+            raise PermissionError(
+                f"Approval {approval.id} is not executable; current status is {approval.status}."
+            )
+        if self._approval_is_expired(approval):
+            raise PermissionError(f"Approval {approval.id} has expired and cannot be executed.")
+
+        expected_digest = command_approval_digest(
+            command=decision.command,
+            cwd=cwd,
+            timeout_seconds=request.timeout_seconds,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+            environment_keys=environment_keys,
+            environment_digest=environment_digest,
+            permission_mode=decision.permission_mode,
+            matched_rule_id=decision.matched_rule_id,
+            matched_rule_name=decision.matched_rule_name,
+        )
+        review_command = redact_sensitive_values(decision.command)
+        checks = [
+            approval.command == review_command,
+            approval.review_command == review_command,
+            approval.cwd == cwd,
+            approval.timeout_seconds == request.timeout_seconds,
+            approval.requested_by == request.requested_by,
+            approval.agent_id == request.agent_id,
+            approval.agent_role == request.agent_role,
+            approval.task_id == request.task_id,
+            sorted(approval.environment_keys) == environment_keys,
+            approval.environment_digest == environment_digest,
+            approval.permission_mode == decision.permission_mode,
+            approval.matched_rule_id == decision.matched_rule_id,
+            approval.matched_rule_name == decision.matched_rule_name,
+            approval.command_digest == expected_digest,
+        ]
+        if not all(checks):
+            raise PermissionError(f"Approval {approval.id} is not bound to this command request.")
+
+    def _claim_bound_approval(
+        self,
+        approval: CommandApproval,
+        *,
+        request: CommandExecutionRequest,
+        decision: CommandPolicyDecision,
+        cwd: Path,
+        environment_keys: list[str],
+        environment_digest: str,
+    ) -> None:
+        with self._active_lock:
+            current = self._get_approval_or_raise(approval.id)
+            self._validate_bound_approval(
+                current,
+                request=request,
+                decision=decision,
+                cwd=cwd,
+                environment_keys=environment_keys,
+                environment_digest=environment_digest,
+            )
+            now = datetime.now(UTC)
+            current.status = CommandApprovalStatus.executed
+            current.executed_at = now
+            current.updated_at = now
+            self._approvals.upsert(current)
+        event_log.record(
+            LogEventType.approval,
+            "Claimed CLI command approval for execution.",
+            subject_id=approval.id,
+        )
+
+    def _approval_is_expired(self, approval: CommandApproval) -> bool:
+        return approval.expires_at <= datetime.now(UTC)
+
+    def _mark_approval_executed(self, approval_id: str, run_id: str) -> None:
+        with self._active_lock:
+            approval = self._get_approval_or_raise(approval_id)
+            if approval.run_id is not None:
+                return
+            now = datetime.now(UTC)
+            approval.status = CommandApprovalStatus.executed
+            approval.run_id = run_id
+            if approval.executed_at is None:
+                approval.executed_at = now
+            approval.updated_at = now
+            self._approvals.upsert(approval)
+        event_log.record(
+            LogEventType.approval,
+            "Executed CLI command approval.",
+            subject_id=approval.id,
+            metadata={"run_id": run_id},
         )
 
     def _get_approval_or_raise(self, approval_id: str) -> CommandApproval:

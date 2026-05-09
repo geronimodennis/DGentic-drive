@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates with startup fail-closed validation, guardrail checks, guarded text file operations, guarded CLI execution and approvals, asynchronous CLI runs with status polling, chunked output polling, cancellation, and stale-running reconciliation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, local JSON state persistence, and a migration-managed SQLAlchemy persistence baseline with SQLite backup/restore helpers for metadata and tool registry tables.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates with startup fail-closed validation, guardrail checks, guarded text file operations, guarded CLI execution with single-use bound approval IDs, asynchronous CLI runs with status polling, chunked output polling, cancellation, and stale-running reconciliation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, local JSON state persistence, and a migration-managed SQLAlchemy persistence baseline with SQLite backup/restore helpers for metadata and tool registry tables.
 
 ## Documentation
 
@@ -90,7 +90,7 @@ The backend currently exposes:
 - `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
 - `POST /filesystem/read` and `POST /filesystem/write` for policy-enforced UTF-8 text file operations inside `rootDir`.
 - `POST /cli/policy/rules`, `GET /cli/policy/rules`, and `PATCH /cli/policy/rules/{rule_id}` for persisted CLI allow, approval, and block rules with executable, exact-command, contains, argument-aware matching, and optional agent-role scoping.
-- `POST /cli/execute`, `POST /cli/runs`, `GET /cli/runs`, `GET /cli/runs/{run_id}`, `GET /cli/runs/{run_id}/output`, `POST /cli/runs/{run_id}/cancel`, `POST /cli/approvals`, `POST /cli/approvals/{approval_id}/approve`, `POST /cli/approvals/{approval_id}/deny`, and `POST /cli/approvals/{approval_id}/execute` for policy-enforced command execution, asynchronous command runs, status polling, chunked output polling, cancellation, approvals, run history, agent/task context metadata, matched policy review metadata, and auditable environment override keys.
+- `POST /cli/execute`, `POST /cli/runs`, `GET /cli/runs`, `GET /cli/runs/{run_id}`, `GET /cli/runs/{run_id}/output`, `POST /cli/runs/{run_id}/cancel`, `POST /cli/approvals`, `POST /cli/approvals/{approval_id}/approve`, `POST /cli/approvals/{approval_id}/deny`, and `POST /cli/approvals/{approval_id}/execute` for policy-enforced command execution, asynchronous command runs, status polling, chunked output polling, cancellation, single-use bound approval IDs, run history, agent/task context metadata, matched policy review metadata, and auditable environment override keys.
 - `GET /providers`, `GET /providers/{provider_id}/health`, `POST /providers/generate`, and `POST /routing/decide` for Ollama/LM Studio probes, generation calls, and scored provider routing.
 - `POST /agents`, `GET /agents`, `GET /agents/{agent_id}`, `GET /agents/{agent_id}/children`, `PATCH /agents/{agent_id}/status`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
@@ -139,7 +139,7 @@ README status policy: keep this section updated after every sprint, release, or 
 - Deterministic task planning and execution run APIs with local JSON persistence.
 - Guardrail policy checks for filesystem and command access.
 - Guarded UTF-8 text file read/write operations inside `rootDir`.
-- Guarded CLI execution with approvals, approval queue, approve/deny/execute endpoints, run history, output redaction/truncation, asynchronous status polling, chunked output polling, stale-running reconciliation, and process-local cancellation.
+- Guarded CLI execution with approvals, single-use bound approval IDs for approval-required commands outside development/test mode, approval queue, approve/deny/execute endpoints, run history, output redaction/truncation, asynchronous status polling, chunked output polling, stale-running reconciliation, and process-local cancellation.
 - Production/staging bearer-token authentication gate with route capability groups for tasks, filesystem, CLI, providers, agents, memory, tools, sessions, logs, and startup fail-closed validation when auth is enabled without tokens.
 - Persisted CLI command policy rules with executable, exact-command, contains, argument-aware, and agent-role scoped matching.
 - Shell-wrapper command inspection for common wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations.
@@ -155,7 +155,7 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Partially Implemented
 
-- CLI integration: approvals, policy rules, status polling, chunked output polling, stale-running reconciliation, cancellation, context-aware rules, matched policy review metadata, and environment controls exist; full restart-resilient process supervision, broader Windows/POSIX parsing validation, bound approval IDs, and approval/environment review UI remain.
+- CLI integration: approvals, single-use bound approval IDs, policy rules, status polling, chunked output polling, stale-running reconciliation, cancellation, context-aware rules, matched policy review metadata, and environment controls exist; full restart-resilient process supervision, broader Windows/POSIX parsing validation, and approval/environment review UI remain.
 - Filesystem runtime: guarded UTF-8 text read/write exists; binary operations, deletes, moves, richer workflows, and stronger permission granularity remain.
 - Provider system: Ollama and LM Studio runtime calls exist; external provider adapters, secure credential storage, rate-limit handling, and streaming generation remain.
 - Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, deterministic semantic retrieval fallback, stored vector retrieval, and retrieval API tests exist; production vector backend, compression, performance validation, and long-term memory lifecycle management remain production follow-up work.
@@ -166,13 +166,13 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Not Yet Implemented
 
-- Web frontend/dashboard.
-- VS Code extension.
-- Dedicated CLI client interface.
-- Interactive approval UI.
-- Production deployment infrastructure and CI/CD pipeline.
-- External AI provider adapters beyond current local-provider runtime contracts.
-- Full production identity management, secret management, encrypted credential storage, and token rotation.
-- Network/domain guardrails.
-- Full autonomous backlog management and sprint execution inside the backend runtime.
-- Runtime monitoring, metrics, alerting, and rollback automation.
+- Web frontend/dashboard: planned for Sprint 16.
+- VS Code extension: planned for Sprint 17.
+- Dedicated CLI client interface: planned for Sprint 17.
+- Interactive approval UI: planned for Sprint 16.
+- Production deployment infrastructure and CI/CD pipeline: planned for Sprint 18.
+- External AI provider adapters beyond current local-provider runtime contracts: planned for Sprint 12.
+- Full production identity management, secret management, encrypted credential storage, and token rotation: planned for Sprint 15.
+- Network/domain guardrails: planned for Sprint 15.
+- Full autonomous backlog management and sprint execution inside the backend runtime: planned for Sprint 14.
+- Runtime monitoring, metrics, alerting, and rollback automation: planned for Sprint 18.

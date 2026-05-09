@@ -120,7 +120,9 @@ curl -X POST http://127.0.0.1:8000/cli/execute `
   -d '{"command":"cmd /c echo context","requested_by":"pm","agent_id":"agent-dev-1","agent_role":"developer","task_id":"story-5.3","environment":{"DGENTIC_TEST_FLAG":"enabled"}}'
 ```
 
-Start, poll, and cancel an asynchronous CLI run:
+In `development` and `test`, an explicit `approved: true` bypass can be used for local CLI smoke checks. In `staging` and `production`, approval-required commands need a single-use approved `approval_id`.
+
+Start, poll, and cancel an asynchronous CLI run in local development:
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/runs `
@@ -145,7 +147,7 @@ Queue, approve, and execute an approval-required CLI command:
 ```powershell
 curl -X POST "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
   -H "Content-Type: application/json" `
-  -d '{"command":"python --version","timeout_seconds":10}'
+  -d '{"command":"python --version","timeout_seconds":10,"requested_by":"operator"}'
 ```
 
 ```powershell
@@ -156,6 +158,14 @@ curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/approve `
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/execute
+```
+
+Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/execute `
+  -H "Content-Type: application/json" `
+  -d '{"command":"python --version","timeout_seconds":10,"approval_id":"[approval_id]","requested_by":"operator"}'
 ```
 
 ```powershell
@@ -319,7 +329,7 @@ DGentic should persist session state so future sessions can resume with context,
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
 - Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, bound approval ID enforcement for all approval-required commands, or full restart-resilient process supervision.
+- CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI or full restart-resilient process supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.

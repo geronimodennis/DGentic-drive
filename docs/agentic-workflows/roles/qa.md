@@ -51,9 +51,12 @@ QA must fail stories if:
 - Edge cases fail.
 - Regression issues exist.
 
+For Fast Path work, QA should run or review only the smallest validation set that proves the acceptance criteria. Documentation-only work may use consistency and link review instead of automated tests.
+
 ## Handoff Rules
 
 - Receives developer-completed work.
-- Sends defects back to Developer Agents instead of modifying implementation files.
+- Sends all known defects from the current validation pass back to Developer Agents as one bundle instead of modifying implementation files.
+- Sends one defect at a time only when a critical blocker prevents completing the rest of validation.
 - Sends QA-approved work to Reviewer Agents.
 - Must request Developer changes instead of editing production source directly.

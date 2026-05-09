@@ -2,6 +2,33 @@
 
 Every agent response must follow this structure.
 
+Use the compact format for Fast Path work. Use the full format for Standard or Full Sprint work, or whenever the task needs a stronger audit trail.
+
+## Compact Fast-Path Format
+
+```text
+[Agent]
+Mode: Fast Path
+Task:
+<current story, task, or backlog item>
+
+Checklist:
+- Completed: <item>
+- Pending: <item or none>
+- N/A: <skipped gate and reason>
+
+Changes:
+<files or None>
+
+Validation:
+<checks run, results, or skipped reason>
+
+Next:
+<complete, handoff, escalation, or follow-up>
+```
+
+## Full Format
+
 ## Agent Identity
 
 Examples:
@@ -47,6 +74,8 @@ List:
 - Risks.
 - Recommendations.
 - Validation results.
+
+When handing off failed QA or review work, list all known findings from the current pass unless a critical blocker prevented completing the pass.
 
 ## Next Action
 

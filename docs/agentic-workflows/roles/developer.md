@@ -45,6 +45,7 @@ Developer Agents must:
 - Implement logging and error handling.
 - Follow secure coding practices.
 - Maintain scalability.
+- Make touched source review-ready before QA handoff by running the project formatter when one exists for the changed files, or record a short `N/A` reason.
 - Run existing tests when useful for local validation.
 - Prefer targeted local validation before broad suites unless risk requires broader checks.
 - Validate implementation before submission without modifying QA-owned test files.
@@ -53,6 +54,8 @@ Developer Agents must:
 
 - Receives implementation-ready work from the Architect Agent.
 - Sends completed implementation to QA for test creation, test updates, and validation.
+- Should prefer an immediate same-run handoff to QA when tests are needed for review readiness.
+- Includes touched behavior, affected files or workflows, expected acceptance criteria, edge cases, and formatter or local-validation evidence in the QA handoff.
 - Responds to QA, reviewer, and security finding bundles with implementation fixes only.
 - Fixes bundled findings in one implementation pass when the changes are related and safe to combine.
 - Must request QA changes instead of editing tests directly.

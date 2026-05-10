@@ -48,6 +48,7 @@ Owner: Developer
 
 - Implement stories.
 - Update implementation documentation when behavior changes.
+- Format touched source when the repository has an established formatter.
 - Run existing checks as needed.
 - Submit implementation.
 
@@ -84,6 +85,12 @@ Boundary:
 
 - QA reports defects and maintains tests only.
 - QA does not patch implementation defects directly.
+
+## Preferred Pre-Review Lane
+
+- When the story needs both source and tests, Developer and QA should prefer adjacent explicit role blocks in the same autonomous run before Code Review.
+- Developer should hand QA review-ready source plus formatter or local-check results, or explain why they are `N/A`.
+- QA should either return one bundled defect handoff to Developer or send QA-approved work to Reviewer with the validation evidence.
 
 ## 7. Code Review
 

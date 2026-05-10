@@ -51,6 +51,18 @@ Developer Agents should address the full handoff bundle in one implementation pa
 
 After two failed Dev-QA-Review handoff cycles for the same story, the PM must triage the remaining issues and decide whether to continue, split scope, block the story, or move non-critical items to the backlog.
 
+## Dev-QA Pre-Review Fast Loop
+
+When a story needs both production and test changes, Developer and QA should prefer consecutive explicit role blocks in the same autonomous run before engaging Reviewer.
+
+The preferred sequence is:
+
+- Developer completes the source change, formats touched source when the repository has an established formatter, and records the smallest useful local validation.
+- Developer hands QA the expected behavior, affected files or workflows, edge cases, and any known coverage needs.
+- QA updates tests, runs targeted validation, and either returns one bundled defect handoff to Developer or sends QA-approved work to Reviewer with the validation evidence.
+
+Trivial review-readiness issues such as missing formatting, skipped basic local validation without reason, or incomplete coverage expectations should be corrected in the Dev-QA loop before Reviewer time is used.
+
 ## Continuous Learning System
 
 The organization must continuously improve by:
@@ -73,5 +85,6 @@ The organization should optimize for the smallest safe workflow:
 
 - Use Fast Path for low-risk work.
 - Combine adjacent handoffs into one autonomous run when role transitions are explicit.
+- Prefer a paired `Dev -> QA` pre-review loop over separate turns when source and tests both need updates.
 - Run targeted checks before broad suites unless risk requires a full run.
 - Escalate immediately when a skipped gate becomes relevant.

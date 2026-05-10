@@ -53,10 +53,14 @@ QA must fail stories if:
 
 For Fast Path work, QA should run or review only the smallest validation set that proves the acceptance criteria. Documentation-only work may use consistency and link review instead of automated tests.
 
+Before sending work to Reviewer, QA should confirm the Developer handoff is review-ready for the current mode. If required source formatting, basic local validation, or coverage expectations are missing without a reason, QA should return the story to Developer instead of spending Reviewer time on avoidable hygiene issues.
+
 ## Handoff Rules
 
 - Receives developer-completed work.
 - Sends all known defects from the current validation pass back to Developer Agents as one bundle instead of modifying implementation files.
 - Sends one defect at a time only when a critical blocker prevents completing the rest of validation.
+- Should prefer the next explicit role block in the same autonomous run when picking up a Developer handoff.
 - Sends QA-approved work to Reviewer Agents.
+- Includes the targeted validation evidence and any residual risks when sending QA-approved work to Reviewer Agents.
 - Must request Developer changes instead of editing production source directly.

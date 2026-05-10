@@ -31,8 +31,11 @@ Rules:
 - Follow role write boundaries from `docs/agentic-workflows/governance/role-boundaries.md`.
 - Do not silently switch agent roles to justify out-of-scope file edits; make role transitions explicit.
 - A single autonomous run may contain multiple explicit role blocks when that reduces handoff delay.
+- When a story needs both source and tests, prefer an explicit `Dev -> QA` same-run lane before sending work to Reviewer.
 - Developer role blocks must not create or modify tests, fixtures, snapshots, or QA validation scripts.
+- Developer should make touched source review-ready before the QA handoff by running the relevant formatter and the smallest useful local checks, or record why either step is `N/A`.
 - QA role blocks must not create or modify production source, runtime implementation files, schemas, API implementation, or production configuration.
+- QA should continue the paired lane when feasible, add or update tests, run targeted validation, and send either one bundled defect handoff back to Developer or QA-approved evidence forward to Reviewer.
 - If QA needs source changes, QA must fail the story and hand off to Developer with failing evidence.
 - If Developer needs test changes, Developer must hand off to QA with expected behavior and coverage needs.
 - Always create a checklist sized to the selected workflow mode before execution.

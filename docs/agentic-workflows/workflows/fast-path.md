@@ -35,6 +35,12 @@ The owning role performs the work:
 
 If work crosses ownership boundaries, switch roles explicitly and list the write scope for each role block.
 
+When Fast Path work needs both source and tests:
+
+- Prefer adjacent `Dev` and `QA` role blocks in the same autonomous run before the brief review step.
+- Developer should hand QA review-ready source, including formatter results for touched source when the repository has an established formatter, or a short `N/A` reason.
+- QA should add or update tests immediately when feasible, then send either a bundled defect handoff back to Developer or validated work forward to review.
+
 ## 3. Targeted Validation
 
 Run the smallest useful validation set:

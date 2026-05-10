@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from dgentic.command_policy import parse_command, parse_inner_shell_command
 from dgentic.events import event_log
 from dgentic.guardrails import evaluate_command_policy
 from dgentic.schemas import (
@@ -93,8 +94,10 @@ class CommandApprovalStatus(StrEnum):
 
 
 class CommandRunStatus(StrEnum):
+    starting = "starting"
     running = "running"
     completed = "completed"
+    failed = "failed"
     timed_out = "timed_out"
     cancelled = "cancelled"
     stale = "stale"
@@ -166,9 +169,15 @@ class CommandRun(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     environment_keys: list[str] = Field(default_factory=list)
+    supervisor_id: str | None = None
+    supervisor_pid: int | None = None
+    timeout_at: datetime | None = None
+    status_reason: str | None = None
+    stale_reason: str | None = None
     started_at: datetime
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
 
     def model_post_init(self, __context: object) -> None:
         self.command = redact_sensitive_values(self.command)
@@ -288,6 +297,11 @@ def resolve_command_cwd(cwd: Path | None = None) -> Path:
 def _command_args(command: str) -> str | list[str]:
     if os.name == "nt":
         return command
+    parsed = parse_command(command)
+    if parsed.executable in {"cmd", "cmd.exe"}:
+        inner_command = parse_inner_shell_command(command)
+        if inner_command is not None:
+            return ["sh", "-c", inner_command]
     return shlex.split(command)
 
 
@@ -478,6 +492,25 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
             process.terminate()
     else:
         process.terminate()
+    try:
+        process.wait(timeout=1)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    if process.pid is not None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.kill()
+    else:
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
 
 
 def _text_output(value: str | bytes | None) -> str:
@@ -488,9 +521,24 @@ def _text_output(value: str | bytes | None) -> str:
     return value
 
 
+def _status_reason_for_terminal_async_run(status: CommandRunStatus) -> str:
+    if status == CommandRunStatus.completed:
+        return "Command process completed."
+    if status == CommandRunStatus.cancelled:
+        return "Command process was cancelled."
+    if status == CommandRunStatus.timed_out:
+        return "Command process timed out."
+    if status == CommandRunStatus.failed:
+        return "Command process failed."
+    if status == CommandRunStatus.stale:
+        return "Command process supervision was lost."
+    return f"Command process reached status {status}."
+
+
 class CliRuntimeService:
     def __init__(self, max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> None:
         self.max_output_chars = max_output_chars
+        self.supervisor_id = f"cli-supervisor-{uuid4()}"
         self._approvals = JsonCollection("cli-approvals", CommandApproval)
         self._runs = JsonCollection("cli-command-runs", CommandRun)
         self._active_processes: dict[str, subprocess.Popen] = {}
@@ -504,9 +552,11 @@ class CliRuntimeService:
         *,
         requested_by: str | None = None,
     ) -> CommandApproval:
+        cwd = resolve_command_cwd(request.cwd)
         decision = evaluate_command_policy(
             CommandPolicyRequest(
                 command=request.command,
+                cwd=cwd,
                 agent_role=request.agent_role,
                 agent_id=request.agent_id,
                 task_id=request.task_id,
@@ -518,7 +568,6 @@ class CliRuntimeService:
             raise ValueError("Only approval-required commands can be queued for approval.")
         environment_keys = validate_command_environment(request.environment)
         environment_digest = command_environment_digest(request.environment)
-        cwd = resolve_command_cwd(request.cwd)
         requested_by_value = requested_by or request.requested_by
         command_digest = command_approval_digest(
             command=decision.command,
@@ -675,18 +724,12 @@ class CliRuntimeService:
     def start_command(self, request: CommandExecutionRequest) -> CommandRun:
         decision, cwd, env, environment_keys, approval_id = self._prepare_request(request)
         started_at = datetime.now(UTC)
-        process = subprocess.Popen(
-            _command_args(decision.command),
-            env=env,
-            **_popen_kwargs(cwd),
-        )
         run = CommandRun(
             id=f"cmdrun-{uuid4()}",
             approval_id=approval_id,
             command=decision.command,
             cwd=cwd,
-            status=CommandRunStatus.running,
-            process_id=process.pid,
+            status=CommandRunStatus.starting,
             permission_mode=decision.permission_mode,
             duration_ms=0,
             requested_by=request.requested_by,
@@ -694,13 +737,66 @@ class CliRuntimeService:
             agent_role=request.agent_role,
             task_id=request.task_id,
             environment_keys=environment_keys,
+            supervisor_id=self.supervisor_id,
+            supervisor_pid=os.getpid(),
+            timeout_at=started_at + timedelta(seconds=request.timeout_seconds),
+            status_reason="Command launch requested.",
             started_at=started_at,
+            last_heartbeat_at=started_at,
         )
         self._runs.upsert(run)
         if approval_id is not None:
             self._mark_approval_executed(approval_id, run.id)
+
+        event_log.record(
+            LogEventType.cli,
+            "Recorded asynchronous CLI command launch intent.",
+            subject_id=run.id,
+            metadata={
+                "command": redact_sensitive_values(run.command),
+                "cwd": str(run.cwd),
+                "supervisor_id": run.supervisor_id,
+                "supervisor_pid": run.supervisor_pid,
+                "timeout_at": run.timeout_at.isoformat() if run.timeout_at else None,
+                "permission_mode": run.permission_mode,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+                "environment_keys": run.environment_keys,
+            },
+        )
+
+        try:
+            process = subprocess.Popen(
+                _command_args(decision.command),
+                env=env,
+                **_popen_kwargs(cwd),
+            )
+        except OSError as exc:
+            self._mark_run_failed(run, reason=f"Command launch failed: {exc}")
+            raise
+
         with self._active_lock:
             self._active_processes[run.id] = process
+            current_run = self._runs.get(run.id)
+            if current_run is None or current_run.status != CommandRunStatus.starting:
+                self._active_processes.pop(run.id, None)
+                _terminate_process_tree(process)
+                if current_run is not None:
+                    return current_run
+                return self._mark_run_stale(
+                    run,
+                    reason="Command launch completed, but persisted launch intent was missing.",
+                )
+
+            now = datetime.now(UTC)
+            current_run.status = CommandRunStatus.running
+            current_run.process_id = process.pid
+            current_run.status_reason = "Command process started."
+            current_run.last_heartbeat_at = now
+            self._runs.upsert(current_run)
+            run = current_run
 
         event_log.record(
             LogEventType.cli,
@@ -710,6 +806,9 @@ class CliRuntimeService:
                 "command": redact_sensitive_values(run.command),
                 "cwd": str(run.cwd),
                 "process_id": run.process_id,
+                "supervisor_id": run.supervisor_id,
+                "supervisor_pid": run.supervisor_pid,
+                "timeout_at": run.timeout_at.isoformat() if run.timeout_at else None,
                 "permission_mode": run.permission_mode,
                 "requested_by": run.requested_by,
                 "agent_id": run.agent_id,
@@ -744,20 +843,46 @@ class CliRuntimeService:
 
     def cancel_command_run(self, run_id: str) -> CommandRun:
         run = self._get_run_or_raise(run_id)
-        if run.status != CommandRunStatus.running:
+        if run.status not in {CommandRunStatus.starting, CommandRunStatus.running}:
             raise ValueError(
-                f"Only running commands can be cancelled; current status is {run.status}."
+                "Only starting or running commands can be cancelled; "
+                f"current status is {run.status}."
             )
 
         with self._active_lock:
             process = self._active_processes.get(run_id)
             self._cancelled_run_ids.add(run_id)
+            current_run = self._runs.get(run_id)
+            if current_run is None:
+                self._cancelled_run_ids.discard(run_id)
+                raise KeyError(f"Command run not found: {run_id}")
+            if current_run.status not in {
+                CommandRunStatus.starting,
+                CommandRunStatus.running,
+            }:
+                self._cancelled_run_ids.discard(run_id)
+                raise ValueError(
+                    "Only starting or running commands can be cancelled; "
+                    f"current status is {current_run.status}."
+                )
+            run = current_run
 
         if process is None:
             with self._active_lock:
                 self._cancelled_run_ids.discard(run_id)
-            raise ValueError(
-                "Command run is marked running but is not cancellable in this process."
+            if run.status == CommandRunStatus.starting and run.supervisor_id == self.supervisor_id:
+                raise ValueError(
+                    "Command launch is still starting and cannot be cancelled until "
+                    "process registration completes."
+                )
+            if run.supervisor_id == self.supervisor_id:
+                raise ValueError(
+                    "Command run is not currently cancellable in this backend process; "
+                    "it may be starting or finalizing."
+                )
+            return self._mark_run_stale(
+                run,
+                reason=f"Cancellation requested, but {self._orphaned_run_reason(run)}",
             )
 
         _terminate_process_tree(process)
@@ -768,6 +893,8 @@ class CliRuntimeService:
         run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
         run.cancelled_at = now
         run.completed_at = now
+        run.last_heartbeat_at = now
+        run.status_reason = "Command cancellation requested."
         self._runs.upsert(run)
         event_log.record(
             LogEventType.cli,
@@ -775,6 +902,7 @@ class CliRuntimeService:
             subject_id=run.id,
             metadata={
                 "process_id": run.process_id,
+                "supervisor_id": run.supervisor_id,
                 "requested_by": run.requested_by,
                 "agent_id": run.agent_id,
                 "agent_role": run.agent_role,
@@ -797,57 +925,113 @@ class CliRuntimeService:
         return self._runs.list()
 
     def reconcile_stale_command_runs(self) -> list[CommandRun]:
-        now = datetime.now(UTC)
         reconciled: list[CommandRun] = []
         for run in self._runs.list():
-            if run.status != CommandRunStatus.running:
+            if run.status not in {CommandRunStatus.starting, CommandRunStatus.running}:
                 continue
             with self._active_lock:
                 is_active = run.id in self._active_processes
             if is_active:
                 continue
 
-            message = (
-                "Command run was marked stale because no active process is registered "
-                "in this backend process."
+            reconciled.append(
+                self._mark_run_stale(
+                    run,
+                    reason=f"Command run was marked stale because {self._orphaned_run_reason(run)}",
+                )
             )
-            stderr = f"{run.stderr}\n{message}" if run.stderr else message
-            sanitized_stderr, stderr_truncated = sanitize_output(
-                stderr,
-                max_chars=self.max_output_chars,
-            )
-            run.status = CommandRunStatus.stale
-            run.exit_code = -1
-            run.stderr = sanitized_stderr
-            run.stderr_truncated = run.stderr_truncated or stderr_truncated
-            run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
-            run.completed_at = now
-            self._runs.upsert(run)
-            event_log.record(
-                LogEventType.cli,
-                "Reconciled stale CLI command run.",
-                subject_id=run.id,
-                metadata={
-                    "command": redact_sensitive_values(run.command),
-                    "cwd": str(run.cwd),
-                    "process_id": run.process_id,
-                    "status": run.status,
-                    "requested_by": run.requested_by,
-                    "agent_id": run.agent_id,
-                    "agent_role": run.agent_role,
-                    "task_id": run.task_id,
-                },
-            )
-            reconciled.append(run)
         return reconciled
+
+    def _orphaned_run_reason(self, run: CommandRun) -> str:
+        if run.status == CommandRunStatus.starting:
+            return "launch did not complete before backend supervision was interrupted."
+        if not run.supervisor_id:
+            return "it has no persisted supervisor metadata from an older backend version."
+        if run.supervisor_id != self.supervisor_id:
+            return "it belongs to a previous backend supervisor and cannot be adopted."
+        return "no active process is registered in this backend process."
+
+    def _mark_run_stale(self, run: CommandRun, *, reason: str) -> CommandRun:
+        now = datetime.now(UTC)
+        stderr = f"{run.stderr}\n{reason}" if run.stderr else reason
+        sanitized_stderr, stderr_truncated = sanitize_output(
+            stderr,
+            max_chars=self.max_output_chars,
+        )
+        run.status = CommandRunStatus.stale
+        run.exit_code = -1
+        run.stderr = sanitized_stderr
+        run.stderr_truncated = run.stderr_truncated or stderr_truncated
+        run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
+        run.completed_at = now
+        run.last_heartbeat_at = now
+        run.status_reason = reason
+        run.stale_reason = reason
+        self._runs.upsert(run)
+        event_log.record(
+            LogEventType.cli,
+            "Reconciled stale CLI command run.",
+            subject_id=run.id,
+            metadata={
+                "command": redact_sensitive_values(run.command),
+                "cwd": str(run.cwd),
+                "process_id": run.process_id,
+                "supervisor_id": run.supervisor_id,
+                "supervisor_pid": run.supervisor_pid,
+                "status": run.status,
+                "status_reason": run.status_reason,
+                "stale_reason": run.stale_reason,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+            },
+        )
+        return run
+
+    def _mark_run_failed(self, run: CommandRun, *, reason: str) -> CommandRun:
+        now = datetime.now(UTC)
+        sanitized_reason, stderr_truncated = sanitize_output(
+            reason,
+            max_chars=self.max_output_chars,
+        )
+        run.status = CommandRunStatus.failed
+        run.exit_code = -1
+        run.stderr = sanitized_reason
+        run.stderr_truncated = run.stderr_truncated or stderr_truncated
+        run.duration_ms = int((now - run.started_at).total_seconds() * 1000)
+        run.completed_at = now
+        run.last_heartbeat_at = now
+        run.status_reason = sanitized_reason
+        self._runs.upsert(run)
+        event_log.record(
+            LogEventType.cli,
+            "Failed asynchronous CLI command launch.",
+            subject_id=run.id,
+            metadata={
+                "command": redact_sensitive_values(run.command),
+                "cwd": str(run.cwd),
+                "supervisor_id": run.supervisor_id,
+                "supervisor_pid": run.supervisor_pid,
+                "status": run.status,
+                "status_reason": run.status_reason,
+                "requested_by": run.requested_by,
+                "agent_id": run.agent_id,
+                "agent_role": run.agent_role,
+                "task_id": run.task_id,
+            },
+        )
+        return run
 
     def _prepare_request(
         self,
         request: CommandExecutionRequest,
     ) -> tuple[CommandPolicyDecision, Path, dict[str, str], list[str], str | None]:
+        cwd = resolve_command_cwd(request.cwd)
         decision = evaluate_command_policy(
             CommandPolicyRequest(
                 command=request.command,
+                cwd=cwd,
                 agent_role=request.agent_role,
                 agent_id=request.agent_id,
                 task_id=request.task_id,
@@ -855,7 +1039,6 @@ class CliRuntimeService:
         )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
-        cwd = resolve_command_cwd(request.cwd)
         env, environment_keys = build_command_environment(request.environment)
         environment_digest = command_environment_digest(request.environment)
         approval_id: str | None = None
@@ -1008,8 +1191,10 @@ class CliRuntimeService:
             agent_role=agent_role,
             task_id=task_id,
             environment_keys=environment_keys,
+            status_reason=_status_reason_for_terminal_async_run(status),
             started_at=started_at,
             completed_at=completed_at,
+            last_heartbeat_at=completed_at,
         )
         self._runs.upsert(run)
         event_log.record(
@@ -1109,6 +1294,8 @@ class CliRuntimeService:
         exit_code = process.returncode
         if exit_code is None:
             exit_code = -1
+        if status == CommandRunStatus.completed and exit_code != 0:
+            status = CommandRunStatus.failed
         duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
         self._finalize_async_run(
             run_id=run_id,
@@ -1153,8 +1340,9 @@ class CliRuntimeService:
                 return
 
             now = datetime.now(UTC)
+            next_sequence = max((chunk.sequence for chunk in run.output_chunks), default=0) + 1
             chunk = CommandOutputChunk(
-                sequence=len(run.output_chunks) + 1,
+                sequence=next_sequence,
                 stream=stream,
                 text=sanitized_text,
                 truncated=chunk_truncated,
@@ -1177,6 +1365,7 @@ class CliRuntimeService:
 
             run.output_chunks = [*run.output_chunks, chunk][-DEFAULT_MAX_OUTPUT_CHUNKS:]
             run.last_output_at = now
+            run.last_heartbeat_at = now
             self._runs.upsert(run)
 
     def _finalize_async_run(
@@ -1208,6 +1397,8 @@ class CliRuntimeService:
         run.stderr_truncated = run.stderr_truncated or stderr_truncated
         run.duration_ms = duration_ms
         run.completed_at = completed_at
+        run.last_heartbeat_at = completed_at
+        run.status_reason = _status_reason_for_terminal_async_run(status)
         if status == CommandRunStatus.cancelled and run.cancelled_at is None:
             run.cancelled_at = completed_at
         self._runs.upsert(run)
@@ -1222,6 +1413,9 @@ class CliRuntimeService:
                 "duration_ms": duration_ms,
                 "permission_mode": run.permission_mode,
                 "status": run.status,
+                "status_reason": run.status_reason,
+                "supervisor_id": run.supervisor_id,
+                "supervisor_pid": run.supervisor_pid,
                 "requested_by": run.requested_by,
                 "agent_id": run.agent_id,
                 "agent_role": run.agent_role,

@@ -66,8 +66,8 @@ Current modules:
 - `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
-- `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, and executable, exact-command, contains, and argument-aware command matching.
-- `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, chunked output polling, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
+- `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, executable, exact-command, contains, and argument-aware command matching, shell-wrapper inspection, cwd-aware evaluation, and read-only path operand rootDir boundary checks.
+- `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, POSIX translation for policy-approved `cmd /c` and `cmd.exe /c` wrappers, chunked output polling, supervision metadata, auditable lifecycle states, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
 - `guardrails.py`: Filesystem policy evaluation plus guarded UTF-8 text file reads, writes, and command execution compatibility wrappers.
@@ -88,7 +88,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, stale-running reconciliation, cancellation, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -291,6 +291,6 @@ Architect handoff:
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
-- Execute CLI commands only through configurable command policy evaluation, root-bound working directories, controlled inherited environments plus explicit non-sensitive overrides, single-use approval records for approval-required commands outside development/test mode, sanitized output capture, persisted run history, and audit logging.
-- Support asynchronous CLI runs through persisted run records, redacted output chunks, stale-running reconciliation, and process-local cancellation; production process recovery and multi-worker supervision remain follow-up work.
-- Keep built-in CLI defaults for blocked and approval-required executables, inspect common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations for blocked inner commands, and let persisted rules override or refine defaults by executable, exact command, command substring, argument substring, or agent role.
+- Execute CLI commands only through configurable command policy evaluation, root-bound and cwd-aware working directories, controlled inherited environments plus explicit non-sensitive overrides, single-use approval records for approval-required commands outside development/test mode, sanitized output capture, persisted run history, and audit logging.
+- Support asynchronous CLI runs through persisted run records, redacted output chunks, supervision metadata, auditable lifecycle states, stale-running reconciliation, timeout handling, and process-local cancellation; production process recovery and multi-worker supervision remain follow-up work.
+- Keep built-in CLI defaults for blocked and approval-required executables, inspect common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations for blocked inner commands, block built-in read-only path operands that resolve or shell-expand outside `rootDir`, translate simple policy-approved `cmd /c` and `cmd.exe /c` wrappers to `sh -c` on POSIX hosts, and let persisted rules override or refine defaults by executable, exact command, command substring, argument substring, or agent role.

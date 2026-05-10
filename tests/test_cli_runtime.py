@@ -1,18 +1,23 @@
 import hashlib
+import io
 import json
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
+from threading import Event, Thread
 
 import pytest
 
 from dgentic.cli_runtime import (
+    DEFAULT_MAX_OUTPUT_CHUNKS,
     REDACTED_LEGACY_DIGEST_MARKER,
     CliRuntimeService,
     CommandApproval,
     CommandApprovalStatus,
+    CommandOutputChunk,
     CommandRun,
     CommandRunStatus,
+    _command_args,
     command_approval_digest,
     command_environment_digest,
     sanitize_output,
@@ -87,6 +92,33 @@ def test_create_approval_includes_safe_policy_review_metadata(runtime) -> None:
     assert approval.agent_role == "developer"
     assert approval.agent_id == "agent-dev-1"
     assert approval.task_id == "sprint-9"
+
+
+def test_create_approval_evaluates_policy_with_request_cwd(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    subdir = root_dir / "subdir"
+    subdir.mkdir()
+    readme = root_dir / "README.md"
+    readme.write_text("inside root", encoding="utf-8")
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Review read-only cwd reads",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="cat",
+            permission_mode=PermissionMode.approval_required,
+            reason="Review cwd-relative read command.",
+            priority=5,
+        )
+    )
+
+    approval = service.create_approval(
+        CommandExecutionRequest(command="cat ../README.md", cwd=subdir),
+        requested_by="operator",
+    )
+
+    assert approval.cwd == subdir.resolve()
+    assert approval.policy_reason == "Review cwd-relative read command."
+    assert approval.matched_rule_id == rule.id
 
 
 def test_create_approval_includes_redacted_review_contract_metadata(runtime) -> None:
@@ -365,6 +397,8 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
     def fake_run(args, cwd, env, capture_output, text, timeout, check):
         assert cwd == root_dir.resolve()
         assert "PATH" in env
+        if subprocess.os.name != "nt":
+            assert args == ["sh", "-c", "echo hello"]
         return subprocess.CompletedProcess(
             args=args,
             returncode=0,
@@ -386,6 +420,22 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
         )
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("cmd /c echo hello", ["sh", "-c", "echo hello"]),
+        ("cmd.exe /c echo hello", ["sh", "-c", "echo hello"]),
+        ('cmd /c "echo hello world"', ["sh", "-c", "echo hello world"]),
+        ("cmd /cecho compact", ["sh", "-c", "echo compact"]),
+    ],
+)
+def test_command_args_translates_cmd_wrappers_on_posix(command: str, expected: list[str]) -> None:
+    if subprocess.os.name == "nt":
+        assert _command_args(command) == command
+    else:
+        assert _command_args(command) == expected
+
+
 def test_command_execution_requires_approval_for_state_file_reads(runtime) -> None:
     service, _root_dir, _data_dir = runtime
 
@@ -393,6 +443,21 @@ def test_command_execution_requires_approval_for_state_file_reads(runtime) -> No
         service.execute_command(
             CommandExecutionRequest(command="cmd /c type .dgentic\\cli-approval-digest.key")
         )
+
+
+def test_read_only_command_path_escape_is_blocked_before_subprocess(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for out-of-root read-only path arguments.")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="outside configured rootDir"):
+        service.execute_command(CommandExecutionRequest(command="cat ../secret.txt"))
 
 
 def test_command_execution_applies_controlled_environment_and_audit_context(
@@ -723,6 +788,221 @@ def test_async_command_run_can_be_polled_after_completion(runtime) -> None:
     assert (data_dir / "cli-command-runs.json").exists()
 
 
+def test_start_command_uses_translated_cmd_wrapper_on_posix(runtime, monkeypatch) -> None:
+    service, root_dir, _data_dir = runtime
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 12345
+        stdout = io.StringIO("hello\n")
+        stderr = io.StringIO("")
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        @property
+        def returncode(self):
+            return 0
+
+    def fake_popen(args, env, cwd, stdout, stderr, text, **kwargs):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return FakeProcess()
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.Popen", fake_popen)
+
+    run = service.start_command(CommandExecutionRequest(command="cmd /c echo hello"))
+
+    if subprocess.os.name != "nt":
+        assert captured["args"] == ["sh", "-c", "echo hello"]
+    assert captured["cwd"] == root_dir.resolve()
+    assert run.status == CommandRunStatus.running
+
+
+def test_start_command_records_supervision_metadata(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command="python -c \"print('supervised')\"",
+            approved=True,
+            timeout_seconds=5,
+        )
+    )
+
+    assert run.status == CommandRunStatus.running
+    assert run.supervisor_id == service.supervisor_id
+    assert run.supervisor_pid is not None
+    assert run.timeout_at is not None
+    assert run.timeout_at > run.started_at
+    assert run.last_heartbeat_at is not None
+    assert run.status_reason == "Command process started."
+
+
+def test_start_command_records_failed_launch_after_persisting_intent(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    def fake_popen(*args, **kwargs):
+        raise FileNotFoundError("missing executable")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.Popen", fake_popen)
+
+    with pytest.raises(FileNotFoundError):
+        service.start_command(
+            CommandExecutionRequest(
+                command="python --version",
+                approved=True,
+                timeout_seconds=5,
+            )
+        )
+
+    runs = service.list_command_runs()
+    assert len(runs) == 1
+    failed = runs[0]
+    assert failed.status == CommandRunStatus.failed
+    assert failed.exit_code == -1
+    assert failed.completed_at is not None
+    assert failed.last_heartbeat_at is not None
+    assert failed.supervisor_id == service.supervisor_id
+    assert failed.status_reason is not None
+    assert "Command launch failed" in failed.status_reason
+    assert "missing executable" in failed.stderr
+
+
+def test_start_command_launch_failure_binds_approval(runtime, monkeypatch) -> None:
+    service, _root_dir, _data_dir = runtime
+    approval = service.create_approval(
+        CommandExecutionRequest(command="python --version", timeout_seconds=5),
+        requested_by="operator",
+    )
+    service.approve_approval(approval.id, decided_by="reviewer")
+
+    def fake_popen(*args, **kwargs):
+        raise OSError("launch refused")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.Popen", fake_popen)
+
+    with pytest.raises(OSError):
+        service.start_command(
+            CommandExecutionRequest(
+                command="python --version",
+                timeout_seconds=5,
+                approval_id=approval.id,
+                requested_by="operator",
+            )
+        )
+
+    failed = service.list_command_runs()[0]
+    stored_approval = service.list_approvals()[0]
+    assert failed.status == CommandRunStatus.failed
+    assert stored_approval.status == CommandApprovalStatus.executed
+    assert stored_approval.run_id == failed.id
+    with pytest.raises(PermissionError, match="not executable"):
+        service.start_command(
+            CommandExecutionRequest(
+                command="python --version",
+                timeout_seconds=5,
+                approval_id=approval.id,
+                requested_by="operator",
+            )
+        )
+
+
+def test_starting_command_cancellation_waits_for_process_registration(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+    launch_started = Event()
+    release_launch = Event()
+    errors: list[BaseException] = []
+
+    class FakeProcess:
+        pid = 12345
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        @property
+        def returncode(self):
+            return 0
+
+    def fake_popen(*args, **kwargs):
+        launch_started.set()
+        release_launch.wait(timeout=5)
+        return FakeProcess()
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.Popen", fake_popen)
+
+    def start_run() -> None:
+        try:
+            service.start_command(
+                CommandExecutionRequest(
+                    command="python --version",
+                    approved=True,
+                    timeout_seconds=5,
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - re-raised by assertion below.
+            errors.append(exc)
+
+    starter = Thread(target=start_run)
+    starter.start()
+    assert launch_started.wait(timeout=2)
+    starting_run = service.list_command_runs()[0]
+
+    with pytest.raises(ValueError, match="still starting"):
+        service.cancel_command_run(starting_run.id)
+
+    release_launch.set()
+    starter.join(timeout=5)
+    assert not starter.is_alive()
+    assert not errors
+    stored = service.get_command_run(starting_run.id)
+    assert stored is not None
+    assert stored.status in {CommandRunStatus.running, CommandRunStatus.completed}
+    assert stored.stale_reason is None
+
+
+def test_start_command_launch_failure_redacts_status_reason(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    def fake_popen(*args, **kwargs):
+        raise OSError("TOKEN=supersecret")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.Popen", fake_popen)
+
+    with pytest.raises(OSError):
+        service.start_command(
+            CommandExecutionRequest(
+                command="python --version",
+                approved=True,
+                timeout_seconds=5,
+            )
+        )
+
+    failed = service.list_command_runs()[0]
+    assert failed.status == CommandRunStatus.failed
+    assert failed.status_reason is not None
+    assert "supersecret" not in failed.status_reason
+    assert "TOKEN=[REDACTED]" in failed.status_reason
+    assert "supersecret" not in failed.stderr
+
+
 def test_async_command_run_streams_redacted_output_chunks(runtime) -> None:
     service, _root_dir, _data_dir = runtime
 
@@ -795,6 +1075,215 @@ def test_async_command_run_can_be_cancelled(runtime) -> None:
     assert polled.exit_code is not None
 
 
+def test_cancel_command_run_refreshes_registered_process_metadata(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+
+    class FakeProcess:
+        pid = None
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                self.returncode = -15
+            return self.returncode
+
+    registered_run = CommandRun(
+        id="cmdrun-registered-cancel",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=12345,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id=service.supervisor_id,
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    stale_snapshot = registered_run.model_copy(
+        update={
+            "status": CommandRunStatus.starting,
+            "process_id": None,
+        }
+    )
+    service._runs.upsert(registered_run)
+    service._active_processes[registered_run.id] = FakeProcess()
+    monkeypatch.setattr(service, "_get_run_or_raise", lambda _run_id: stale_snapshot)
+
+    cancelled = service.cancel_command_run(registered_run.id)
+    stored = service.get_command_run(registered_run.id)
+
+    assert cancelled.status == CommandRunStatus.cancelled
+    assert cancelled.process_id == 12345
+    assert stored is not None
+    assert stored.process_id == 12345
+
+
+def test_cancel_command_run_does_not_stale_refreshed_terminal_run(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    started_at = datetime.now(UTC)
+    stale_snapshot = CommandRun(
+        id="cmdrun-finalizing-cancel",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=12345,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id=service.supervisor_id,
+        supervisor_pid=12345,
+        started_at=started_at,
+    )
+    completed_run = stale_snapshot.model_copy(
+        update={
+            "status": CommandRunStatus.completed,
+            "exit_code": 0,
+            "duration_ms": 10,
+            "completed_at": started_at + timedelta(milliseconds=10),
+            "status_reason": "Command process completed.",
+        }
+    )
+    service._runs.upsert(completed_run)
+    monkeypatch.setattr(service, "_get_run_or_raise", lambda _run_id: stale_snapshot)
+
+    with pytest.raises(ValueError, match="current status is completed"):
+        service.cancel_command_run(stale_snapshot.id)
+
+    stored = service.get_command_run(stale_snapshot.id)
+    assert stored is not None
+    assert stored.status == CommandRunStatus.completed
+    assert stored.stale_reason is None
+
+
+def test_async_command_cancel_kills_sigterm_ignoring_process_on_posix(runtime) -> None:
+    if subprocess.os.name == "nt":
+        pytest.skip("POSIX process-group signal escalation is not used on Windows.")
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command=(
+                'python -c "import signal, time; '
+                'signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"'
+            ),
+            approved=True,
+            timeout_seconds=30,
+        )
+    )
+    cancelled = service.cancel_command_run(run.id)
+
+    assert cancelled.status == CommandRunStatus.cancelled
+    assert cancelled.exit_code is not None
+    for _attempt in range(40):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.completed_at is not None:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("SIGTERM-ignoring command did not finalize after cancellation.")
+    assert polled.status == CommandRunStatus.cancelled
+
+
+def test_async_command_run_times_out_with_auditable_state(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command='python -c "import time; time.sleep(5)"',
+            approved=True,
+            timeout_seconds=1,
+        )
+    )
+
+    for _attempt in range(60):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.status == CommandRunStatus.timed_out:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Async command did not time out.")
+
+    output = service.get_command_run_output(run.id)
+    assert polled.exit_code is not None
+    assert polled.timeout_at is not None
+    assert polled.completed_at is not None
+    assert polled.last_heartbeat_at is not None
+    assert polled.status_reason == "Command process timed out."
+    assert "timed out" in polled.stderr
+    assert any("timed out" in chunk.text for chunk in output.chunks)
+
+
+def test_async_nonzero_exit_records_failed_status(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    run = service.start_command(
+        CommandExecutionRequest(
+            command="python -c \"import sys; print('nope'); sys.exit(7)\"",
+            approved=True,
+            timeout_seconds=5,
+        )
+    )
+
+    for _attempt in range(40):
+        polled = service.get_command_run(run.id)
+        assert polled is not None
+        if polled.status == CommandRunStatus.failed:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("Async command did not record failed status.")
+
+    assert polled.exit_code == 7
+    assert polled.status_reason == "Command process failed."
+    assert "nope" in polled.stdout
+    output = service.get_command_run_output(run.id)
+    assert any("nope" in chunk.text for chunk in output.chunks)
+
+
+def test_cancel_orphaned_running_run_marks_stale(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    orphaned_run = CommandRun(
+        id="cmdrun-orphaned",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=999999,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        status_reason="Command process started.",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(orphaned_run)
+
+    reconciled = service.cancel_command_run(orphaned_run.id)
+
+    assert reconciled.status == CommandRunStatus.stale
+    assert reconciled.exit_code == -1
+    assert reconciled.completed_at is not None
+    assert reconciled.last_heartbeat_at is not None
+    assert reconciled.stale_reason is not None
+    assert "Cancellation requested" in reconciled.stale_reason
+    assert "previous backend supervisor" in reconciled.stale_reason
+
+
 def test_reconcile_stale_command_runs_marks_orphaned_running_records(runtime) -> None:
     service, root_dir, _data_dir = runtime
     stale_run = CommandRun(
@@ -821,3 +1310,129 @@ def test_reconcile_stale_command_runs_marks_orphaned_running_records(runtime) ->
     assert stored.exit_code == -1
     assert stored.completed_at is not None
     assert "marked stale" in stored.stderr
+    assert stored.stale_reason is not None
+    assert "no persisted supervisor metadata" in stored.stale_reason
+
+
+def test_reconcile_stale_command_runs_records_launch_interruption_reason(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    starting_run = CommandRun(
+        id="cmdrun-starting",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.starting,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id=service.supervisor_id,
+        supervisor_pid=12345,
+        status_reason="Command launch requested.",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(starting_run)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(starting_run.id)
+
+    assert [run.id for run in reconciled] == [starting_run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.stale_reason is not None
+    assert "launch did not complete" in stored.stale_reason
+
+
+def test_reconcile_stale_command_runs_records_previous_supervisor_reason(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    previous_supervisor_run = CommandRun(
+        id="cmdrun-previous-supervisor",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=999999,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        status_reason="Command process started.",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(previous_supervisor_run)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(previous_supervisor_run.id)
+
+    assert [run.id for run in reconciled] == [previous_supervisor_run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.stale_reason is not None
+    assert "previous backend supervisor" in stored.stale_reason
+
+
+def test_output_chunk_sequence_remains_monotonic_after_retention_trim(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-output-retention",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=12345,
+        permission_mode=PermissionMode.autopilot_safe,
+        duration_ms=0,
+        supervisor_id=service.supervisor_id,
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(run)
+
+    for index in range(DEFAULT_MAX_OUTPUT_CHUNKS + 2):
+        service._append_output_chunk(run.id, "stdout", f"chunk-{index}\n")
+
+    stored = service.get_command_run(run.id)
+
+    assert stored is not None
+    assert len(stored.output_chunks) == DEFAULT_MAX_OUTPUT_CHUNKS
+    assert stored.output_chunks[-1].sequence == DEFAULT_MAX_OUTPUT_CHUNKS + 2
+    assert stored.output_chunks[-1].text == f"chunk-{DEFAULT_MAX_OUTPUT_CHUNKS + 1}\n"
+    cursor_output = service.get_command_run_output(
+        run.id,
+        after_sequence=DEFAULT_MAX_OUTPUT_CHUNKS + 1,
+    )
+    assert [chunk.sequence for chunk in cursor_output.chunks] == [DEFAULT_MAX_OUTPUT_CHUNKS + 2]
+
+
+def test_stale_reconciliation_preserves_output_cursor_and_approval_id(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-stale-output",
+        approval_id="approval-used",
+        command="python --version TOKEN=secret-value",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=999999,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        stdout="TOKEN=[REDACTED]\n",
+        output_chunks=[
+            CommandOutputChunk(
+                sequence=1,
+                stream="stdout",
+                text="TOKEN=[REDACTED]\n",
+            )
+        ],
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(run)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(run.id)
+    output = service.get_command_run_output(run.id, after_sequence=0)
+
+    assert [item.id for item in reconciled] == [run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.approval_id == "approval-used"
+    assert "secret-value" not in stored.command
+    assert "TOKEN=[REDACTED]" in stored.stdout
+    assert [chunk.sequence for chunk in output.chunks] == [1]
+    assert "TOKEN=[REDACTED]" in output.chunks[0].text

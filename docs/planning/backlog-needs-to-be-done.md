@@ -117,6 +117,7 @@ Needs to be done:
 - Persist process/run state in the production persistence layer.
 - Reconcile stale running commands on backend startup.
 - Add restart-resilient command lifecycle states.
+- Align Windows and POSIX host execution behavior with the documented command-policy contract so safe wrapper commands and tests behave consistently across platforms.
 - Preserve truncation, redaction, rootDir checks, and approval policy enforcement.
 
 Acceptance criteria:
@@ -133,7 +134,9 @@ Definition of Done:
 Current implementation status:
 - Completed: BL-002a chunked async CLI output polling with redacted stdout/stderr chunks, output sequence cursors, persisted output chunks on command runs, and stale-running reconciliation for orphaned persisted runs.
 - Completed: BL-002b single-use bound approval IDs for approval-required command execution outside development/test mode, including command digest, cwd, timeout, requester, agent/task context, environment-key, policy-metadata, and expiry binding.
-- Remaining: full restart-resilient process supervision beyond stale marking, persisted process recovery strategy, and production multi-worker lifecycle semantics.
+- Completed: BL-002c POSIX host execution parity for policy-approved `cmd /c` and `cmd.exe /c` wrappers by translating inspectable wrappers to `sh -c` after policy evaluation.
+- Completed: BL-002d restart-resilient supervision metadata and lifecycle accuracy, including persisted supervisor and timeout metadata, starting/failed states, timeout/status/stale reasons, launch-intent persistence before `Popen`, failed-launch persistence, async nonzero failed status, same-supervisor cancellation race guards, POSIX cancellation escalation, stale orphan cancellation, and monotonic output chunk cursors after retention trimming.
+- Remaining: true process recovery/adoption or safe termination after backend restart, production multi-worker lifecycle/lease semantics, corrupt JSON quarantine and repair tooling, and deeper Windows/POSIX shell semantics beyond the currently supported wrapper parity slice.
 
 ### BL-003: CLI Parsing And Approval Review UX Contracts
 
@@ -159,8 +162,8 @@ Definition of Done:
 
 Current implementation status:
 - Completed: approval records now expose safe matched policy review metadata through matched rule id/name, existing command/cwd/role/task/environment-key fields, and no persisted environment values.
-- Selected next slice: BL-003a Windows/POSIX command parsing matrix and approval review contract refinement.
-- Remaining: broader Windows/POSIX parsing matrix, quoting edge cases, explicit approval review contracts for UI consumers, and richer reviewer decision metadata.
+- Completed: BL-003a command parsing and boundary hardening slice for cwd-aware policy evaluation, read-only path operand rootDir checks, symlink escape checks, shell-variable and parameter-expansion path checks, tilde path checks, Windows absolute/backslash path checks, Windows slash switch handling, and focused API/runtime/policy regressions.
+- Remaining: broader Windows/POSIX parsing matrix beyond the current hardened cases, additional quoting edge cases, explicit approval review contracts for UI consumers, and richer reviewer decision metadata.
 
 ### BL-004: Filesystem Runtime Completion
 
@@ -198,6 +201,8 @@ Needs to be done:
 - Add tool versioning policy and no-overwrite rules.
 - Add stronger sandbox isolation for tool execution.
 - Enforce tool permission level at execution time.
+- Replace the caller-supplied tool `approved` boolean with approval/audit-bound execution semantics.
+- Minimize inherited environment exposure and add output/log redaction for generated tool execution.
 - Add per-tool dependency isolation strategy.
 - Use reliability score to allow, warn, disable, or deprecate tools.
 
@@ -212,6 +217,10 @@ Definition of Done:
 - Security review validates sandbox and filesystem boundaries.
 - README, usage docs, architecture docs, and progress log are updated.
 
+Current implementation status:
+- Partially implemented: generated tools can be created, governed, executed, and tracked for reliability through local manifests plus the SQLAlchemy registry APIs.
+- Remaining: generated tool creation does not yet auto-register into the SQLAlchemy registry, execution still uses process-local Python subprocesses rather than a hardened sandbox, the runtime still inherits a broad host environment, and approval-required tool execution still depends on a caller-supplied boolean instead of a reviewed approval record.
+
 ### BL-006: Provider System Productionization
 
 Feature group: Provider system.
@@ -223,6 +232,7 @@ Needs to be done:
 - Add external provider adapter contracts and at least one production-ready external adapter.
 - Add secure credential storage or integration with environment/secret manager policy.
 - Add credential masking and secret leak tests.
+- Constrain provider network targets with allowlist or policy controls instead of unrestricted caller-supplied endpoints.
 - Add rate-limit, retry, backoff, and circuit-breaker behavior.
 - Add streaming generation responses.
 - Add provider usage logs with latency, error, token, and cost metadata where available.
@@ -236,6 +246,10 @@ Acceptance criteria:
 Definition of Done:
 - Tests cover adapter success/failure, credential masking, streaming, retries, backoff, routing, and logs.
 - README, setup docs, provider architecture docs, and progress log are updated.
+
+Current implementation status:
+- Partially implemented: Ollama and LM Studio health checks, local generation calls, and scored routing are available for the backend MVP.
+- Remaining: external provider adapters remain placeholders, provider requests still accept broad caller-controlled runtime endpoints, outbound network policy is not enforced yet, and provider response logging/return contracts still need production-oriented secret and data-retention hardening.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -317,7 +331,8 @@ Definition of Done:
 
 Current implementation status:
 - Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, and principal attachment on request state.
-- Not yet implemented: persisted identities, hashed/rotating expiring tokens, actor-bound approval identities, encrypted credential storage, external secret manager integration, and network/domain guardrails.
+- Risk updated after Sprint 9 hardening: built-in read-only CLI path operands now receive cwd-aware rootDir checks, symlink escape checks, shell expansion checks, and Windows/POSIX path-shape regressions; broader host-boundary risks remain for trusted custom policy rules, non-built-in exfiltration commands, and time-of-check/time-of-use workspace changes.
+- Not yet implemented: persisted identities, hashed/rotating expiring tokens, actor-bound approval identities, encrypted credential storage, external secret manager integration, broader CLI host-boundary enforcement beyond the current built-in read-only command set, and network/domain guardrails.
 
 ### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
 
@@ -453,9 +468,11 @@ Current Sprint 9 status:
 - In progress: Sprint 9 initiated.
 - Completed: BL-002a output chunk polling and stale-running reconciliation.
 - Completed: BL-002b bound approval IDs for approval-required commands outside development/test mode.
-- Partially completed: BL-003 approval records expose matched policy review metadata.
-- Selected next slice: BL-003a Windows/POSIX command parsing matrix and approval review contract refinement.
-- Remaining: full restart-resilient process supervision semantics, broader Windows/POSIX parsing validation, and approval review UI contracts.
+- Completed: BL-002c POSIX execution parity for policy-approved `cmd /c` and `cmd.exe /c` wrappers.
+- Completed: BL-002d restart-resilient supervision metadata and lifecycle accuracy for async CLI runs.
+- Completed: BL-003 approval records expose matched policy review metadata.
+- Completed: BL-003a cwd-aware command policy evaluation and read-only path operand rootDir boundary hardening.
+- Remaining: true post-restart process recovery/adoption or safe termination, production multi-worker lease semantics, broader Windows/POSIX shell semantics validation, and approval review UI contracts.
 
 ### Sprint 10: Filesystem Runtime Completion
 

@@ -1,9 +1,13 @@
 import time
+from datetime import UTC, datetime
 from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
+from dgentic.api.routes import cli_runtime_service
+from dgentic.cli_runtime import CommandRun, CommandRunStatus
 from dgentic.main import create_app
+from dgentic.schemas import PermissionMode
 from dgentic.settings import get_settings
 
 
@@ -444,6 +448,72 @@ def test_cli_async_run_api_polls_and_cancels(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_cli_cancel_orphaned_run_after_restart_returns_stale(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    run = CommandRun(
+        id="cmdrun-api-orphaned",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=999999,
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    cli_runtime_service._runs.upsert(run)
+
+    cancel_response = client.post(f"/cli/runs/{run.id}/cancel")
+
+    assert cancel_response.status_code == 200
+    body = cancel_response.json()
+    assert body["status"] == "stale"
+    assert body["stale_reason"] is not None
+    assert "Cancellation requested" in body["stale_reason"]
+    get_settings.cache_clear()
+
+
+def test_cli_async_run_api_times_out_and_returns_timeout_output(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    start_response = client.post(
+        "/cli/runs",
+        json={
+            "command": 'python -c "import time; time.sleep(5)"',
+            "approved": True,
+            "timeout_seconds": 1,
+        },
+    )
+    run_id = start_response.json()["id"]
+
+    for _attempt in range(60):
+        run_response = client.get(f"/cli/runs/{run_id}")
+        if run_response.json()["status"] == "timed_out":
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Async API command did not time out.")
+
+    output_response = client.get(f"/cli/runs/{run_id}/output")
+
+    assert run_response.status_code == 200
+    assert run_response.json()["status_reason"] == "Command process timed out."
+    assert output_response.status_code == 200
+    assert any("timed out" in chunk["text"] for chunk in output_response.json()["chunks"])
+    get_settings.cache_clear()
+
+
 def test_cli_async_run_output_api_returns_redacted_chunks(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
@@ -521,6 +591,24 @@ def test_cli_execute_api_records_context_and_environment_keys(tmp_path, monkeypa
     latest_run = runs_response.json()[-1]
     assert latest_run["environment_keys"] == ["DGENTIC_TEST_FLAG"]
     assert latest_run["agent_role"] == "developer"
+    get_settings.cache_clear()
+
+
+def test_cli_execute_api_blocks_out_of_root_read_only_arguments(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/execute",
+        json={"command": "cat ../secret.txt", "timeout_seconds": 5},
+    )
+
+    assert response.status_code == 403
+    assert "outside configured rootDir" in response.json()["detail"]
     get_settings.cache_clear()
 
 

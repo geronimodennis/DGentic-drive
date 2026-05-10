@@ -302,6 +302,7 @@ class FileWriteResponse(BaseModel):
 
 class CommandPolicyRequest(BaseModel):
     command: str
+    cwd: Path | None = None
     agent_role: str | None = None
     agent_id: str | None = None
     task_id: str | None = None

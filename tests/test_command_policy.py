@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from dgentic.command_policy import (
@@ -375,6 +377,192 @@ def test_cli_read_commands_targeting_posix_absolute_state_paths_require_approval
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "cat ../secret.txt",
+        "ls ../outside",
+        "type /etc/passwd",
+        "dir /etc",
+        'bash -c "X=1 cat /etc/passwd"',
+        'bash -c "HOME=/tmp cat $HOME/.ssh/config"',
+        "bash -c \"cat $'/etc/passwd'\"",
+        "bash -c \"cat $'/tmp'/secret.txt\"",
+        'bash -c "cat ..{,/secret.txt}"',
+        'bash -c "cat {../secret.txt,README}"',
+        'bash -c "cat {~root,/tmp}/secret.txt"',
+        "cat ~/secret",
+        "cat $HOME/.ssh/config",
+        'bash -c "cat ${HOME:-/tmp}/.ssh/config"',
+        'sh -c "cat ${USER#prefix}/secret.txt"',
+        "cmd /c cat ${!SECRET_PATH}/secret.txt",
+        'bash -c "cat $TMP/secret.txt"',
+        "cmd /c cat $TMP/secret.txt",
+        'bash -c "cat ~root/.ssh/config"',
+        'sh -c "ls ~nobody/.ssh"',
+        "cmd /c type ~root/.ssh/config",
+        r"get-childitem C:\Users\Public\secret.txt",
+        r"cmd /c type %USERPROFILE:~0,3%\secret.txt",
+        r"cmd /c type !USERPROFILE!\secret.txt",
+        r"cmd /v:on /c type !USERPROFILE:~0,3!\secret.txt",
+        r"cmd /v:on /c type !USERPROFILE:Users=Windows!\secret.txt",
+        r"cmd /c type %ProgramFiles(x86)%\secret.txt",
+        r"cmd /v:on /c type !ProgramFiles(x86)!\secret.txt",
+        r"type %ProgramFiles(x86)%\secret.txt",
+        r"cmd /c type ^C:\Users\Public\secret.txt",
+        r"cmd /c type C^:\Users\Public\secret.txt",
+        r"cmd /c type outside-^*",
+        r"cmd /c type C:..\secret.txt",
+        r"cmd /c type C:\workspace\..\secret.txt",
+        r"type C:\workspace\..\secret.txt",
+        r"cmd /c type ..\secret.txt",
+        'bash -c "cat /etc/passwd"',
+    ],
+)
+def test_read_only_commands_targeting_paths_outside_root_are_blocked(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+
+
+def test_read_only_path_checks_allow_in_root_brace_expansion(policy_state) -> None:
+    root_dir, _data_dir = policy_state
+    (root_dir / "README").write_text("inside", encoding="utf-8")
+    (root_dir / "docs").mkdir()
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command='bash -c "cat {README,docs}"'))
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+
+
+def test_read_only_path_checks_block_glob_symlink_escapes(policy_state, tmp_path) -> None:
+    root_dir, _data_dir = policy_state
+    outside_file = tmp_path / "outside-secret.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+    symlink = root_dir / "outside-link"
+    symlink.symlink_to(outside_file)
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command='bash -c "cat outside-*"'))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dir /b",
+        "dir /a:d",
+        "dir /o:n",
+        "type /?",
+        "cmd /c dir /b",
+        "cmd /c type /?",
+    ],
+)
+def test_windows_slash_switches_are_not_treated_as_root_paths(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    expected_mode = PermissionMode.autopilot_safe if os.name == "nt" else PermissionMode.blocked
+    assert decision.permission_mode == expected_mode
+
+
+def test_read_only_path_checks_use_command_cwd(policy_state) -> None:
+    root_dir, _data_dir = policy_state
+    subdir = root_dir / "subdir"
+    subdir.mkdir()
+    inside_file = root_dir / "README.md"
+    inside_file.write_text("inside", encoding="utf-8")
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="cat ../README.md", cwd=subdir))
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+
+
+def test_read_only_path_checks_block_cwd_relative_escapes(policy_state) -> None:
+    root_dir, _data_dir = policy_state
+    subdir = root_dir / "subdir"
+    subdir.mkdir()
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(command="cat ../outside.txt", cwd=root_dir)
+    )
+    subdir_decision = evaluate_command_policy(
+        CommandPolicyRequest(command="cat ../../outside.txt", cwd=subdir)
+    )
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+    assert subdir_decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in subdir_decision.reason
+
+
+def test_read_only_path_checks_block_symlink_escapes(policy_state, tmp_path) -> None:
+    root_dir, _data_dir = policy_state
+    outside_file = tmp_path / "outside-secret.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+    symlink = root_dir / "outside-link"
+    symlink.symlink_to(outside_file)
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="cat outside-link"))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+
+
+def test_read_only_path_checks_block_quoted_symlink_with_spaces(
+    policy_state,
+    tmp_path,
+) -> None:
+    root_dir, _data_dir = policy_state
+    outside_file = tmp_path / "outside secret.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+    symlink = root_dir / "outside link"
+    symlink.symlink_to(outside_file)
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command='cat "outside link"'))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cmd /c type "outside link"',
+        'cmd /c cat "outside link"',
+        'cmd /c dir "outside link"',
+        'powershell -Command type "outside link"',
+        'pwsh -c cat "outside link"',
+    ],
+)
+def test_shell_wrappers_block_quoted_symlink_with_spaces(
+    policy_state,
+    tmp_path,
+    command: str,
+) -> None:
+    root_dir, _data_dir = policy_state
+    outside_file = tmp_path / "outside secret.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+    symlink = root_dir / "outside link"
+    symlink.symlink_to(outside_file)
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
+
+
+@pytest.mark.parametrize(
     ("executable", "command"),
     [
         ("cat", "cat .dgentic/cli-approval-digest.key"),
@@ -405,6 +593,27 @@ def test_configured_safe_rules_do_not_downgrade_state_file_reads(
 
     assert decision.permission_mode == PermissionMode.approval_required
     assert "DGentic state files" in decision.reason
+
+
+def test_configured_safe_rules_do_not_downgrade_out_of_root_read_only_paths(
+    policy_state,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow cat",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="cat",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="cat is usually read-only.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="cat ../secret.txt"))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in decision.reason
 
 
 @pytest.mark.parametrize(

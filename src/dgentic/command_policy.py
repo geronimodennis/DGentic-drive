@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import glob
+import os
 import re
 import shlex
 from datetime import UTC, datetime
 from fnmatch import fnmatchcase
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from uuid import uuid4
 
 from dgentic.events import event_log
@@ -72,6 +74,13 @@ READ_ONLY_COMMANDS = {
     "whoami",
     "write-host",
     "write-output",
+}
+READ_ONLY_PATH_COMMANDS = {
+    "cat",
+    "dir",
+    "get-childitem",
+    "ls",
+    "type",
 }
 SHELL_COMMAND_FLAGS = {
     "cmd": {"/c", "/k"},
@@ -203,6 +212,14 @@ START_PROCESS_ARGUMENT_LIST_OPTIONS = frozenset({"-args", "-argument-list", "-ar
 START_PROCESS_COMMAND_NAMES = frozenset({"saps", "start", "start-process"})
 START_PROCESS_FILE_PATH_OPTIONS = frozenset({"-file-path", "-filepath", "-path"})
 _SHELL_ASSIGNMENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*$")
+_LEADING_SHELL_ASSIGNMENT_RE = re.compile(
+    r"^\s*[A-Za-z_][A-Za-z0-9_]*(?:\+)?="
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|(?:\\.|[^\s;&|'\"\)])+)\s+"
+)
+_SHELL_PATH_EXPANSION_RE = re.compile(
+    r"\$(?:\{[^}\s]+\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!_-]|['\"])"
+)
+_WINDOWS_PATH_EXPANSION_RE = re.compile(r"%[^%\s]+(?::[^%]*)?%|![^!\s]+(?::[^!]*)?!")
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"\b(?P<key>[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
     r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*"
@@ -283,7 +300,21 @@ def update_command_policy_rule(
 def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     command = request.command.strip()
     parsed = parse_command(command)
-    default_decision = _default_decision(command, parsed, request)
+    policy_cwd = _resolve_policy_cwd(request.cwd)
+    if policy_cwd is None:
+        decision = CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason="Command cwd resolves outside configured rootDir.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+        _record_decision(decision)
+        return decision
+
+    default_decision = _default_decision(command, parsed, request, policy_cwd)
 
     if parsed.executable not in SHELL_COMMAND_FLAGS:
         if default_decision.permission_mode in {
@@ -325,7 +356,7 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
         _record_decision(wrapper_decision)
         return wrapper_decision
 
-    decision = _default_decision(command, parsed, request)
+    decision = _default_decision(command, parsed, request, policy_cwd)
     _record_decision(decision)
     return decision
 
@@ -371,6 +402,10 @@ def parse_command(command: str) -> ParsedCommand:
         arguments=[_strip_matching_quotes(part) for part in parts[1:]],
         original_command=command,
     )
+
+
+def parse_inner_shell_command(command: str) -> str | None:
+    return _parse_inner_shell_command(parse_command(command))
 
 
 def _normalize_executable(token: str) -> str:
@@ -437,12 +472,23 @@ def _default_decision(
     command: str,
     parsed: ParsedCommand,
     request: CommandPolicyRequest,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool | None = None,
 ) -> CommandPolicyDecision:
+    if windows_command_context is None:
+        windows_command_context = os.name == "nt"
     executable = parsed.executable
     blocked_executable = _blocked_command_name(executable)
     inner_command = _parse_inner_shell_command(parsed)
     if inner_command is not None:
-        return _decision_for_inner_shell_command(command, inner_command, request)
+        return _decision_for_inner_shell_command(
+            command,
+            inner_command,
+            request,
+            policy_cwd,
+            windows_command_context=os.name == "nt" and parsed.executable in {"cmd", "cmd.exe"},
+        )
 
     if executable in SHELL_COMMAND_FLAGS:
         return CommandPolicyDecision(
@@ -470,6 +516,20 @@ def _default_decision(
             risk=CommandRisk.approval_required,
             permission_mode=PermissionMode.approval_required,
             reason="Command references DGentic state files and needs approval.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    if _read_only_command_targets_outside_root(
+        parsed,
+        policy_cwd,
+        windows_command_context=windows_command_context,
+    ):
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason=f"{executable} references a path outside configured rootDir.",
             agent_role=request.agent_role,
             agent_id=request.agent_id,
             task_id=request.task_id,
@@ -509,6 +569,9 @@ def _decision_for_inner_shell_command(
     outer_command: str,
     inner_command: str,
     request: CommandPolicyRequest,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool = False,
 ) -> CommandPolicyDecision:
     if _command_targets_protected_data_dir(inner_command):
         return CommandPolicyDecision(
@@ -539,17 +602,29 @@ def _decision_for_inner_shell_command(
     approval_decision: CommandPolicyDecision | None = None
     safe_decision: CommandPolicyDecision | None = None
     for segment in [*segments, *substitutions]:
-        inner = parse_command(segment)
+        inspectable_segment = _strip_leading_shell_assignments(segment)
+        inner = parse_command(inspectable_segment)
         if not inner.executable:
             continue
-        inner_decision = _default_decision(outer_command, inner, request)
+        inner_decision = _default_decision(
+            outer_command,
+            inner,
+            request,
+            policy_cwd,
+            windows_command_context=windows_command_context,
+        )
         if inner_decision.permission_mode == PermissionMode.blocked:
-            inner_decision.reason = (
-                f"Inner shell command {inner.executable} is blocked by the command policy."
-            )
+            if "outside configured rootDir" in inner_decision.reason:
+                inner_decision.reason = (
+                    f"Inner shell command {inner.executable} {inner_decision.reason}"
+                )
+            else:
+                inner_decision.reason = (
+                    f"Inner shell command {inner.executable} is blocked by the command policy."
+                )
             return inner_decision
 
-        configured_decision = _decision_from_configured_rules(segment, inner, request)
+        configured_decision = _decision_from_configured_rules(inspectable_segment, inner, request)
         if configured_decision is not None:
             configured_decision.command = outer_command
             if configured_decision.permission_mode == PermissionMode.blocked:
@@ -660,7 +735,10 @@ def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
         if _is_shell_command_flag(
             parsed.executable, normalized_argument, flags
         ) and index + 1 < len(parsed.arguments):
-            inner_command = _strip_matching_quotes(" ".join(parsed.arguments[index + 1 :]).strip())
+            inner_command = _raw_shell_argument_tail(parsed, index + 1)
+            if inner_command is None:
+                inner_command = " ".join(parsed.arguments[index + 1 :]).strip()
+            inner_command = _strip_matching_quotes(inner_command.strip())
             if inner_command:
                 if _inner_shell_command_needs_posix_reparse(inner_command):
                     reparsed_inner_command = _parse_inner_shell_command_with_posix(parsed, flags)
@@ -680,10 +758,25 @@ def _compact_inner_shell_command(
     for flag in SHELL_COMMAND_FLAGS[parsed.executable]:
         if normalized_argument.startswith(flag) and normalized_argument != flag:
             inline_inner = parsed.arguments[index].strip()[len(flag) :].strip()
-            remaining = " ".join(parsed.arguments[index + 1 :]).strip()
+            remaining = _raw_shell_argument_tail(parsed, index + 1)
+            if remaining is None:
+                remaining = " ".join(parsed.arguments[index + 1 :]).strip()
             inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
             return _strip_matching_quotes(inner_command) or None
     return None
+
+
+def _raw_shell_argument_tail(parsed: ParsedCommand, argument_index: int) -> str | None:
+    if not parsed.original_command:
+        return None
+    try:
+        parts = shlex.split(parsed.original_command, posix=False)
+    except ValueError:
+        return None
+    arguments = parts[1:]
+    if argument_index >= len(arguments):
+        return None
+    return " ".join(arguments[argument_index:]).strip()
 
 
 def _is_shell_command_flag(
@@ -785,15 +878,24 @@ def _normalize_shell_segment(segment: str) -> str:
     segment = segment.strip()
     while segment.startswith((". ", "& ")):
         segment = segment[1:].strip()
+    if segment in {"}", ")"}:
+        return ""
     while segment[:1] in {"{", "("}:
         segment = segment[1:].strip()
-    while segment[-1:] in {"}", ")"}:
-        segment = segment[:-1].strip()
     while len(segment) >= 2 and (
         (segment[0] == "{" and segment[-1] == "}") or (segment[0] == "(" and segment[-1] == ")")
     ):
         segment = segment[1:-1].strip()
     return segment
+
+
+def _strip_leading_shell_assignments(segment: str) -> str:
+    stripped = segment.strip()
+    while True:
+        updated = _LEADING_SHELL_ASSIGNMENT_RE.sub("", stripped, count=1).strip()
+        if updated == stripped:
+            return stripped
+        stripped = updated
 
 
 def _extract_shell_substitutions(command: str) -> list[str]:
@@ -1451,6 +1553,224 @@ def _command_targets_protected_data_dir(command: str) -> bool:
     return False
 
 
+def _resolve_policy_cwd(cwd: Path | None) -> Path | None:
+    root_dir = get_settings().root_dir.resolve()
+    candidate = cwd or root_dir
+    if not candidate.is_absolute():
+        candidate = root_dir / candidate
+    resolved = candidate.resolve()
+    if resolved != root_dir and root_dir not in resolved.parents:
+        return None
+    return resolved
+
+
+def _read_only_command_targets_outside_root(
+    parsed: ParsedCommand,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool = False,
+) -> bool:
+    if parsed.executable not in READ_ONLY_PATH_COMMANDS:
+        return False
+    for argument in parsed.arguments:
+        for candidate in _path_token_candidates(argument):
+            if _path_candidate_targets_outside_root(
+                candidate,
+                policy_cwd,
+                parsed.executable,
+                windows_command_context=windows_command_context,
+            ):
+                return True
+    return False
+
+
+def _path_candidate_targets_outside_root(
+    token: str,
+    policy_cwd: Path,
+    executable: str,
+    *,
+    windows_command_context: bool = False,
+) -> bool:
+    if not token or token in SHELL_APPROVAL_TOKENS or token in SHELL_CONTROL_OPERATORS:
+        return False
+    if _looks_like_command_option(
+        token,
+        executable,
+        windows_command_context=windows_command_context,
+    ):
+        return False
+    unescaped_token = _decode_cmd_caret_escapes(token)
+    normalized_token = unescaped_token.replace("\\", "/")
+    if "^" in token and any(character in unescaped_token for character in "*?["):
+        return True
+    if _contains_shell_variable_path(normalized_token):
+        return True
+    if normalized_token.startswith("~"):
+        return True
+    brace_expanded_candidates = _shell_brace_expansion_candidates(normalized_token)
+    if brace_expanded_candidates is None:
+        return True
+    if brace_expanded_candidates:
+        return any(
+            _path_candidate_targets_outside_root(
+                candidate,
+                policy_cwd,
+                executable,
+                windows_command_context=windows_command_context,
+            )
+            for candidate in brace_expanded_candidates
+        )
+    if _glob_candidate_targets_outside_root(normalized_token, policy_cwd):
+        return True
+    if _looks_like_windows_drive_relative_path(unescaped_token):
+        return True
+    if _looks_like_windows_absolute_path(unescaped_token):
+        return _windows_path_targets_outside_root(unescaped_token)
+    if not _looks_like_path_token(normalized_token) and not _looks_like_bare_path_operand(token):
+        return False
+    settings = get_settings()
+    root_dir = settings.root_dir.resolve()
+    candidate = Path(normalized_token)
+    if not candidate.is_absolute():
+        candidate = policy_cwd / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return True
+    return resolved != root_dir and root_dir not in resolved.parents
+
+
+def _looks_like_command_option(
+    token: str,
+    executable: str,
+    *,
+    windows_command_context: bool = False,
+) -> bool:
+    if token.startswith("-") and not token.startswith(("./", "../", "/")):
+        return True
+    return windows_command_context and _looks_like_windows_slash_option(token, executable)
+
+
+def _looks_like_windows_slash_option(token: str, executable: str) -> bool:
+    normalized = token.lower()
+    if executable == "type":
+        return normalized == "/?"
+    if executable != "dir":
+        return False
+    if normalized in {
+        "/?",
+        "/4",
+        "/b",
+        "/c",
+        "/-c",
+        "/d",
+        "/l",
+        "/n",
+        "/p",
+        "/q",
+        "/r",
+        "/s",
+        "/w",
+        "/x",
+    }:
+        return True
+    return bool(
+        re.fullmatch(r"/a(?::?-?[drhasilo]+)?", normalized)
+        or re.fullmatch(r"/o(?::?-?[nsedg]+)?", normalized)
+        or re.fullmatch(r"/t(?::?[caw])?", normalized)
+    )
+
+
+def _decode_cmd_caret_escapes(token: str) -> str:
+    return re.sub(r"\^(.)", r"\1", token)
+
+
+def _shell_brace_expansion_candidates(token: str) -> list[str] | None:
+    start = token.find("{")
+    if start == -1:
+        return []
+    end = token.find("}", start + 1)
+    if end == -1:
+        return None
+    payload = token[start + 1 : end]
+    if not payload or "{" in payload or "}" in payload:
+        return None
+    if "," not in payload:
+        return None if ".." in payload else []
+    prefix = token[:start]
+    suffix = token[end + 1 :]
+    return [f"{prefix}{alternative}{suffix}" for alternative in payload.split(",")]
+
+
+def _glob_candidate_targets_outside_root(token: str, policy_cwd: Path) -> bool:
+    if not any(character in token for character in "*?["):
+        return False
+    candidate = Path(token)
+    if not candidate.is_absolute():
+        candidate = policy_cwd / candidate
+    root_dir = get_settings().root_dir.resolve()
+    for match in glob.glob(str(candidate), recursive=False):
+        try:
+            resolved = Path(match).resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return True
+        if resolved != root_dir and root_dir not in resolved.parents:
+            return True
+    return False
+
+
+def _looks_like_windows_drive_relative_path(token: str) -> bool:
+    path = PureWindowsPath(token)
+    return bool(path.drive and not path.root)
+
+
+def _looks_like_windows_absolute_path(token: str) -> bool:
+    path = PureWindowsPath(token)
+    return bool(path.drive and path.root)
+
+
+def _windows_path_targets_outside_root(token: str) -> bool:
+    root_path = _collapse_windows_path(str(get_settings().root_dir.resolve()))
+    token_path = _collapse_windows_path(token)
+    if not root_path.drive:
+        return True
+    token_normalized = str(token_path).lower()
+    root_normalized = str(root_path).lower().rstrip("\\")
+    return token_normalized != root_normalized and not token_normalized.startswith(
+        root_normalized + "\\"
+    )
+
+
+def _collapse_windows_path(token: str) -> PureWindowsPath:
+    path = PureWindowsPath(token)
+    collapsed_parts: list[str] = []
+    for part in path.parts:
+        if part in {path.drive, path.root, path.anchor, "\\"}:
+            continue
+        if part == ".":
+            continue
+        if part == "..":
+            if collapsed_parts:
+                collapsed_parts.pop()
+            else:
+                collapsed_parts.append(part)
+            continue
+        collapsed_parts.append(part)
+    return PureWindowsPath(path.anchor, *collapsed_parts)
+
+
+def _contains_shell_variable_path(token: str) -> bool:
+    return bool(_SHELL_PATH_EXPANSION_RE.search(token) or _WINDOWS_PATH_EXPANSION_RE.search(token))
+
+
+def _looks_like_path_token(token: str) -> bool:
+    return token.startswith(("/", "./", "../", "~/")) or "/" in token or token in {".", ".."}
+
+
+def _looks_like_bare_path_operand(token: str) -> bool:
+    return bool(token)
+
+
 def _token_targets_path(
     token: str,
     protected_data_dir: PureWindowsPath,
@@ -1463,7 +1783,10 @@ def _token_targets_path(
 
 
 def _path_token_candidates(token: str) -> list[str]:
-    cleaned = _strip_matching_quotes(token.strip()).replace('"', "").replace("'", "")
+    stripped = _strip_matching_quotes(token.strip())
+    if _contains_shell_variable_path(stripped):
+        return [stripped]
+    cleaned = stripped.replace('"', "").replace("'", "")
     if not cleaned:
         return []
     candidates = [cleaned]

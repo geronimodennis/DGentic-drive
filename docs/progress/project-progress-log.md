@@ -2,6 +2,176 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+## 2026-05-10
+
+### Sprint 9 BL-002d CLI Supervision Metadata And Lifecycle Accuracy
+
+Status: completed for the scoped slice; final Reviewer, Security, and DevOps gates approved with residual risks recorded.
+
+Current story:
+- BL-002: CLI Streaming And Restart-Resilient Supervision.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because CLI runtime supervision, cancellation, approvals, and command policy boundaries are security-sensitive.
+- Completed: Developer updated production source only for asynchronous CLI launch intent persistence, supervisor metadata, timeout metadata, starting and failed lifecycle states, failed-launch persistence, async nonzero failed status, stale reason reporting, cancellation race guards, POSIX cancellation escalation, raw shell-wrapper tail preservation, and monotonic output chunk sequencing after retention trimming.
+- Completed: QA updated tests only for supervision metadata, failed launch persistence and redaction, approval binding on failed launch, timeout/output state, async nonzero failure status, orphan cancellation, stale reconciliation reasons, output cursor retention, starting/cancel race behavior, terminal finalization race behavior, SIGTERM-ignoring cancellation, quoted-space path operands, and API timeout/orphan cancellation behavior.
+- Completed: Reviewer, Security, and DevOps blocker sets were routed back through explicit Developer and QA lanes until all in-scope blockers were cleared.
+- Completed: PM updated README, architecture, backlog, and progress docs without modifying `docs/agentic-workflows`.
+
+Feature tracking:
+- Implemented in this slice: async CLI runs persist a `starting` launch-intent record before process spawn; successful spawns transition to `running` with `supervisor_id`, `supervisor_pid`, `timeout_at`, `last_heartbeat_at`, and `status_reason`; failed launches persist as `failed`; async nonzero exits finalize as `failed`; timeouts, cancellations, stale runs, and failed runs carry auditable status reasons; orphaned prior-supervisor runs can be marked stale on reconciliation or cancellation; same-supervisor starting/running finalization races fail closed instead of being incorrectly marked stale; output chunk sequence cursors remain monotonic after retention trimming.
+- Security-adjacent hardening handled during this slice: launch-failure `status_reason` is sanitized before persistence/log metadata, POSIX active cancellation escalates from `SIGTERM` to `SIGKILL`, and quoted path operands with spaces remain inspectable inside common shell wrappers before read-only rootDir boundary checks.
+- Still out of scope after this slice: true process adoption or safe termination after backend restart, production multi-worker lease semantics, corrupt JSON quarantine/repair tooling, OS sandboxing, and complete Windows/POSIX shell semantic parity.
+
+Validation:
+- Focused blocker regressions passed.
+- Targeted post-remediation gate: `python -m pytest -q tests/test_command_policy.py tests/test_cli_runtime.py tests/test_api.py` passed with 288 tests.
+- Final full gate: `python -m pytest -q` passed with 373 tests.
+- `python -m ruff check .` passed.
+- `python -m ruff format --check .` passed.
+- `git diff --check` passed.
+
+Review and security findings handled:
+- Remediated: cancelling a `starting` same-supervisor run could mark it stale, then launch completion could overwrite the terminal stale state.
+- Remediated: cancelling with a stale pre-registration run snapshot could overwrite registered process metadata.
+- Remediated: cancelling with no active process could stale an already-finalized run snapshot.
+- Remediated: quoted path operands with spaces could bypass read-only rootDir checks, including inside `cmd`, PowerShell, and `pwsh` wrappers.
+- Remediated: POSIX cancellation could report success before a SIGTERM-ignoring process was dead.
+- Remediated: failed launch `status_reason` could persist unredacted exception text.
+
+Residual risks:
+- Restart recovery remains stale-only; prior-supervisor OS processes are not adopted or killed by stored PID.
+- Production multi-worker process ownership needs a real lease/heartbeat strategy before scale-out deployment.
+- CLI execution is still policy/cwd-bound rather than sandboxed, so path TOCTOU races remain possible.
+- Corrupt JSON state can still require manual repair; quarantine/repair tooling remains a production persistence follow-up.
+- Untracked empty file `QA` remains in the workspace and should be intentionally removed or documented before release packaging.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/cli_runtime.py` and `src/dgentic/command_policy.py`.
+- QA-owned files: `tests/test_api.py`, `tests/test_cli_runtime.py`, and `tests/test_command_policy.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs were not modified in this BL-002d closeout pass.
+
+Next:
+- Keep Sprint 9 open for the remaining broader Windows/POSIX shell semantics validation and approval review UI contracts, or split production-grade process recovery and multi-worker supervision into a later persistence/DevOps hardening sprint.
+
+### PM Project Current-State Assessment
+
+Status: completed; PM assessed the docs, codebase, architecture, test health, and security posture, then recorded follow-up backlog detail for newly confirmed delivery risks.
+
+Checklist:
+- Completed: Reviewed the core project docs in `README.md`, `docs/DGentic-goal.md`, `docs/README.md`, `docs/planning/`, `docs/architecture/`, and `docs/progress/`.
+- Completed: Compared the documented current state against the backend source tree under `src/dgentic/` and test coverage under `tests/`.
+- Completed: Used focused agent assessments for architecture, codebase readiness, and security posture.
+- Completed: Ran validation in a temporary local environment because the current shell did not have `uv` or the dev modules preinstalled.
+- Completed: Updated the refined backlog with explicit cross-platform CLI, tool-execution, provider-network, and audit-identity follow-up items.
+
+Current-state summary:
+- DGentic is a real backend-first FastAPI MVP with strong CLI policy work, route capability auth, local provider integration, generated-tool/runtime contracts, metadata/tool registry persistence slices, and well-maintained planning/progress documentation.
+- The codebase is healthy enough to keep building on, but it is still firmly in MVP-hardening mode rather than production-ready mode.
+- The largest architecture gaps remain durable orchestration, unified persistence, external provider productionization, production memory lifecycle, UI surfaces, deployment/CI/CD, and operational observability.
+
+Validation:
+- Temporary environment setup under `/tmp/dgentic-assess` completed successfully.
+- `python -m pytest -q` in that temporary environment passed 291 tests and failed 2 tests.
+- `python -m ruff check .` passed.
+- `python -m ruff format --check .` passed.
+- The two failing tests are `tests/test_api.py` cases that expect `cmd /c ...` to execute successfully on this POSIX host, which confirms a current Sprint 9 cross-platform CLI execution gap rather than a broad backend regression.
+
+Security findings recorded:
+- CLI execution is currently `cwd`-bound, but file-path arguments are not yet constrained to `rootDir`, so the real host boundary is weaker than the docs imply.
+- Generated-tool execution still behaves more like guarded local Python execution than a hardened sandbox and still relies on a caller-supplied `approved` boolean.
+- Provider requests still need outbound network/domain policy, stricter endpoint control, and production-safe response/logging boundaries.
+- Approval and audit identity remain partially caller-supplied in some request flows instead of fully principal-bound.
+
+Role boundary:
+- PM-only planning/progress update. No production source or QA-owned tests were modified.
+
+Next:
+- Keep Sprint 9 focused on the CLI/runtime hardening gap that is already in flight.
+- After Sprint 9, prioritize persistence/audit unification plus tool/provider security hardening before expanding into UI or broader autonomous execution.
+
+### PM Workflow Tuning: Faster Dev-QA Pre-Review Loop
+
+Status: completed; workflow guidance now prefers a paired Dev-QA lane before review when source and tests both need updates.
+
+Checklist:
+- Completed: Updated autonomous-mode instructions to prefer an explicit same-run `Dev -> QA` lane before review.
+- Completed: Added governance guidance for pre-review formatting, local validation evidence, and bundled Dev-QA handoffs.
+- Completed: Updated Fast Path and Sprint Lifecycle workflow docs so the faster Dev-QA loop applies across lightweight and standard workflows.
+- Completed: Updated Developer and QA role docs with review-readiness and validation-evidence expectations.
+
+Why this change:
+- Review turnaround was slowed by avoidable pre-review churn between Developer, QA, and Reviewer.
+- Most of that churn belongs in the Dev-QA lane, especially formatting, targeted validation, and coverage clarification.
+- Making the first Reviewer pass wait for a review-ready Dev-QA bundle should reduce avoidable review failures without weakening role boundaries.
+
+Role boundary:
+- PM-only process documentation update. No production source or QA-owned test files were modified.
+
+Validation:
+- Documentation consistency review completed across `docs/agentic-workflows/Autonomous-mode.md`, `docs/agentic-workflows/governance/coordination-and-learning.md`, `docs/agentic-workflows/workflows/fast-path.md`, `docs/agentic-workflows/workflows/sprint-lifecycle.md`, `docs/agentic-workflows/roles/developer.md`, and `docs/agentic-workflows/roles/qa.md`.
+
+Next:
+- Use the paired Dev-QA lane by default when a story needs both source and test changes and the selected workflow mode still fits.
+
+### Sprint 9 CLI Runtime Boundary Hardening Slice
+
+Status: completed for the current slice; final Reviewer and Security gates approved with residual risks recorded.
+
+Current stories:
+- BL-002: CLI Streaming And Restart-Resilient Supervision.
+- BL-003: CLI Parsing And Approval Review UX Contracts.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because CLI command execution and rootDir boundaries are security-sensitive.
+- Completed: Developer updated production source only for POSIX `cmd /c` and `cmd.exe /c` execution parity, shared inner-shell parsing, cwd-aware policy evaluation, approval creation policy cwd binding, read-only path operand rootDir checks, shell expansion checks, tilde path checks, shell assignment prefix handling, Bash quoted path handling, brace expansion handling, glob/symlink checks, Windows env expansion checks, Windows caret escape checks, Windows drive-relative path checks, Windows absolute/backslash path handling, Windows absolute-path traversal normalization, and Windows slash-switch context handling.
+- Completed: QA updated tests only for POSIX wrapper execution, async wrapper execution, API blocking of out-of-root read-only paths, cwd-relative policy behavior, symlink escapes, shell-variable and parameter-expansion paths, tilde-user paths, shell assignment prefixes, Bash quoted paths, brace expansion, glob/symlink escapes, Windows/delayed-expansion paths, Windows env vars with parentheses, CMD caret escapes, Windows drive-relative paths, Windows absolute-path traversal, POSIX slash-switch context, configured-rule precedence, and cwd-aware approval creation.
+- Completed: Reviewer and Security blocker set was routed back through explicit Developer and QA role lanes.
+- Completed: PM updated README, architecture, backlog, and progress docs for the completed implementation slice without modifying `docs/agentic-workflows`.
+- Completed: Final Reviewer approved the remediated workspace.
+- Completed: Final Security spot-check approved the Windows absolute-path traversal fix.
+
+Feature tracking:
+- Implemented in this slice: policy-approved `cmd /c` and `cmd.exe /c` wrappers execute on POSIX through `sh -c`; command policy evaluation uses resolved cwd; approval creation evaluates policy with the requested cwd; built-in read-only commands block operands resolving or shell-expanding outside `rootDir`; shell assignments, Bash path quotes, brace expansion, globs, symlink escapes, Windows env expansion, CMD caret escapes, Windows drive-relative paths, Windows absolute/backslash path forms, and Windows absolute paths with `..` segments are handled conservatively; Windows slash switches are only allowed in a Windows command context.
+- Still partially implemented after this slice: full restart-resilient process supervision beyond stale marking, production multi-worker process ownership, broader Windows/POSIX shell semantics beyond the current hardened matrix, interactive approval UI contracts, and automated CI/pre-commit enforcement.
+
+Validation:
+- Focused post-remediation gate: `python -m pytest -q tests/test_command_policy.py tests/test_cli_runtime.py tests/test_api.py` passed with 265 tests.
+- Full post-remediation gate: `python -m pytest -q` passed with 350 tests when run with the validation environment on `PATH`.
+- `python -m ruff check .` passed.
+- `python -m ruff format --check .` passed.
+- `git diff --check` passed.
+- DevOps note: direct venv Python without the venv `bin` directory on `PATH` can fail tests that intentionally execute bare `python`; use `uv run` or an activated/known venv PATH for official validation.
+
+Review and security findings handled:
+- Remediated: shell parameter expansions such as `${HOME:-/tmp}`, `${VAR#prefix}`, and `${!VAR}` bypassed read-only path rootDir checks.
+- Remediated: tilde-user paths such as `~root/.ssh/config` bypassed read-only path rootDir checks.
+- Remediated: approval creation evaluated command policy before resolving/passing request cwd.
+- Remediated: Windows slash switches such as `dir /b` and `type /?` were treated as root paths.
+- Remediated: shell assignment prefixes such as `HOME=/tmp cat ...` bypassed the read-only path operand checker.
+- Remediated: Bash `$'...'` path words and brace-expanded path operands could synthesize outside-root paths.
+- Remediated: delayed Windows expansion modifiers, Windows variables with parentheses, and CMD caret escapes could hide outside-root paths or wildcard operands.
+- Remediated: Windows drive-relative paths such as `C:..\secret.txt` were previously treated as safe literals.
+- Remediated: Windows absolute paths containing traversal segments such as `C:\workspace\..\secret.txt` could pass raw-prefix checks before path normalization.
+- Remediated: shell glob operands could expand to symlinks that resolve outside `rootDir`.
+
+Residual risks:
+- Custom configured safe rules remain trusted-policy surface and should stay admin-controlled.
+- A normal filesystem time-of-check/time-of-use race remains possible if workspace paths are swapped between policy evaluation and subprocess start.
+- POSIX `cmd /c` translation is simple wrapper parity, not a full Windows CMD emulator.
+- Formatting is manually/process enforced through Ruff gates; repository-level CI/pre-commit enforcement remains future DevOps work.
+- Untracked empty file `QA` remains in the workspace and should be intentionally removed or documented before release packaging.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/cli_runtime.py`, `src/dgentic/command_policy.py`, and `src/dgentic/schemas.py`.
+- QA-owned files: `tests/test_api.py`, `tests/test_cli_runtime.py`, and `tests/test_command_policy.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs were not modified in this closeout pass.
+
+Next:
+- Leave Sprint 9 open only for the remaining restart-resilient supervision, broader shell semantics, Windows CI matrix confirmation, and approval UI contract work.
+
 ## 2026-05-08
 
 ### Sprint 9 Next Slice Planning: BL-003a

@@ -2,7 +2,7 @@
 
 DGentic is an advanced autonomous AI agent platform concept focused on local and external model orchestration, dynamic sub-agent spawning, guarded system access, persistent memory, reusable tools, and developer-facing interfaces.
 
-The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates with startup fail-closed validation, guardrail checks, guarded text file operations, guarded CLI execution with single-use bound approval IDs, asynchronous CLI runs with status polling, chunked output polling, cancellation, and stale-running reconciliation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, local JSON state persistence, and a migration-managed SQLAlchemy persistence baseline with SQLite backup/restore helpers for metadata and tool registry tables.
+The current repository contains the project specification, planning documents, and a backend MVP surface for orchestrator planning, deterministic execution runs, production/staging bearer-token capability gates with startup fail-closed validation, guardrail checks, guarded text file operations, guarded CLI execution with single-use bound approval IDs, cwd-aware rootDir command policy checks, read-only path operand boundary hardening, asynchronous CLI runs with status polling, chunked output polling, supervision metadata, auditable lifecycle states, cancellation, and stale-running reconciliation, configurable command policy rules with agent-role scoping, controlled and audited command environment overrides, local provider probes and generation calls, scored provider routing, agent lifecycle tracking, memory records, dynamically generated and executable local tools, tool governance, session summaries, event logs, local JSON state persistence, and a migration-managed SQLAlchemy persistence baseline with SQLite backup/restore helpers for metadata and tool registry tables.
 
 ## Documentation
 
@@ -90,7 +90,7 @@ The backend currently exposes:
 - `POST /guardrails/filesystem` and `POST /guardrails/commands` for policy checks.
 - `POST /filesystem/read` and `POST /filesystem/write` for policy-enforced UTF-8 text file operations inside `rootDir`.
 - `POST /cli/policy/rules`, `GET /cli/policy/rules`, and `PATCH /cli/policy/rules/{rule_id}` for persisted CLI allow, approval, and block rules with executable, exact-command, contains, argument-aware matching, and optional agent-role scoping.
-- `POST /cli/execute`, `POST /cli/runs`, `GET /cli/runs`, `GET /cli/runs/{run_id}`, `GET /cli/runs/{run_id}/output`, `POST /cli/runs/{run_id}/cancel`, `POST /cli/approvals`, `POST /cli/approvals/{approval_id}/approve`, `POST /cli/approvals/{approval_id}/deny`, and `POST /cli/approvals/{approval_id}/execute` for policy-enforced command execution, asynchronous command runs, status polling, chunked output polling, cancellation, single-use bound approval IDs, run history, agent/task context metadata, matched policy review metadata, and auditable environment override keys.
+- `POST /cli/execute`, `POST /cli/runs`, `GET /cli/runs`, `GET /cli/runs/{run_id}`, `GET /cli/runs/{run_id}/output`, `POST /cli/runs/{run_id}/cancel`, `POST /cli/approvals`, `POST /cli/approvals/{approval_id}/approve`, `POST /cli/approvals/{approval_id}/deny`, and `POST /cli/approvals/{approval_id}/execute` for policy-enforced command execution, asynchronous command runs, status polling, chunked output polling, cancellation, single-use bound approval IDs, run history, supervision metadata, timeout/status/stale reason fields, agent/task context metadata, matched policy review metadata, and auditable environment override keys.
 - `GET /providers`, `GET /providers/{provider_id}/health`, `POST /providers/generate`, and `POST /routing/decide` for Ollama/LM Studio probes, generation calls, and scored provider routing.
 - `POST /agents`, `GET /agents`, `GET /agents/{agent_id}`, `GET /agents/{agent_id}/children`, `PATCH /agents/{agent_id}/status`, and `POST /agents/reconcile` for sub-agent lifecycle contracts.
 - `POST /memory` and `POST /memory/search` for in-memory retrieval contracts.
@@ -129,7 +129,7 @@ Once implemented, DGentic should be used through one or more supported interface
 
 ## Current Status
 
-Status: backend MVP sprint surface active; Sprint 9 CLI runtime hardening is in progress.
+Status: backend MVP sprint surface active; Sprint 9 CLI runtime hardening is in progress with wrapper execution parity, read-only rootDir boundary hardening, and restart-resilient supervision metadata/lifecycle accuracy completed for the current slices.
 
 README status policy: keep this section updated after every sprint, release, or meaningful implementation change. Always list implemented features, partially implemented features, and features that are not yet implemented.
 
@@ -139,10 +139,10 @@ README status policy: keep this section updated after every sprint, release, or 
 - Deterministic task planning and execution run APIs with local JSON persistence.
 - Guardrail policy checks for filesystem and command access.
 - Guarded UTF-8 text file read/write operations inside `rootDir`.
-- Guarded CLI execution with approvals, single-use bound approval IDs for approval-required commands outside development/test mode, approval queue, approve/deny/execute endpoints, run history, output redaction/truncation, asynchronous status polling, chunked output polling, stale-running reconciliation, and process-local cancellation.
+- Guarded CLI execution with approvals, single-use bound approval IDs for approval-required commands outside development/test mode, cwd-aware rootDir policy evaluation, read-only path operand boundary checks, approval queue, approve/deny/execute endpoints, run history, output redaction/truncation, asynchronous status polling, chunked output polling, supervision metadata, starting/running/completed/failed/timed-out/cancelled/stale lifecycle tracking, stale-running reconciliation, and process-local cancellation.
 - Production/staging bearer-token authentication gate with route capability groups for tasks, filesystem, CLI, providers, agents, memory, tools, sessions, logs, and startup fail-closed validation when auth is enabled without tokens.
 - Persisted CLI command policy rules with executable, exact-command, contains, argument-aware, and agent-role scoped matching.
-- Shell-wrapper command inspection for common wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations.
+- Shell-wrapper command inspection for common wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations, plus POSIX host execution translation for policy-approved `cmd /c` and `cmd.exe /c` commands.
 - Controlled CLI command environment overrides with blocked sensitive runtime keys and audited environment key metadata.
 - Ollama and LM Studio health/model probes, local generation calls, and scored provider routing.
 - Sub-agent lifecycle tracking, parent-child relationships, status updates, and reconciliation contracts.
@@ -155,7 +155,7 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Partially Implemented
 
-- CLI integration: approvals, single-use bound approval IDs, policy rules, status polling, chunked output polling, stale-running reconciliation, cancellation, context-aware rules, matched policy review metadata, and environment controls exist; full restart-resilient process supervision, broader Windows/POSIX parsing validation, and approval/environment review UI remain.
+- CLI integration: approvals, single-use bound approval IDs, policy rules, status polling, chunked output polling, supervision metadata, stale-running reconciliation, cancellation, context-aware rules, matched policy review metadata, environment controls, POSIX execution parity for simple `cmd /c` wrappers, cwd-aware approval policy evaluation, and read-only path operand boundary checks exist; true process recovery/adoption after restart, production multi-worker supervision semantics, broader Windows/POSIX shell semantics validation, and approval/environment review UI remain.
 - Filesystem runtime: guarded UTF-8 text read/write exists; binary operations, deletes, moves, richer workflows, and stronger permission granularity remain.
 - Provider system: Ollama and LM Studio runtime calls exist; external provider adapters, secure credential storage, rate-limit handling, and streaming generation remain.
 - Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, deterministic semantic retrieval fallback, stored vector retrieval, and retrieval API tests exist; production vector backend, compression, performance validation, and long-term memory lifecycle management remain production follow-up work.

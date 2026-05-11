@@ -328,6 +328,16 @@ class OrchestrationCloseRequest(BaseModel):
     evidence: dict[str, str] = Field(default_factory=dict)
 
 
+class OrchestrationActionDecision(BaseModel):
+    allowed: bool
+    reason: str
+    run_id: str | None = None
+    task_id: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    violating_paths: list[str] = Field(default_factory=list)
+
+
 class OrchestrationRun(BaseModel):
     id: str
     objective: str
@@ -424,7 +434,13 @@ FileAction = Literal[
 ]
 
 
-class FileAccessRequest(BaseModel):
+class AgentActionContext(BaseModel):
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+
+
+class FileAccessRequest(AgentActionContext):
     path: Path
     action: FileAction
     target_path: Path | None = None
@@ -438,9 +454,10 @@ class FileAccessDecision(BaseModel):
     allowed: bool
     permission_mode: PermissionMode
     reason: str
+    orchestration: OrchestrationActionDecision | None = None
 
 
-class FileReadRequest(BaseModel):
+class FileReadRequest(AgentActionContext):
     path: Path
 
 
@@ -450,7 +467,7 @@ class FileReadResponse(BaseModel):
     bytes_read: int
 
 
-class FileWriteRequest(BaseModel):
+class FileWriteRequest(AgentActionContext):
     path: Path
     content: str
     create_parent_dirs: bool = True
@@ -461,7 +478,7 @@ class FileWriteResponse(BaseModel):
     bytes_written: int
 
 
-class FileBinaryReadRequest(BaseModel):
+class FileBinaryReadRequest(AgentActionContext):
     path: Path
 
 
@@ -471,13 +488,13 @@ class FileBinaryReadResponse(BaseModel):
     bytes_read: int
 
 
-class FileBinaryWriteRequest(BaseModel):
+class FileBinaryWriteRequest(AgentActionContext):
     path: Path
     content_base64: str
     create_parent_dirs: bool = True
 
 
-class FileDeleteRequest(BaseModel):
+class FileDeleteRequest(AgentActionContext):
     path: Path
     recursive: bool = False
     approved: bool = False
@@ -488,7 +505,7 @@ class FileDeleteResponse(BaseModel):
     deleted: bool
 
 
-class FileMoveRequest(BaseModel):
+class FileMoveRequest(AgentActionContext):
     path: Path
     target_path: Path
     overwrite: bool = False
@@ -501,7 +518,7 @@ class FileMoveResponse(BaseModel):
     moved: bool
 
 
-class FileCopyRequest(BaseModel):
+class FileCopyRequest(AgentActionContext):
     path: Path
     target_path: Path
     overwrite: bool = False
@@ -516,7 +533,7 @@ class FileCopyResponse(BaseModel):
     bytes_copied: int | None = None
 
 
-class FileRenameRequest(BaseModel):
+class FileRenameRequest(AgentActionContext):
     path: Path
     new_name: str
     overwrite: bool = False
@@ -537,7 +554,7 @@ class FileRenameResponse(BaseModel):
     renamed: bool
 
 
-class FileMetadataRequest(BaseModel):
+class FileMetadataRequest(AgentActionContext):
     path: Path
 
 
@@ -549,7 +566,7 @@ class FileMetadataResponse(BaseModel):
     is_symlink: bool = False
 
 
-class FileListRequest(BaseModel):
+class FileListRequest(AgentActionContext):
     path: Path = Field(default_factory=lambda: Path("."))
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dgentic.command_policy import evaluate_command_policy as evaluate_configured_command_policy
 from dgentic.events import event_log
+from dgentic.orchestration import authorize_filesystem_action
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandExecutionResult,
@@ -132,12 +133,81 @@ def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
         else:
             decision = _allowed_file_decision(request, resolved, None)
 
+    decision = _apply_orchestration_filesystem_binding(request, decision, root_dir)
     event_log.record(
         LogEventType.filesystem,
         "Evaluated filesystem access policy.",
         metadata=decision.model_dump(mode="json"),
     )
     return decision
+
+
+def _apply_orchestration_filesystem_binding(
+    request: FileAccessRequest,
+    decision: FileAccessDecision,
+    root_dir: Path,
+) -> FileAccessDecision:
+    if decision.permission_mode == PermissionMode.blocked or not _has_orchestration_context(
+        request
+    ):
+        return decision
+
+    orchestration_decision = authorize_filesystem_action(
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        action=request.action,
+        paths=_orchestration_write_paths(request, decision, root_dir),
+    )
+    if orchestration_decision.allowed:
+        return decision.model_copy(update={"orchestration": orchestration_decision})
+
+    return decision.model_copy(
+        update={
+            "allowed": False,
+            "permission_mode": PermissionMode.blocked,
+            "reason": orchestration_decision.reason,
+            "orchestration": orchestration_decision,
+        }
+    )
+
+
+def _has_orchestration_context(request: FileAccessRequest) -> bool:
+    return any([request.agent_id, request.agent_role, request.task_id])
+
+
+def _file_access_request(
+    request,
+    action: str,
+    target_path: Path | None = None,
+) -> FileAccessRequest:
+    return FileAccessRequest(
+        agent_id=getattr(request, "agent_id", None),
+        agent_role=getattr(request, "agent_role", None),
+        task_id=getattr(request, "task_id", None),
+        path=request.path,
+        action=action,
+        target_path=target_path,
+    )
+
+
+def _orchestration_write_paths(
+    request: FileAccessRequest,
+    decision: FileAccessDecision,
+    root_dir: Path,
+) -> list[str]:
+    if request.action in {"read", "binary_read", "metadata", "list"}:
+        return []
+    if request.action == "copy" and decision.resolved_target_path is not None:
+        return [_relative_repo_path(decision.resolved_target_path, root_dir)]
+    paths = [_relative_repo_path(decision.resolved_path, root_dir)]
+    if request.action in {"move", "rename"} and decision.resolved_target_path is not None:
+        paths.append(_relative_repo_path(decision.resolved_target_path, root_dir))
+    return paths
+
+
+def _relative_repo_path(path: Path, root_dir: Path) -> str:
+    return path.relative_to(root_dir).as_posix()
 
 
 def _allowed_file_decision(
@@ -230,7 +300,7 @@ def _copy_path(source: Path, target: Path, *, overwrite: bool, recursive: bool) 
 
 
 def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="read"))
+    decision = evaluate_file_access(_file_access_request(request, "read"))
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -253,7 +323,7 @@ def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
 
 
 def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="write"))
+    decision = evaluate_file_access(_file_access_request(request, "write"))
     _require_file_permission(decision)
     content_bytes = request.content.encode("utf-8")
     _ensure_payload_size(len(content_bytes))
@@ -274,7 +344,7 @@ def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
 
 
 def read_guarded_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="binary_read"))
+    decision = evaluate_file_access(_file_access_request(request, "binary_read"))
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -297,7 +367,7 @@ def read_guarded_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadRe
 
 
 def write_guarded_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="binary_write"))
+    decision = evaluate_file_access(_file_access_request(request, "binary_write"))
     _require_file_permission(decision)
     try:
         content = base64.b64decode(request.content_base64.encode("ascii"), validate=True)
@@ -317,7 +387,7 @@ def write_guarded_binary_file(request: FileBinaryWriteRequest) -> FileWriteRespo
 
 
 def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="delete"))
+    decision = evaluate_file_access(_file_access_request(request, "delete"))
     _require_file_permission(decision, approved=request.approved)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -342,9 +412,7 @@ def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
 
 
 def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
-    decision = evaluate_file_access(
-        FileAccessRequest(path=request.path, action="move", target_path=request.target_path)
-    )
+    decision = evaluate_file_access(_file_access_request(request, "move", request.target_path))
     _require_file_permission(decision, approved=request.approved)
     if decision.resolved_target_path is None:
         raise PermissionError("Move operation requires a target path.")
@@ -375,9 +443,7 @@ def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
 
 
 def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
-    decision = evaluate_file_access(
-        FileAccessRequest(path=request.path, action="copy", target_path=request.target_path)
-    )
+    decision = evaluate_file_access(_file_access_request(request, "copy", request.target_path))
     _require_file_permission(decision, approved=request.approved)
     if decision.resolved_target_path is None:
         raise PermissionError("Copy operation requires a target path.")
@@ -414,6 +480,9 @@ def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
 def rename_guarded_path(request: FileRenameRequest) -> FileRenameResponse:
     target_logical_path = request.path.parent / request.new_name
     move_request = FileMoveRequest(
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
         path=request.path,
         target_path=target_logical_path,
         overwrite=request.overwrite,
@@ -424,7 +493,7 @@ def rename_guarded_path(request: FileRenameRequest) -> FileRenameResponse:
 
 
 def get_guarded_path_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="metadata"))
+    decision = evaluate_file_access(_file_access_request(request, "metadata"))
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -438,7 +507,7 @@ def get_guarded_path_metadata(request: FileMetadataRequest) -> FileMetadataRespo
 
 
 def list_guarded_directory(request: FileListRequest) -> FileListResponse:
-    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="list"))
+    decision = evaluate_file_access(_file_access_request(request, "list"))
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))

@@ -11,6 +11,7 @@ from dgentic.schemas import (
     AgentStatus,
     AgentStatusUpdate,
     LogEventType,
+    OrchestrationActionDecision,
     OrchestrationBlocker,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
@@ -28,6 +29,14 @@ from dgentic.storage import JsonCollection
 MAX_READY_TASKS_PER_ADVANCE = 20
 TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
+WRITE_FILE_ACTIONS = {
+    "write",
+    "binary_write",
+    "delete",
+    "move",
+    "copy",
+    "rename",
+}
 
 
 class OrchestrationError(ValueError):
@@ -233,6 +242,54 @@ class OrchestrationService:
         )
         return self._persist(closed)
 
+    def authorize_filesystem_action(
+        self,
+        *,
+        agent_id: str | None,
+        agent_role: str | None,
+        task_id: str | None,
+        action: str,
+        paths: list[str],
+    ) -> OrchestrationActionDecision:
+        if not any([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=True,
+                reason="No orchestration context was supplied.",
+            )
+        if not all([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=False,
+                reason=(
+                    "Orchestration-bound filesystem actions require "
+                    "agent_id, agent_role, and task_id."
+                ),
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+
+        for run in self._runs.list():
+            if run.status in TERMINAL_RUN_STATUSES:
+                continue
+            for task in run.tasks:
+                if task.id != task_id or task.agent_id != agent_id:
+                    continue
+                return _authorize_task_filesystem_action(
+                    run,
+                    task,
+                    agent_role=agent_role or "",
+                    action=action,
+                    paths=paths,
+                )
+
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason="No running orchestration task matches the supplied agent context.",
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+        )
+
     def _require_run(
         self,
         run_id: str,
@@ -379,6 +436,99 @@ def _validate_task_update(
         raise OrchestrationError(
             f"Cannot update task {task.id} from {task.status}; only running tasks can be updated."
         )
+
+
+def _authorize_task_filesystem_action(
+    run: OrchestrationRun,
+    task: OrchestrationTask,
+    *,
+    agent_role: str,
+    action: str,
+    paths: list[str],
+) -> OrchestrationActionDecision:
+    if task.status != StepStatus.running:
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason=f"Task {task.id} is not running.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+        )
+    if _normalize_role(task.role) != _normalize_role(agent_role):
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason=f"Agent role {agent_role} does not match orchestration task role {task.role}.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=agent_role,
+        )
+
+    normalized_paths: list[str] = []
+    invalid_paths: list[str] = []
+    for path in paths:
+        try:
+            normalized_paths.append(_normalize_path(path))
+        except ValueError:
+            invalid_paths.append(path)
+    if invalid_paths:
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason="Filesystem action paths must be relative repository paths without traversal.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            violating_paths=invalid_paths,
+        )
+
+    if action not in WRITE_FILE_ACTIONS:
+        return OrchestrationActionDecision(
+            allowed=True,
+            reason="Read-only filesystem action is bound to a running orchestration task.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+        )
+
+    declared_paths = [_normalize_path(path) for path in task.declared_write_paths]
+    if not declared_paths:
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason=f"Task {task.id} declares no write paths for filesystem action {action}.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            violating_paths=normalized_paths,
+        )
+
+    violations = [
+        path
+        for path in normalized_paths
+        if not any(_path_matches(path, declared_path) for declared_path in declared_paths)
+    ]
+    if violations:
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason="Filesystem action path is outside the orchestration task declared write paths.",
+            run_id=run.id,
+            task_id=task.id,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            violating_paths=violations,
+        )
+
+    return OrchestrationActionDecision(
+        allowed=True,
+        reason="Filesystem write action is within the orchestration task declared write paths.",
+        run_id=run.id,
+        task_id=task.id,
+        agent_id=task.agent_id,
+        agent_role=task.role,
+    )
 
 
 def _role_boundary_decision(task: OrchestrationTask) -> RoleBoundaryDecision:
@@ -561,3 +711,20 @@ def _update_agent_for_task(agent_id: str, status: StepStatus, error: str | None)
 
 
 orchestration_service = OrchestrationService()
+
+
+def authorize_filesystem_action(
+    *,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    action: str,
+    paths: list[str],
+) -> OrchestrationActionDecision:
+    return orchestration_service.authorize_filesystem_action(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+        action=action,
+        paths=paths,
+    )

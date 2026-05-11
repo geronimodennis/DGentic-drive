@@ -429,6 +429,88 @@ def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) 
     get_settings.cache_clear()
 
 
+def test_api_filesystem_write_serializes_orchestration_decisions(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Bind filesystem writes to the scheduled QA task.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Write only declared QA test artifacts.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/generated-api-write.txt"],
+                    "validation": "Filesystem binding is enforced.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+    context = {
+        "agent_id": task["agent_id"],
+        "agent_role": task["role"],
+        "task_id": task["id"],
+    }
+
+    write_response = client.post(
+        "/filesystem/write",
+        json={
+            **context,
+            "path": "tests/generated-api-write.txt",
+            "content": "orchestration-bound write",
+        },
+    )
+    blocked_response = client.post(
+        "/filesystem/write",
+        json={
+            **context,
+            "path": "README.md",
+            "content": "outside declared write paths",
+        },
+    )
+    logs_response = client.get("/logs?event_type=filesystem")
+
+    assert create_response.status_code == 201
+    assert write_response.status_code == 200
+    assert write_response.json()["bytes_written"] == len("orchestration-bound write")
+    assert blocked_response.status_code == 403
+    assert (
+        "outside the orchestration task declared write paths" in blocked_response.json()["detail"]
+    )
+    assert logs_response.status_code == 200
+
+    policy_events = [
+        event
+        for event in logs_response.json()
+        if event["message"] == "Evaluated filesystem access policy."
+    ]
+    allowed_event = next(
+        event
+        for event in policy_events
+        if event["metadata"]["path"].replace("\\", "/") == "tests/generated-api-write.txt"
+    )
+    blocked_event = next(
+        event for event in policy_events if event["metadata"]["path"] == "README.md"
+    )
+
+    assert allowed_event["metadata"]["orchestration"] == {
+        "allowed": True,
+        "reason": "Filesystem write action is within the orchestration task declared write paths.",
+        "run_id": create_response.json()["id"],
+        "task_id": "qa-validation",
+        "agent_id": task["agent_id"],
+        "agent_role": "QA",
+        "violating_paths": [],
+    }
+    assert blocked_event["metadata"]["orchestration"]["allowed"] is False
+    assert blocked_event["metadata"]["orchestration"]["violating_paths"] == ["README.md"]
+    get_settings.cache_clear()
+
+
 def test_guarded_filesystem_binary_list_metadata_and_audit(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

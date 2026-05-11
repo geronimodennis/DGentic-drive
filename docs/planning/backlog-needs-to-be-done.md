@@ -366,7 +366,8 @@ Definition of Done:
 
 Current implementation status:
 - Completed: BL-008a backend orchestration control plane with persisted orchestration runs, DAG validation, dependency-aware scheduling into sub-agent briefs, machine-readable role-boundary decisions with canonical declared-path validation, blocker and follow-up records, retry escalation, bounded scheduling passes, API lifecycle endpoints under `/tasks/orchestrations`, closed-run mutation rejection, and DoD evidence gating before run closeout.
-- Remaining: real autonomous execution loop beyond scheduling briefs, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, runtime binding between orchestration roles and filesystem/CLI/tool actions, production multi-agent scheduling/lease semantics, richer blocked-run recovery, and UI/operations surfacing for orchestration runs.
+- Completed: BL-008b orchestration-bound filesystem action checks, including optional agent context compatibility, fail-closed partial/mismatched context, declared write-path enforcement for writes, read-only action allowance for running bound tasks, and serialized orchestration decisions in filesystem policy audit metadata.
+- Remaining: real autonomous execution loop beyond scheduling briefs, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, runtime binding for CLI/tool actions, production multi-agent scheduling/lease semantics, richer blocked-run recovery, and UI/operations surfacing for orchestration runs.
 
 ### BL-009: Production Identity, Secret Management, And Network Guardrails
 
@@ -643,8 +644,8 @@ Exit criteria:
 
 Current Sprint 14 status:
 - Active: BL-008a implements the backend orchestration control plane foundation.
-- Completed: task graph creation/list/get/advance/update/close contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, and DoD evidence close gates.
-- Remaining before Sprint 14 can close: autonomous execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, runtime binding for role-scoped actions, blocked-run recovery, and production scheduling hardening.
+- Completed: task graph creation/list/get/advance/update/close contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, orchestration-bound filesystem write checks, and DoD evidence close gates.
+- Remaining before Sprint 14 can close: autonomous execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, runtime binding for CLI/tool actions, blocked-run recovery, and production scheduling hardening.
 
 ### Sprint 15: Production Identity, Secrets, And Network Guardrails
 

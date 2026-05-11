@@ -184,6 +184,117 @@ def test_orchestration_rejects_unknown_roles_even_when_read_only(
     assert "Unsupported orchestration role" in run.role_boundary_decisions[0].reason
 
 
+def test_orchestration_filesystem_context_is_optional_and_bounds_declared_writes(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Authorize filesystem writes for the assigned QA task only.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+
+    no_context = service.authorize_filesystem_action(
+        agent_id=None,
+        agent_role=None,
+        task_id=None,
+        action="write",
+        paths=["src/dgentic/orchestration.py"],
+    )
+    declared_write = service.authorize_filesystem_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+        action="write",
+        paths=["tests/test_orchestration.py"],
+    )
+    outside_write = service.authorize_filesystem_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+        action="write",
+        paths=["tests/test_api.py"],
+    )
+
+    assert no_context.allowed is True
+    assert no_context.reason == "No orchestration context was supplied."
+    assert declared_write.allowed is True
+    assert declared_write.run_id == run.id
+    assert declared_write.agent_id == task.agent_id
+    assert outside_write.allowed is False
+    assert outside_write.violating_paths == ["tests/test_api.py"]
+    assert "outside the orchestration task declared write paths" in outside_write.reason
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "agent_role", "task_id", "reason"),
+    [
+        ("agent-only", None, None, "require agent_id, agent_role, and task_id"),
+        (None, "QA", None, "require agent_id, agent_role, and task_id"),
+        (None, None, "qa-validation", "require agent_id, agent_role, and task_id"),
+        ("wrong-agent", "QA", "qa-validation", "No running orchestration task matches"),
+        ("agent-from-task", "Developer", "qa-validation", "does not match orchestration task role"),
+        ("agent-from-task", "QA", "wrong-task", "No running orchestration task matches"),
+    ],
+)
+def test_orchestration_filesystem_binding_blocks_partial_or_mismatched_context(
+    orchestration_state,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    reason: str,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject incomplete or mismatched filesystem ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    bound_agent_id = task.agent_id if agent_id == "agent-from-task" else agent_id
+
+    decision = service.authorize_filesystem_action(
+        agent_id=bound_agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+        action="write",
+        paths=["tests/test_orchestration.py"],
+    )
+
+    assert decision.allowed is False
+    assert reason in decision.reason
+
+
+def test_orchestration_filesystem_allows_read_only_action_for_running_bound_task(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Allow read-only filesystem access for a running reviewer task.",
+            tasks=[_task("review-readonly", role="Reviewer")],
+        )
+    )
+    task = _task_by_id(run, "review-readonly")
+
+    decision = service.authorize_filesystem_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+        action="read",
+        paths=["src/dgentic/orchestration.py"],
+    )
+
+    assert decision.allowed is True
+    assert decision.run_id == run.id
+    assert (
+        decision.reason == "Read-only filesystem action is bound to a running orchestration task."
+    )
+
+
 def test_orchestration_retry_exhaustion_creates_blocker_and_follow_up(
     orchestration_state,
 ) -> None:

@@ -71,12 +71,12 @@ Current modules:
 - `api/routes.py`: HTTP routes for health checks, tasks, orchestration runs, guardrails, CLI policy and approvals, provider approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
-- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling, retry escalation, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, and DoD evidence close gates.
+- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling, orchestration-bound filesystem action authorization, retry escalation, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, and DoD evidence close gates.
 - `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, executable, exact-command, contains, and argument-aware command matching, shell-wrapper inspection, cwd-aware evaluation, and read-only path operand rootDir boundary checks.
 - `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, POSIX translation for policy-approved `cmd /c` and `cmd.exe /c` wrappers, chunked output polling, supervision metadata, auditable lifecycle states, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
-- `guardrails.py`: Filesystem policy evaluation plus guarded text, binary, directory, metadata, delete, move, copy, rename, and command execution compatibility wrappers.
+- `guardrails.py`: Filesystem policy evaluation plus guarded text, binary, directory, metadata, delete, move, copy, rename, orchestration-bound filesystem action checks when agent context is supplied, and command execution compatibility wrappers.
 - `provider_policy.py`: Shared provider endpoint policy, exact base URL normalization, allowlist validation, and redirect-blocking HTTP opener.
 - `provider_pricing.py`: Bounded provider/model pricing catalog parser and advisory usage/request cost estimation helpers.
 - `provider_routing.py`: Bounded role-to-provider/model routing catalog parser for explicit role-specific routing preferences.
@@ -98,7 +98,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, orchestration scheduling and role-boundary enforcement, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval attribution and inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, orchestration scheduling, role-boundary enforcement, orchestration-bound filesystem action checks, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval attribution and inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -171,6 +171,7 @@ Current endpoints:
 - `POST /filesystem/move`: Moves a file or directory after destructive-operation approval.
 - `POST /filesystem/copy`: Copies a file or directory after destructive-operation approval.
 - `POST /filesystem/rename`: Renames a file or directory after destructive-operation approval.
+- Filesystem request bodies may include `agent_id`, `agent_role`, and `task_id`; when supplied together, write actions are also checked against the matching running orchestration task and its declared write paths, while omitted context preserves the existing non-orchestrated behavior.
 - `POST /guardrails/commands`: Classifies CLI command risk, optionally using agent role, agent id, and task id context.
 - `POST /cli/policy/rules`: Creates a persisted CLI policy rule, optionally scoped to one or more agent roles.
 - `GET /cli/policy/rules`: Lists persisted CLI policy rules in evaluation order.

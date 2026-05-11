@@ -4,6 +4,48 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008b Orchestration-Bound Filesystem Actions
+
+Status: completed for the scoped filesystem runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, CLI/tool action binding, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected filesystem action binding as the next smallest useful Sprint 14 slice after the backend orchestration control plane.
+- Completed: Developer updated production source only for filesystem request context fields, orchestration action decisions, filesystem policy integration, and task declared-path authorization.
+- Completed: QA updated tests only for backward-compatible omitted context, partial/mismatched context fail-closed behavior, declared write-path enforcement, read-only bound task allowance, and API log serialization.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: filesystem requests can optionally include `agent_id`, `agent_role`, and `task_id`.
+- Implemented in this slice: omitted orchestration context preserves existing filesystem behavior.
+- Implemented in this slice: partial or mismatched orchestration context blocks filesystem actions.
+- Implemented in this slice: write, binary-write, delete, move, copy, and rename actions must target the running task's declared write paths when orchestration context is supplied.
+- Implemented in this slice: read-only actions are allowed for a matching running bound task.
+- Implemented in this slice: filesystem policy audit metadata serializes the orchestration action decision.
+
+Remaining Sprint 14 work:
+- Add a real autonomous execution loop beyond scheduling briefs.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Add runtime binding for CLI and tool actions.
+- Add richer blocked-run recovery or reassignment semantics.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused filesystem-binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "orchestration or orchestration_api or filesystem"` passed with 33 tests and 103 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\schemas.py src\dgentic\guardrails.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\schemas.py src\dgentic\guardrails.py tests\test_orchestration.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 695 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+- Whitespace gate: `git diff --check` passed with only LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 14 with CLI/tool runtime action binding or the event-driven autonomous execution loop, depending on risk review.
+
 ### Sprint 14 BL-008a Backend Orchestration Control Plane
 
 Status: completed for the first autonomous-agent orchestration foundation slice; Sprint 14 remains active for end-to-end autonomous execution and automatic project-document updates.

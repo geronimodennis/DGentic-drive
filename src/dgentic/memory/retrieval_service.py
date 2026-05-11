@@ -38,6 +38,7 @@ class RetrievalService:
         results: list[RetrievalResult] = []
         for metadata in metadata_items:
             stored_embedding = self.vector_backend.get_embedding_values(metadata.id)
+            used_stored_embedding = stored_embedding is not None
             candidate_embedding = (
                 stored_embedding
                 if stored_embedding is not None
@@ -62,6 +63,20 @@ class RetrievalService:
                     metadata_relevance=round(metadata_relevance, 3),
                     combined_score=round(combined_score, 3),
                     source="hybrid_retrieval",
+                    source_type=(
+                        "stored_vector" if used_stored_embedding else "metadata_text_fallback"
+                    ),
+                    source_id=metadata.id,
+                    matched_fields=self._matched_fields(
+                        metadata,
+                        request,
+                        used_stored_embedding,
+                    ),
+                    score_reasons=self._hybrid_score_reasons(
+                        similarity_score,
+                        metadata_relevance,
+                        used_stored_embedding,
+                    ),
                 )
             )
 
@@ -98,6 +113,14 @@ class RetrievalService:
                     metadata_relevance=1.0,
                     combined_score=round(match.similarity_score, 3),
                     source="vector_search",
+                    source_type="stored_vector",
+                    source_id=metadata.id,
+                    matched_fields=["stored_embedding"],
+                    score_reasons=[
+                        f"similarity={round(match.similarity_score, 3)}",
+                        "metadata_relevance=1.0",
+                        "combined_score=similarity",
+                    ],
                 )
             )
             if len(results) >= limit:
@@ -148,6 +171,13 @@ class RetrievalService:
                 metadata_relevance=metadata.relevance_score,
                 combined_score=metadata.relevance_score,
                 source="metadata_filter",
+                source_type="metadata_filter",
+                source_id=metadata.id,
+                matched_fields=self._metadata_search_matched_fields(metadata, category, tags),
+                score_reasons=[
+                    f"metadata_relevance={round(metadata.relevance_score, 3)}",
+                    "combined_score=metadata_relevance",
+                ],
             )
             for metadata in metadata_items[:limit]
         ]
@@ -197,6 +227,66 @@ class RetrievalService:
         if metadata.access_count > 10:
             score *= 1.1
         return min(score, 1.0)
+
+    def _matched_fields(
+        self,
+        metadata: MemoryMetadata,
+        request: HybridRetrievalRequest,
+        used_stored_embedding: bool,
+    ) -> list[str]:
+        fields: list[str] = []
+        if used_stored_embedding:
+            fields.append("stored_embedding")
+        else:
+            fields.append("metadata_text")
+        if request.entity_types and metadata.entity_type in request.entity_types:
+            fields.append("entity_type")
+        if request.tags and set(request.tags).intersection(metadata.tags or []):
+            fields.append("tags")
+        if request.metadata_filters:
+            if (
+                "category" in request.metadata_filters
+                and metadata.category == request.metadata_filters["category"]
+            ):
+                fields.append("category")
+            if (
+                "retention_policy" in request.metadata_filters
+                and metadata.retention_policy == request.metadata_filters["retention_policy"]
+            ):
+                fields.append("retention_policy")
+            if (
+                "lifecycle_state" in request.metadata_filters
+                and metadata.lifecycle_state == request.metadata_filters["lifecycle_state"]
+            ):
+                fields.append("lifecycle_state")
+        return fields
+
+    def _metadata_search_matched_fields(
+        self,
+        metadata: MemoryMetadata,
+        category: str | None,
+        tags: list[str] | None,
+    ) -> list[str]:
+        fields = ["metadata"]
+        if category and metadata.category == category:
+            fields.append("category")
+        if tags and set(tags).intersection(metadata.tags or []):
+            fields.append("tags")
+        return fields
+
+    def _hybrid_score_reasons(
+        self,
+        similarity_score: float,
+        metadata_relevance: float,
+        used_stored_embedding: bool,
+    ) -> list[str]:
+        embedding_source = "stored_vector" if used_stored_embedding else "metadata_text_fallback"
+        return [
+            f"similarity={round(similarity_score, 3)}",
+            f"metadata_relevance={round(metadata_relevance, 3)}",
+            "combined_score=(similarity*0.7)+(metadata_relevance*0.3)",
+            f"embedding_source={embedding_source}",
+        ]
 
     def _metadata_text(self, metadata: MemoryMetadata) -> str:
         parts = [

@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 13 BL-007d Retrieval Attribution And Score Reasons
+
+Status: completed for the scoped additive retrieval attribution slice; Sprint 13 remains active for pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, deeper provenance, and configurable scoring policy.
+
+Current story:
+- BL-007: Memory And Retrieval Production Lifecycle.
+
+Checklist:
+- Completed: PM/Architect selected retrieval attribution as the next smallest safe slice after compression, deferring pgvector and scheduling because those need broader infrastructure decisions.
+- Completed: Developer updated production source only for additive retrieval result fields and deterministic attribution/score reason generation while preserving existing score formulas and result ordering.
+- Completed: QA updated tests only for hybrid metadata-text fallback attribution, hybrid stored-vector attribution, vector attribution, metadata-only attribution, inactive retrieval preservation, and API serialization.
+- Completed: PM updated README, backlog, usage docs, setup docs, memory architecture, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: retrieval results now include `source_type`, `source_id`, `matched_fields`, and `score_reasons`.
+- Implemented in this slice: hybrid retrieval identifies stored-vector versus metadata-text fallback matches and records filter fields that contributed.
+- Implemented in this slice: vector and metadata-only retrieval include deterministic source ids and score reason strings.
+- Preserved in this slice: `similarity_score`, `metadata_relevance`, `combined_score`, `source`, ranking formulas, inactive exclusion defaults, and response compatibility.
+
+Validation:
+- Focused attribution gate: `uv --cache-dir .uv-cache run pytest -q tests\test_retrieval_service.py tests\test_api.py -k "retrieval or metadata_attribution or attribution"` passed with 10 tests and 108 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\memory\retrieval_service.py src\dgentic\memory\schemas.py tests\test_retrieval_service.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\memory\retrieval_service.py src\dgentic\memory\schemas.py tests\test_retrieval_service.py tests\test_api.py` passed with 4 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 668 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 55 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 13 with either a safe pgvector integration plan or a scheduled lifecycle/compression execution slice, depending on PM/Architect risk review.
+
 ### Sprint 13 BL-007c Deterministic Memory Compression
 
 Status: completed for the scoped deterministic metadata-description compression slice; Sprint 13 remains active for pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, and source-attribution/scoring improvements.

@@ -96,7 +96,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval attribution and inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 

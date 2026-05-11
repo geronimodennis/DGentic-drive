@@ -1891,6 +1891,9 @@ def test_hybrid_retrieval_api_uses_default_hash_embedding(tmp_path, monkeypatch)
     assert body["total"] == 1
     assert body["results"][0]["entity_id"] == "semantic-memory"
     assert body["results"][0]["source"] == "hybrid_retrieval"
+    assert body["results"][0]["source_type"] == "metadata_text_fallback"
+    assert set(body["results"][0]["matched_fields"]) >= {"metadata_text", "tags"}
+    assert "embedding_source=metadata_text_fallback" in body["results"][0]["score_reasons"]
     get_settings.cache_clear()
 
 

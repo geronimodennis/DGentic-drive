@@ -75,6 +75,9 @@ def test_hybrid_search_scores_metadata_text_without_stored_embedding(db_session:
     assert len(results) == 1
     assert results[0].entity_id == "semantic-memory"
     assert results[0].source == "hybrid_retrieval"
+    assert results[0].source_type == "metadata_text_fallback"
+    assert set(results[0].matched_fields) >= {"metadata_text", "tags"}
+    assert "embedding_source=metadata_text_fallback" in results[0].score_reasons
     assert results[0].combined_score > 0
 
 
@@ -110,6 +113,10 @@ def test_vector_search_uses_stored_embeddings(db_session: Session) -> None:
     assert results
     assert results[0].entity_id == "semantic-memory"
     assert results[0].source == "vector_search"
+    assert results[0].source_type == "stored_vector"
+    assert results[0].source_id == str(semantic.id)
+    assert results[0].matched_fields == ["stored_embedding"]
+    assert "combined_score=similarity" in results[0].score_reasons
 
 
 def test_retrieval_excludes_inactive_metadata_by_default(db_session: Session) -> None:
@@ -218,6 +225,90 @@ def test_vector_and_hybrid_retrieval_include_inactive_only_when_requested(
         "active-vector",
         "archived-vector",
     }
+
+
+def test_hybrid_search_attribution_distinguishes_stored_and_fallback_embeddings(
+    db_session: Session,
+) -> None:
+    metadata_service = MetadataService(db_session)
+    embedding_service = EmbeddingService(db_session)
+    retrieval_service = RetrievalService(db_session, embedding_service)
+
+    stored = metadata_service.create(
+        MetadataCreateRequest(
+            entity_type="memory",
+            entity_id="stored-attribution",
+            tags=["attribution"],
+            category="retrieval",
+            description="Stored vector attribution retrieval.",
+        )
+    )
+    metadata_service.create(
+        MetadataCreateRequest(
+            entity_type="memory",
+            entity_id="fallback-attribution",
+            tags=["attribution"],
+            category="retrieval",
+            description="Fallback metadata text attribution retrieval.",
+        )
+    )
+    embedding_service.embed_and_store(stored.id, stored.description)
+
+    results, _ = retrieval_service.hybrid_search(
+        HybridRetrievalRequest(
+            query="attribution retrieval",
+            tags=["attribution"],
+            metadata_filters={"category": "retrieval"},
+            similarity_threshold=0.0,
+        )
+    )
+    results_by_id = {result.entity_id: result for result in results}
+
+    assert results_by_id["stored-attribution"].source_type == "stored_vector"
+    assert set(results_by_id["stored-attribution"].matched_fields) >= {
+        "stored_embedding",
+        "tags",
+        "category",
+    }
+    assert "embedding_source=stored_vector" in results_by_id["stored-attribution"].score_reasons
+    assert results_by_id["fallback-attribution"].source_type == "metadata_text_fallback"
+    assert set(results_by_id["fallback-attribution"].matched_fields) >= {
+        "metadata_text",
+        "tags",
+        "category",
+    }
+    assert (
+        "embedding_source=metadata_text_fallback"
+        in results_by_id["fallback-attribution"].score_reasons
+    )
+
+
+def test_metadata_search_includes_filter_attribution(db_session: Session) -> None:
+    metadata = MetadataService(db_session).create(
+        MetadataCreateRequest(
+            entity_type="memory",
+            entity_id="metadata-attribution",
+            tags=["attribution"],
+            category="retrieval",
+            description="Metadata attribution.",
+            relevance_score=0.7,
+        )
+    )
+    retrieval_service = RetrievalService(db_session, EmbeddingService(db_session))
+
+    results, _ = retrieval_service.metadata_search(
+        tags=["attribution"],
+        category="retrieval",
+    )
+
+    assert str(results[0].metadata_id) == metadata.id
+    assert results[0].source_type == "metadata_filter"
+    assert results[0].source_id == str(metadata.id)
+    assert results[0].matched_fields == ["metadata", "category", "tags"]
+    assert results[0].score_reasons == [
+        "metadata_relevance=0.7",
+        "combined_score=metadata_relevance",
+    ]
 
 
 def test_vector_search_uses_configured_backend(db_session: Session) -> None:

@@ -325,7 +325,8 @@ Current implementation status:
 - Completed: BL-007a adds additive lifecycle metadata fields, a migration ledger entry, deterministic lifecycle preview/apply APIs, retention-aware promote/archive/soft-prune decisions, advisory compression-candidate detection, default retrieval exclusion for archived/soft-pruned records, and explicit `include_inactive` opt-in retrieval.
 - Completed: BL-007b adds a vector backend contract, keeps the current SQLite/JSON vector backend as the default implementation, routes vector retrieval through the backend boundary, and adds a deterministic baseline retrieval performance smoke test.
 - Completed: BL-007c adds deterministic metadata-description compression preview/apply APIs, threshold-based compression execution, lifecycle audit updates, `last_compacted_at`, and stored-embedding reindexing after compression.
-- Remaining: pgvector production backend integration, scheduled lifecycle/compression jobs, full-content or LLM summarization beyond metadata descriptions, broader retrieval performance validation, source attribution, and scoring improvements.
+- Completed: BL-007d adds additive retrieval attribution fields and deterministic score reasons for hybrid, vector, and metadata-only retrieval without changing existing ranking formulas.
+- Remaining: pgvector production backend integration, scheduled lifecycle/compression jobs, full-content or LLM summarization beyond metadata descriptions, broader retrieval performance validation, deeper provenance, and configurable scoring policy.
 
 Acceptance criteria:
 - Retrieval works against the selected production vector backend.
@@ -617,7 +618,8 @@ Current Sprint 13 status:
 - Active: BL-007a SQL-backed lifecycle policy foundation is implemented and validated.
 - Active: BL-007b vector backend abstraction and baseline retrieval performance smoke are implemented and validated.
 - Active: BL-007c deterministic metadata compression execution is implemented and validated.
-- Remaining: pgvector production backend integration, scheduled lifecycle/compression runs, full-content or LLM summarization, broader performance validation, and source-attribution/scoring improvements.
+- Active: BL-007d retrieval attribution and score-reason explanations are implemented and validated.
+- Remaining: pgvector production backend integration, scheduled lifecycle/compression runs, full-content or LLM summarization, broader performance validation, deeper provenance, and configurable scoring policy.
 
 ### Sprint 14: Autonomous Agent Orchestration
 

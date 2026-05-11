@@ -201,7 +201,16 @@ Response (200):
       "similarity_score": 0.92,
       "metadata_relevance": 0.85,
       "combined_score": 0.89,
-      "source": "hybrid_retrieval"
+      "source": "hybrid_retrieval",
+      "source_type": "stored_vector",
+      "source_id": "meta-uuid",
+      "matched_fields": ["stored_embedding", "tags", "category"],
+      "score_reasons": [
+        "similarity=0.92",
+        "metadata_relevance=0.85",
+        "combined_score=(similarity*0.7)+(metadata_relevance*0.3)",
+        "embedding_source=stored_vector"
+      ]
     }
   ],
   "total": 1,
@@ -501,6 +510,8 @@ dgentic/
 **Story 6.1:** ✓ Metadata schema defined | ✓ Database backend selected | ✓ API contracts defined
 
 **Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | ✓ Vector backend abstraction implemented | ✓ Deterministic metadata compression implemented | Full-content summarization remains future work
+
+**Sprint 13 attribution:** ✓ Retrieval results include additive `source_type`, `source_id`, `matched_fields`, and `score_reasons` fields for hybrid, vector, and metadata-only retrieval. Existing score fields and ranking formulas remain backward-compatible.
 
 **Story 7.1:** ✓ Tool manifest schema defined | ✓ API contracts defined | ✓ Duplicate detection endpoint
 

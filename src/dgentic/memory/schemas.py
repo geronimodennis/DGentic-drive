@@ -169,6 +169,10 @@ class RetrievalResult(BaseModel):
     metadata_relevance: float
     combined_score: float
     source: str
+    source_type: str | None = None
+    source_id: str | None = None
+    matched_fields: list[str] = Field(default_factory=list)
+    score_reasons: list[str] = Field(default_factory=list)
 
 
 class HybridRetrievalResponse(BaseModel):

@@ -1893,6 +1893,65 @@ def test_hybrid_retrieval_api_uses_default_hash_embedding(tmp_path, monkeypatch)
     get_settings.cache_clear()
 
 
+def test_memory_lifecycle_api_previews_applies_and_excludes_inactive(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "stale-memory",
+            "tags": ["lifecycle"],
+            "category": "retrieval",
+            "description": "Lifecycle-managed metadata retrieval candidate.",
+            "relevance_score": 0.3,
+        },
+    )
+    preview_response = client.post(
+        "/api/v1/memory/lifecycle/preview",
+        json={"reference_time": "2027-01-01T00:00:00+00:00"},
+    )
+    apply_response = client.post(
+        "/api/v1/memory/lifecycle/apply",
+        json={"reference_time": "2027-01-01T00:00:00+00:00"},
+    )
+    default_retrieval_response = client.post(
+        "/api/v1/memory/retrieve/hybrid",
+        json={
+            "query": "lifecycle managed metadata retrieval candidate",
+            "metadata_filters": {"category": "retrieval"},
+            "similarity_threshold": 0.0,
+        },
+    )
+    inactive_retrieval_response = client.post(
+        "/api/v1/memory/retrieve/hybrid",
+        json={
+            "query": "lifecycle managed metadata retrieval candidate",
+            "metadata_filters": {"category": "retrieval"},
+            "similarity_threshold": 0.0,
+            "include_inactive": True,
+        },
+    )
+    archived_list_response = client.get("/api/v1/memory/metadata?lifecycle_state=archived")
+
+    assert create_response.status_code == 201
+    assert preview_response.status_code == 200
+    assert preview_response.json()["applied"] is False
+    assert preview_response.json()["decisions"][0]["recommended_action"] == "archive"
+    assert apply_response.status_code == 200
+    assert apply_response.json()["applied"] is True
+    assert apply_response.json()["decisions"][0]["recommended_action"] == "archive"
+    assert default_retrieval_response.status_code == 200
+    assert default_retrieval_response.json()["total"] == 0
+    assert inactive_retrieval_response.status_code == 200
+    assert inactive_retrieval_response.json()["total"] == 1
+    assert inactive_retrieval_response.json()["results"][0]["entity_id"] == "stale-memory"
+    assert archived_list_response.status_code == 200
+    assert archived_list_response.json()["total"] == 1
+
+
 def test_tool_registry_api_duplicate_usage_and_deprecation(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

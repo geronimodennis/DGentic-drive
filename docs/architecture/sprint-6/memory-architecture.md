@@ -30,6 +30,14 @@ metadata {
   retention_policy: "permanent" | "automatic" | "manual" (enum)
   owner_agent: string (optional)
   indexed: boolean
+  lifecycle_state: "active" | "promoted" | "archived" | "soft_pruned"
+  lifecycle_reason: string (optional)
+  lifecycle_updated_at: datetime (optional)
+  archived_at: datetime (optional)
+  pruned_at: datetime (optional)
+  expires_at: datetime (optional)
+  freshness_score: float (0-1)
+  last_compacted_at: datetime (optional)
 }
 ```
 
@@ -217,6 +225,45 @@ Request:
 GET /api/v1/memory/retrieve/metadata?category=retrieval&tags=indexing&limit=20
 Response: List of metadata without vector scoring
 ```
+
+### Sprint 13: Memory Lifecycle Policy
+
+**Base Path:** `/api/v1/memory/lifecycle`
+
+The lifecycle service is SQL-backed and deterministic. It can preview or apply lifecycle decisions for metadata records using age, retention policy, expiry, relevance, and access count. Preview never mutates data. Apply mutates only `promote`, `archive`, and `soft_prune`; `compress_candidate` remains advisory until a compression workflow exists.
+
+```
+POST /api/v1/memory/lifecycle/preview
+POST /api/v1/memory/lifecycle/apply
+Request:
+{
+  "category": "planning",
+  "archive_after_days": 90,
+  "soft_prune_after_days": 365,
+  "reference_time": "2027-01-01T00:00:00Z"
+}
+
+Response (200):
+{
+  "decisions": [
+    {
+      "metadata_id": "meta-uuid",
+      "entity_type": "memory",
+      "entity_id": "memory-1",
+      "retention_policy": "automatic",
+      "current_state": "active",
+      "recommended_action": "archive",
+      "reason": "Memory is stale and eligible for archival.",
+      "freshness_score": 0.671,
+      "last_accessed_at": null
+    }
+  ],
+  "total": 1,
+  "applied": false
+}
+```
+
+Hybrid, vector, and metadata retrieval exclude `archived` and `soft_pruned` metadata by default. Callers can request inactive metadata with `include_inactive` for review or maintenance workflows.
 
 ### Story 7.1: Tool Registry API
 

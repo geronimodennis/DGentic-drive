@@ -82,7 +82,7 @@ Override the database URL when needed:
 $env:DGENTIC_DATABASE_URL = "sqlite:///C:/workspace/dgentic-state/dgentic.db"
 ```
 
-On first use, DGentic initializes the current SQLAlchemy metadata tables and records the baseline migration in `schema_migrations` as `0001_metadata_tool_registry_baseline`. Production PostgreSQL remains the planned database target, but driver packaging, production migrations beyond the baseline, JSON-store migration, scheduled backup automation, and concurrency hardening remain follow-up work.
+On first use, DGentic initializes the current SQLAlchemy metadata tables and records ordered migrations in `schema_migrations`, including `0001_metadata_tool_registry_baseline` and `0002_memory_lifecycle_metadata`. Production PostgreSQL remains the planned database target, but driver packaging, JSON-store migration, scheduled backup automation, and concurrency hardening remain follow-up work.
 
 ## Backup And Restore Local SQLite State
 
@@ -481,6 +481,24 @@ Invoke-RestMethod `
   -Body '{"query":"sprint metadata retrieval","tags":["sprint"],"similarity_threshold":0.1}'
 ```
 
+Preview and apply the SQL-backed memory lifecycle policy. Preview is read-only; apply can promote, archive, or soft-prune matching metadata. Compression candidates are advisory until a compression workflow is implemented:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/memory/lifecycle/preview `
+  -ContentType "application/json" `
+  -Body '{"category":"planning","reference_time":"2027-01-01T00:00:00+00:00"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/v1/memory/lifecycle/apply `
+  -ContentType "application/json" `
+  -Body '{"category":"planning","reference_time":"2027-01-01T00:00:00+00:00"}'
+```
+
+Hybrid, vector, and metadata retrieval exclude archived and soft-pruned metadata by default. Add `"include_inactive": true` to hybrid retrieval requests, or `include_inactive=true` to vector/metadata retrieval query strings, when reviewing archived memory.
+
 Register a tool in the SQLAlchemy-backed registry and record usage:
 
 ```powershell
@@ -524,5 +542,5 @@ uv run ruff format .
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only env-referenced bearer credential and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted credential storage, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.
-- Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
+- Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, additive lifecycle metadata migrations, and lifecycle preview/apply APIs, but no production vector backend, scheduled memory lifecycle job, frontend, or VS Code extension exists yet.
 - Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

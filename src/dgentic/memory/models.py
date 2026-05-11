@@ -49,6 +49,14 @@ class MemoryMetadata(Base):
     retention_policy = Column(String(50), default="automatic")
     owner_agent = Column(String(100), nullable=True)
     indexed = Column(Boolean, default=False)
+    lifecycle_state = Column(String(50), nullable=False, default="active")
+    lifecycle_reason = Column(Text, nullable=True)
+    lifecycle_updated_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    pruned_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    freshness_score = Column(Float, default=1.0)
+    last_compacted_at = Column(DateTime(timezone=True), nullable=True)
 
     vector_embeddings = relationship(
         "VectorEmbedding",
@@ -61,6 +69,8 @@ class MemoryMetadata(Base):
         Index("idx_metadata_entity", "entity_type", "entity_id"),
         Index("idx_metadata_category", "category"),
         Index("idx_metadata_indexed", "indexed"),
+        Index("idx_metadata_lifecycle_state", "lifecycle_state"),
+        Index("idx_metadata_expires_at", "expires_at"),
     )
 
     def increment_access(self) -> None:

@@ -1,6 +1,7 @@
 """Pydantic schemas for metadata and tool registry services."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,7 @@ class MetadataCreateRequest(BaseModel):
         default="automatic", description="permanent, automatic, or manual"
     )
     owner_agent: str | None = Field(default=None, description="Agent that owns this")
+    expires_at: datetime | None = Field(default=None, description="Optional expiry timestamp")
 
 
 class MetadataResponse(BaseModel):
@@ -37,7 +39,17 @@ class MetadataResponse(BaseModel):
     last_accessed_at: datetime | None
     access_count: int
     relevance_score: float
+    retention_policy: str
+    owner_agent: str | None
     indexed: bool
+    lifecycle_state: str
+    lifecycle_reason: str | None
+    lifecycle_updated_at: datetime | None
+    archived_at: datetime | None
+    pruned_at: datetime | None
+    expires_at: datetime | None
+    freshness_score: float
+    last_compacted_at: datetime | None
 
 
 class MetadataListResponse(BaseModel):
@@ -57,6 +69,54 @@ class HybridRetrievalRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=100, description="Max results")
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Min similarity")
     metadata_filters: dict | None = Field(default=None, description="Additional metadata filters")
+    include_inactive: bool = Field(
+        default=False, description="Include archived or soft-pruned metadata"
+    )
+
+
+class MemoryLifecycleRequest(BaseModel):
+    """Request to preview or apply SQL-backed memory lifecycle policy."""
+
+    entity_types: list[str] | None = Field(default=None, description="Filter by entity types")
+    tags: list[str] | None = Field(default=None, description="Filter by tags")
+    category: str | None = Field(default=None, description="Filter by category")
+    retention_policy: str | None = Field(default=None, description="Filter by retention policy")
+    lifecycle_state: str | None = Field(default=None, description="Filter by lifecycle state")
+    include_inactive: bool = Field(default=False, description="Evaluate archived/pruned records")
+    limit: int = Field(default=100, ge=1, le=500, description="Maximum records to evaluate")
+    archive_after_days: int = Field(default=90, ge=1, le=3650)
+    soft_prune_after_days: int = Field(default=365, ge=1, le=3650)
+    archive_relevance_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
+    soft_prune_relevance_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
+    promote_relevance_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
+    promote_access_count_threshold: int = Field(default=20, ge=1, le=1_000_000)
+    compress_after_days: int = Field(default=30, ge=1, le=3650)
+    compress_access_count_threshold: int = Field(default=10, ge=1, le=1_000_000)
+    reference_time: datetime | None = Field(
+        default=None, description="Deterministic policy timestamp for tests/jobs"
+    )
+
+
+class MemoryLifecycleDecision(BaseModel):
+    """A deterministic lifecycle recommendation for one metadata record."""
+
+    metadata_id: UUID
+    entity_type: str
+    entity_id: str
+    retention_policy: str
+    current_state: str
+    recommended_action: Literal["keep", "promote", "archive", "soft_prune", "compress_candidate"]
+    reason: str
+    freshness_score: float
+    last_accessed_at: datetime | None
+
+
+class MemoryLifecycleResponse(BaseModel):
+    """Lifecycle preview/apply response."""
+
+    decisions: list[MemoryLifecycleDecision]
+    total: int
+    applied: bool
 
 
 class RetrievalResult(BaseModel):

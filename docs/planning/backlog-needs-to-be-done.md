@@ -321,6 +321,10 @@ Needs to be done:
 - Add retrieval performance validation and indexing strategy.
 - Add source attribution and scoring improvements.
 
+Current implementation status:
+- Completed: BL-007a adds additive lifecycle metadata fields, a migration ledger entry, deterministic lifecycle preview/apply APIs, retention-aware promote/archive/soft-prune decisions, advisory compression-candidate detection, default retrieval exclusion for archived/soft-pruned records, and explicit `include_inactive` opt-in retrieval.
+- Remaining: production vector backend selection/integration, real compression/summarization execution, scheduled lifecycle jobs, retrieval performance validation, source attribution, and scoring improvements.
+
 Acceptance criteria:
 - Retrieval works against the selected production vector backend.
 - Long-term memory can be summarized or compressed on schedule or threshold.
@@ -606,6 +610,10 @@ Exit criteria:
 - Production vector backend and migrations are implemented.
 - Compression/summarization and lifecycle policies exist.
 - Retrieval performance validation is recorded.
+
+Current Sprint 13 status:
+- Active: BL-007a SQL-backed lifecycle policy foundation is implemented and validated.
+- Remaining: production vector backend selection/integration, compression/summarization execution, scheduled lifecycle runs, performance smoke validation, and source-attribution/scoring improvements.
 
 ### Sprint 14: Autonomous Agent Orchestration
 

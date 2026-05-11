@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from dgentic.database import get_db_session
 from dgentic.memory.embedding_service import EmbeddingService
+from dgentic.memory.lifecycle_service import MemoryLifecycleService
 from dgentic.memory.metadata_service import MetadataService
 from dgentic.memory.retrieval_service import RetrievalService
 from dgentic.memory.schemas import (
@@ -16,6 +17,8 @@ from dgentic.memory.schemas import (
     DuplicateCheckResponse,
     HybridRetrievalRequest,
     HybridRetrievalResponse,
+    MemoryLifecycleRequest,
+    MemoryLifecycleResponse,
     MetadataCreateRequest,
     MetadataListResponse,
     MetadataResponse,
@@ -50,6 +53,26 @@ def create_metadata(request: MetadataCreateRequest, session: DBSession):
     return service.create(request)
 
 
+@router.post("/api/v1/memory/lifecycle/preview", response_model=MemoryLifecycleResponse)
+def preview_memory_lifecycle(
+    request: MemoryLifecycleRequest,
+    session: DBSession,
+) -> MemoryLifecycleResponse:
+    service = MemoryLifecycleService(session)
+    decisions = service.preview(request)
+    return MemoryLifecycleResponse(decisions=decisions, total=len(decisions), applied=False)
+
+
+@router.post("/api/v1/memory/lifecycle/apply", response_model=MemoryLifecycleResponse)
+def apply_memory_lifecycle(
+    request: MemoryLifecycleRequest,
+    session: DBSession,
+) -> MemoryLifecycleResponse:
+    service = MemoryLifecycleService(session)
+    decisions = service.apply(request)
+    return MemoryLifecycleResponse(decisions=decisions, total=len(decisions), applied=True)
+
+
 @router.get("/api/v1/memory/metadata/{metadata_id}", response_model=MetadataResponse)
 def get_metadata(metadata_id: UUID, session: DBSession):
     service = MetadataService(session)
@@ -65,6 +88,8 @@ def list_metadata(
     entity_type: str | None = None,
     category: str | None = None,
     indexed: bool | None = None,
+    retention_policy: str | None = None,
+    lifecycle_state: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ):
@@ -73,6 +98,8 @@ def list_metadata(
         entity_type=entity_type,
         category=category,
         indexed=indexed,
+        retention_policy=retention_policy,
+        lifecycle_state=lifecycle_state,
         limit=limit,
         offset=offset,
     )
@@ -113,6 +140,7 @@ def vector_search(
     query: str,
     limit: int = 10,
     similarity_threshold: float = 0.7,
+    include_inactive: bool = False,
 ):
     embedding_service = EmbeddingService(session)
     retrieval_service = RetrievalService(session, embedding_service)
@@ -120,6 +148,7 @@ def vector_search(
         query=query,
         limit=limit,
         similarity_threshold=similarity_threshold,
+        include_inactive=include_inactive,
     )
     return HybridRetrievalResponse(
         results=results,
@@ -133,12 +162,14 @@ def metadata_search(
     session: DBSession,
     category: str | None = None,
     limit: int = 20,
+    include_inactive: bool = False,
 ):
     embedding_service = EmbeddingService(session)
     retrieval_service = RetrievalService(session, embedding_service)
     results, query_time_ms = retrieval_service.metadata_search(
         category=category,
         limit=limit,
+        include_inactive=include_inactive,
     )
     return HybridRetrievalResponse(
         results=results,

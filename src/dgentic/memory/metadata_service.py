@@ -25,6 +25,7 @@ class MetadataService:
             relevance_score=request.relevance_score,
             retention_policy=request.retention_policy,
             owner_agent=request.owner_agent,
+            expires_at=request.expires_at,
         )
         self.session.add(metadata)
         self.session.commit()
@@ -49,6 +50,7 @@ class MetadataService:
         tags: list[str] | None = None,
         indexed: bool | None = None,
         retention_policy: str | None = None,
+        lifecycle_state: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[MemoryMetadata], int]:
@@ -62,6 +64,8 @@ class MetadataService:
             query = query.filter(MemoryMetadata.indexed == indexed)
         if retention_policy:
             query = query.filter(MemoryMetadata.retention_policy == retention_policy)
+        if lifecycle_state:
+            query = query.filter(MemoryMetadata.lifecycle_state == lifecycle_state)
 
         items = query.order_by(MemoryMetadata.created_at.desc()).all()
         if tags:

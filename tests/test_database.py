@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, func, inspect, select
+from sqlalchemy import create_engine, func, inspect, select, text
 
 from dgentic import database
 from dgentic.database import (
@@ -16,6 +16,9 @@ from dgentic.database import (
 from dgentic.memory.models import MemoryMetadata
 from dgentic.migrations import (
     BASELINE_MIGRATION_ID,
+    MEMORY_LIFECYCLE_MIGRATION_ID,
+    _float_column_type,
+    _timestamp_column_type,
     initialize_database,
     list_applied_migrations,
     schema_migrations,
@@ -132,7 +135,10 @@ def test_list_applied_migrations_returns_baseline_after_initialization(tmp_path)
     engine = create_engine(sqlite_url(tmp_path / "migrations.db"))
     initialize_database(engine)
 
-    assert list_applied_migrations(engine) == [BASELINE_MIGRATION_ID]
+    assert list_applied_migrations(engine) == [
+        BASELINE_MIGRATION_ID,
+        MEMORY_LIFECYCLE_MIGRATION_ID,
+    ]
 
 
 def test_initialize_database_is_idempotent_and_does_not_duplicate_ledger_rows(tmp_path):
@@ -146,8 +152,91 @@ def test_initialize_database_is_idempotent_and_does_not_duplicate_ledger_rows(tm
             select(func.count()).select_from(schema_migrations)
         ).scalar_one()
 
-    assert ledger_count == 1
-    assert list_applied_migrations(engine) == [BASELINE_MIGRATION_ID]
+    assert ledger_count == 2
+    assert list_applied_migrations(engine) == [
+        BASELINE_MIGRATION_ID,
+        MEMORY_LIFECYCLE_MIGRATION_ID,
+    ]
+
+
+def test_initialize_database_adds_memory_lifecycle_columns_to_existing_database(tmp_path):
+    engine = create_engine(sqlite_url(tmp_path / "legacy-memory.db"))
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE memory_metadata (
+                    id VARCHAR PRIMARY KEY,
+                    entity_type VARCHAR(100) NOT NULL,
+                    entity_id VARCHAR(200) NOT NULL,
+                    tags JSON,
+                    category VARCHAR(100),
+                    description TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME,
+                    last_accessed_at DATETIME,
+                    access_count INTEGER DEFAULT 0,
+                    relevance_score FLOAT DEFAULT 1.0,
+                    retention_policy VARCHAR(50) DEFAULT 'automatic',
+                    owner_agent VARCHAR(100),
+                    indexed BOOLEAN DEFAULT 0
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO memory_metadata (
+                    id, entity_type, entity_id, description, relevance_score
+                )
+                VALUES (
+                    'legacy-id', 'memory', 'legacy-memory', 'Pre-lifecycle row.', 0.5
+                )
+                """
+            )
+        )
+
+    initialize_database(engine)
+
+    column_names = {column["name"] for column in inspect(engine).get_columns("memory_metadata")}
+    with engine.begin() as connection:
+        legacy_row = connection.execute(
+            text(
+                """
+                SELECT lifecycle_state, freshness_score
+                FROM memory_metadata
+                WHERE id = 'legacy-id'
+                """
+            )
+        ).one()
+
+    assert {
+        "lifecycle_state",
+        "lifecycle_reason",
+        "lifecycle_updated_at",
+        "archived_at",
+        "pruned_at",
+        "expires_at",
+        "freshness_score",
+        "last_compacted_at",
+    }.issubset(column_names)
+    assert legacy_row.lifecycle_state == "active"
+    assert legacy_row.freshness_score == 1.0
+    assert list_applied_migrations(engine) == [
+        BASELINE_MIGRATION_ID,
+        MEMORY_LIFECYCLE_MIGRATION_ID,
+    ]
+
+
+def test_memory_lifecycle_migration_uses_postgresql_safe_column_types():
+    class Connection:
+        dialect = type("Dialect", (), {"name": "postgresql"})()
+
+    connection = Connection()
+
+    assert _timestamp_column_type(connection) == "TIMESTAMP WITH TIME ZONE"
+    assert _float_column_type(connection) == "DOUBLE PRECISION"
 
 
 def test_metadata_record_persists_after_session_close_and_database_state_reset(

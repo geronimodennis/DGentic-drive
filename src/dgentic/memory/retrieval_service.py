@@ -3,9 +3,11 @@
 import json
 import time
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from dgentic.memory.embedding_service import EmbeddingService
+from dgentic.memory.lifecycle_service import ACTIVE_LIFECYCLE_STATES, metadata_is_retrievable
 from dgentic.memory.models import MemoryMetadata, VectorEmbedding
 from dgentic.memory.schemas import HybridRetrievalRequest, RetrievalResult
 
@@ -24,6 +26,7 @@ class RetrievalService:
             entity_types=request.entity_types,
             tags=request.tags,
             metadata_filters=request.metadata_filters,
+            include_inactive=request.include_inactive,
         )
 
         results: list[RetrievalResult] = []
@@ -66,6 +69,7 @@ class RetrievalService:
         query: str,
         limit: int = 10,
         similarity_threshold: float = 0.7,
+        include_inactive: bool = False,
     ) -> tuple[list[RetrievalResult], float]:
         start_time = time.time()
         query_embedding = self.embedding_service.generate_embedding(query)
@@ -79,6 +83,8 @@ class RetrievalService:
                 continue
 
             metadata = vector_record.memory_metadata
+            if metadata is None or (not include_inactive and not metadata_is_retrievable(metadata)):
+                continue
             results.append(
                 RetrievalResult(
                     metadata_id=metadata.id,
@@ -102,6 +108,7 @@ class RetrievalService:
         tags: list[str] | None = None,
         category: str | None = None,
         limit: int = 20,
+        include_inactive: bool = False,
     ) -> tuple[list[RetrievalResult], float]:
         start_time = time.time()
         query = self.session.query(MemoryMetadata)
@@ -110,6 +117,13 @@ class RetrievalService:
             query = query.filter(MemoryMetadata.entity_type.in_(entity_types))
         if category:
             query = query.filter(MemoryMetadata.category == category)
+        if not include_inactive:
+            query = query.filter(
+                or_(
+                    MemoryMetadata.lifecycle_state.is_(None),
+                    MemoryMetadata.lifecycle_state.in_(ACTIVE_LIFECYCLE_STATES),
+                )
+            )
 
         metadata_items = query.order_by(MemoryMetadata.relevance_score.desc()).all()
         if tags:
@@ -142,6 +156,7 @@ class RetrievalService:
         entity_types: list[str] | None = None,
         tags: list[str] | None = None,
         metadata_filters: dict | None = None,
+        include_inactive: bool = False,
     ) -> tuple[list[MemoryMetadata], int]:
         query = self.session.query(MemoryMetadata)
 
@@ -154,6 +169,17 @@ class RetrievalService:
                 query = query.filter(
                     MemoryMetadata.retention_policy == metadata_filters["retention_policy"]
                 )
+            if "lifecycle_state" in metadata_filters:
+                query = query.filter(
+                    MemoryMetadata.lifecycle_state == metadata_filters["lifecycle_state"]
+                )
+        if not include_inactive:
+            query = query.filter(
+                or_(
+                    MemoryMetadata.lifecycle_state.is_(None),
+                    MemoryMetadata.lifecycle_state.in_(ACTIVE_LIFECYCLE_STATES),
+                )
+            )
 
         items = query.all()
         if tags:

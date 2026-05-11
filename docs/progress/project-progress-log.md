@@ -4,6 +4,36 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 13 BL-007a Memory Lifecycle Policy Foundation
+
+Status: completed for the scoped SQL-backed lifecycle policy slice; Sprint 13 remains active for vector backend integration, compression execution, scheduled lifecycle jobs, performance validation, and source-attribution/scoring improvements.
+
+Current story:
+- BL-007: Memory And Retrieval Production Lifecycle.
+
+Checklist:
+- Completed: PM selected a conservative lifecycle foundation after current-state assessment instead of pulling in an external vector database or LLM summarization before storage contracts were stable.
+- Completed: Developer updated production source only for lifecycle metadata fields, additive `0002_memory_lifecycle_metadata` migration, dialect-aware lifecycle DDL, lifecycle preview/apply service behavior, API endpoints, metadata filters, retrieval inactive-state exclusion, and memory package exports.
+- Completed: QA updated tests only for lifecycle decisions, idempotent archive/promote behavior, non-mutating compression candidates, inactive retrieval defaults and opt-in behavior, API lifecycle contracts, and upgrading a pre-lifecycle database.
+- Completed: Reviewer read-only feedback identified compression-candidate mutation and PostgreSQL DDL risk; Developer remediated both and QA added regression coverage.
+- Completed: PM updated README, backlog, usage docs, setup docs, memory architecture, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: memory metadata now tracks lifecycle state/reason/timestamps, expiry, freshness score, and last-compacted timestamp.
+- Implemented in this slice: `POST /api/v1/memory/lifecycle/preview` returns deterministic keep/promote/archive/soft-prune/compress-candidate decisions without mutation.
+- Implemented in this slice: `POST /api/v1/memory/lifecycle/apply` mutates only promote/archive/soft-prune decisions; compression remains advisory until a real compression workflow exists.
+- Implemented in this slice: hybrid, vector, and metadata retrieval exclude archived and soft-pruned metadata by default, with explicit `include_inactive` opt-in.
+
+Validation:
+- Focused memory lifecycle gate: `uv --cache-dir .uv-cache run pytest -q tests\test_memory_lifecycle_service.py tests\test_retrieval_service.py tests\test_database.py tests\test_api.py -k "memory or metadata or retrieval or lifecycle or migration"` passed with 24 tests and 107 deselected.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 657 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 51 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 13 with production vector backend selection/integration or the smallest compression/summarization execution slice after PM/Architect scope review.
+
 ### Sprint 12 Provider Productionization Closeout
 
 Status: closed for the scoped backend MVP provider-production contract.

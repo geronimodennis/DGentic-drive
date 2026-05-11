@@ -62,7 +62,7 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
   -d '{"objective":"Create a guarded task plan for indexing project memory."}'
 ```
 
-SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. The current schema baseline is tracked in `schema_migrations`, and file-backed SQLite state can be backed up or restored with the local `backup_sqlite_database` and `restore_sqlite_database` helpers.
+SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. Ordered schema migrations are tracked in `schema_migrations`, and file-backed SQLite state can be backed up or restored with the local `backup_sqlite_database` and `restore_sqlite_database` helpers.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `
@@ -301,6 +301,18 @@ curl -X POST http://127.0.0.1:8000/api/v1/memory/retrieve/hybrid `
   -d '{"query":"sprint metadata retrieval","tags":["sprint"],"similarity_threshold":0.1}'
 ```
 
+Preview or apply memory lifecycle policy decisions. Preview is read-only; apply mutates only promote, archive, and soft-prune decisions. Archived and soft-pruned metadata is excluded from retrieval by default unless `include_inactive` is requested:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/memory/lifecycle/preview `
+  -H "Content-Type: application/json" `
+  -d '{"category":"planning","reference_time":"2027-01-01T00:00:00+00:00"}'
+
+curl -X POST http://127.0.0.1:8000/api/v1/memory/lifecycle/apply `
+  -H "Content-Type: application/json" `
+  -d '{"category":"planning","reference_time":"2027-01-01T00:00:00+00:00"}'
+```
+
 Register a tool in the SQLAlchemy-backed registry:
 
 ```powershell
@@ -390,12 +402,12 @@ DGentic should persist session state so future sessions can resume with context,
 
 - DGentic has backend MVP contracts, not production autonomy.
 - Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
-- State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
+- State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while encrypted credential storage, provider billing reconciliation, and provider-specific external adapters remain future work.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
-- Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
+- Hybrid retrieval works through deterministic local hash embeddings for MVP usage and excludes archived/soft-pruned metadata by default after lifecycle policy runs; production vector storage, optional model packaging, compression/summarization execution, scheduled lifecycle jobs, and performance validation remain follow-up work.
 - Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, migrated to strictly newer same-name versions with explicit overwrite, executed with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, local-only dependency import isolation, process-group timeout cleanup hardening, and deprecation controls, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

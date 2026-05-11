@@ -14,7 +14,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-from dgentic.credentials import credential_env_for_reference, credential_identity_for_reference
+from dgentic.credentials import (
+    CredentialReferenceError,
+    credential_identity_for_reference,
+    credential_secret_for_reference,
+)
 from dgentic.events import event_log
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
@@ -1530,20 +1534,26 @@ def _external_base_url(settings: Any) -> str:
 
 
 def _external_headers(settings: Any) -> dict[str, str]:
-    credential_env = _external_credential_env(settings)
-    credential_value = environ.get(credential_env, "").strip()
+    credential_ref = settings.external_openai_compatible_credential_ref.strip()
+    if credential_ref:
+        try:
+            credential_value = credential_secret_for_reference(
+                credential_ref,
+                purpose="provider",
+                environ=environ,
+                settings=settings,
+            )
+        except (KeyError, PermissionError, CredentialReferenceError) as exc:
+            raise ProviderConfigurationError("External provider is not configured.") from exc
+    else:
+        credential_env = _external_credential_env(settings)
+        credential_value = environ.get(credential_env, "").strip()
     if not credential_value:
         raise ProviderConfigurationError("External provider is not configured.")
     return {"Authorization": f"Bearer {credential_value}"}
 
 
 def _external_credential_env(settings: Any) -> str:
-    credential_ref = settings.external_openai_compatible_credential_ref.strip()
-    if credential_ref:
-        try:
-            return credential_env_for_reference(credential_ref, purpose="provider")
-        except (KeyError, PermissionError) as exc:
-            raise ProviderConfigurationError("External provider is not configured.") from exc
     credential_env = settings.external_openai_compatible_api_key_env.strip()
     if not credential_env:
         raise ProviderConfigurationError("External provider is not configured.")
@@ -1554,8 +1564,12 @@ def _external_credential_identity(settings: Any) -> str:
     credential_ref = settings.external_openai_compatible_credential_ref.strip()
     if credential_ref:
         try:
-            return credential_identity_for_reference(credential_ref, purpose="provider")
-        except (KeyError, PermissionError) as exc:
+            return credential_identity_for_reference(
+                credential_ref,
+                purpose="provider",
+                settings=settings,
+            )
+        except (KeyError, PermissionError, CredentialReferenceError) as exc:
             raise ProviderConfigurationError("External provider is not configured.") from exc
     return f"env:{_external_credential_env(settings)}"
 

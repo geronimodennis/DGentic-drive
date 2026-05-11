@@ -1,7 +1,7 @@
 from typing import Any
 from urllib.error import URLError
 
-from dgentic.credentials import credential_env_for_reference
+from dgentic.credentials import credential_reference_is_configured
 from dgentic.events import event_log
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
@@ -395,11 +395,11 @@ def _external_provider_configured(settings: Any) -> bool:
 def _external_credential_configured(settings: Any) -> bool:
     credential_ref = settings.external_openai_compatible_credential_ref.strip()
     if credential_ref:
-        try:
-            credential_env_for_reference(credential_ref, purpose="provider")
-        except (KeyError, PermissionError):
-            return False
-        return True
+        return credential_reference_is_configured(
+            credential_ref,
+            purpose="provider",
+            settings=settings,
+        )
     return bool(settings.external_openai_compatible_api_key_env.strip())
 
 

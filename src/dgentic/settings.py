@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     external_openai_compatible_api_key_env: str = ""
     external_openai_compatible_credential_ref: str = ""
     external_openai_compatible_models: str = ""
+    credential_process_adapters: str = ""
+    credential_process_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    credential_process_max_output_bytes: int = Field(default=4096, ge=1, le=65536)
 
     @property
     def effective_auth_enabled(self) -> bool:

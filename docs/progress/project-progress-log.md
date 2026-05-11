@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009f Credential Resolver Adapter Plumbing
+
+Status: completed for the scoped external credential resolver adapter slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, network approval records, non-provider network surfaces, and broader audit actor propagation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected process-adapter secret-manager plumbing instead of hand-rolled encrypted vaulting because local encryption needs a separate key-management design.
+- Completed: Developer added credential `source_type` support with backward-compatible `env` references and new `external_process` references.
+- Completed: Developer added bounded `DGENTIC_CREDENTIAL_PROCESS_ADAPTERS`, timeout, and max-output settings; process adapters run without a shell, require an absolute executable path, close stdin, receive a minimal environment, and get the reference `secret_name` appended as the final argument.
+- Completed: Developer changed OpenAI-compatible provider runtime to resolve credential-reference secrets through the shared resolver only after pricing, configuration, circuit, and approval gates pass.
+- Completed: QA added focused provider tests for process adapters running only at transport time, approval-required paths skipping adapter execution, revoked/wrong-purpose references skipping adapter execution, adapter failure preserving approvals, oversized stdout/stderr rejection, and no returned-secret persistence/logging.
+- Completed: Security/Reviewer found a P2 buffering risk in the first `capture_output` implementation; Developer replaced it with bounded stream readers that kill the adapter when stdout or stderr exceeds the configured limit.
+- Completed: Final Security/Reviewer found a P2 explicit-empty-environment fallback risk; Developer changed env-reference resolution to use host environment only when no mapping is supplied and QA added a sanitized-environment regression.
+- Completed: PM updated environment, README, developer setup, usage, architecture, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: persisted credential references can now describe either an environment variable or a configured `external_process` adapter plus `secret_name`.
+- Implemented in this slice: provider approval creation and provider listing validate external-process credential configuration without retrieving the secret; secret retrieval happens only while building transport headers after the provider request is otherwise eligible.
+- Still out of scope after this slice: encrypted local credential vaulting, first-class provider-specific secret-manager APIs, credential version rotation UX, and broader audit actor propagation.
+
+Validation:
+- Focused credential API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py -k "external_process_credential_reference or credential_reference_lifecycle"` passed with 2 tests and 62 deselected.
+- Focused provider adapter gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py -k "process_credential or external_process_reference_validation or external_generation_uses_configured_credential_reference or external_approval_rejects"` passed with 8 tests and 103 deselected.
+- Final provider hardening gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py -k "sanitized_environ or process_credential"` passed with 6 tests and 108 deselected.
+- Focused provider full file: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py` passed with 114 tests.
+- Focused auth full file: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py` passed with 64 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 883 tests and 2 skipped.
+- Lint/format/diff gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with broader audit actor propagation or network approval records unless encrypted local vault key-management design is ready to split into a dedicated architecture slice.
+
 ### Sprint 15 BL-009e Identity And Credential Metadata Redaction
 
 Status: completed for the scoped cross-surface identity, auth-token, and credential-reference metadata redaction slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, and broader audit actor propagation.

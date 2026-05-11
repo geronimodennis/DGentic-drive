@@ -42,6 +42,7 @@ Default settings:
 - Provider retry defaults: `DGENTIC_PROVIDER_RETRY_MAX_ATTEMPTS=3`, `DGENTIC_PROVIDER_RETRY_INITIAL_DELAY_SECONDS=0.2`, `DGENTIC_PROVIDER_RETRY_MAX_DELAY_SECONDS=2.0`, and `DGENTIC_PROVIDER_RETRY_BACKOFF_MULTIPLIER=2.0`
 - `DGENTIC_PROVIDER_PRICING_CATALOG` empty by default; optionally set a bounded JSON map of exact provider/model advisory prices for routing and usage estimates
 - OpenAI-compatible external adapter defaults: `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are empty, so the adapter is disabled
+- `DGENTIC_CREDENTIAL_PROCESS_ADAPTERS` is empty by default; optional shell-free credential process adapters are disabled unless explicitly configured with absolute command paths
 
 ## Configure API Authentication
 
@@ -407,7 +408,7 @@ $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV = "OPENAI_API_KEY"
 $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS = "gpt-4.1-mini,gpt-4.1"
 ```
 
-For a persisted external credential reference, first create the reference with an authenticated principal that has the `credentials` capability, then set `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` to the returned id. The reference stores only the external location, such as an environment variable name; the raw secret value remains outside DGentic and is read only when a provider request reaches the transport step:
+For a persisted external credential reference, first create the reference with an authenticated principal that has the `credentials` capability, then set `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` to the returned id. Environment-backed references store only an environment variable name; the raw secret value remains outside DGentic and is read only when a provider request reaches the transport step:
 
 ```powershell
 $credential = Invoke-RestMethod `
@@ -417,6 +418,19 @@ $credential = Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"env_var":"OPENAI_API_KEY","label":"OpenAI-compatible provider"}'
 
+$env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF = $credential.id
+```
+
+For an external secret-manager CLI or mounted sidecar helper, configure a shell-free process adapter. `argv[0]` must be an absolute executable path, DGentic appends the credential reference `secret_name` as the final argument, closes stdin, uses a minimal inherited environment, enforces timeout/output limits, and treats any stderr, non-zero exit, empty output, multi-line output, or oversized output as a credential failure. The returned secret is used only to build the outbound Authorization header after pricing, configuration, circuit, and approval gates pass:
+
+```powershell
+$env:DGENTIC_CREDENTIAL_PROCESS_ADAPTERS = '{"process-vault":{"argv":["C:\\tools\\secret-fetch.exe","--name"]}}'
+$credential = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/credentials/references `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"source_type":"external_process","adapter_id":"process-vault","secret_name":"providers/openai","label":"OpenAI-compatible provider"}'
 $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF = $credential.id
 ```
 
@@ -623,9 +637,9 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential references, provider-call network/domain guardrails, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, encrypted local credential storage, non-provider network approval workflows, and full audit actor propagation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, encrypted local credential storage, non-provider network approval workflows, and full audit actor propagation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
-- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.
+- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, additive lifecycle metadata migrations, lifecycle preview/apply APIs, deterministic metadata compression APIs, a SQLite JSON-vector backend abstraction, retrieval attribution/score explanations, and baseline retrieval performance smoke coverage, but no pgvector production backend, scheduled memory lifecycle/compression job, frontend, or VS Code extension exists yet.
 - Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

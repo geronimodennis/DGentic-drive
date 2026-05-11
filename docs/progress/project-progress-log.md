@@ -4,6 +4,57 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009j Generated-Tool Network Policy Guardrail
+
+Status: completed for the scoped generated-tool Python socket network guardrail slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and broader CLI host-boundary enforcement.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected generated-tool outbound network policy enforcement as the next bounded Sprint 15 security slice after task-scoped orchestration context verification.
+- Completed: Security/Reviewer scouting confirmed generated-tool Python socket egress was the main remaining non-provider network surface small enough to implement safely before encrypted local vault key-management design.
+- Completed: Developer added parent-side network policy validation and sanitized subprocess handoff for generated-tool execution.
+- Completed: Developer installed generated-tool runner guards before generated tool imports run, covering common Python socket connect, `connect_ex`, `create_connection`, and resolver APIs.
+- Completed: QA added generated-tool runtime and API regressions for deny, approval-required, import-time egress, raw sockets, `connect_ex`, byte-string hosts, resolver-to-IP bypass attempts, allow/audit compatibility, invalid policy fail-fast behavior, and policy handoff redaction.
+- Completed: Security review found bypasses around exposed original socket functions, `connect_ex`, resolver APIs, byte-string hosts, and allowed-hostname resolution under default-deny. Developer remediated each finding and QA locked the behaviors with focused regressions.
+- Completed: PM updated README, architecture, setup/usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: generated-tool execution validates `DGENTIC_NETWORK_DOMAIN_POLICY` before subprocess launch and fails before usage counters change when the policy is invalid.
+- Implemented in this slice: the generated-tool runner receives only sanitized `default_mode` plus rule `domain`/`mode` data, drops rule reasons and hostile inherited handoff variables from generated-tool visibility, and installs Python socket/resolver guards before importing generated tool code.
+- Implemented in this slice: `allow` and `audit` network modes proceed for common generated-tool Python socket egress, while `deny` and `approval_required` fail the generated tool run and record it as a failed execution.
+- Still out of scope after this slice: OS-level network sandboxing, native-code or subprocess egress isolation, web retrieval enforcement, `network_approval_id` support for generated-tool egress, port-scoped network approval precision, richer user/group identity workflows, encrypted local credential vaulting, first-class provider-specific secret-manager APIs, and broader CLI host-boundary enforcement.
+
+Validation:
+- Focused generated-tool network gate after security-review remediation: `python -m pytest -q tests\test_tool_runtime.py -k "network_domain_policy or network_policy or connect_ex or byte_hosts or resolver"` passed with 13 tests.
+- Broader affected suites: `python -m pytest -q tests\test_tool_runtime.py tests\test_api.py tests\test_network_policy.py` passed with 220 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 929 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with encrypted local credential vaulting only after a key-management design slice, or with web retrieval network enforcement / broader CLI host-boundary policy if those remain higher-risk and better bounded.
+
+### Claude Code Repository Study And DGentic Incorporation Plan
+
+Status: completed for planning and architecture incorporation; no Anthropic source code or plugin content was copied.
+
+Completed:
+- PM studied the public Claude Code repository structure, plugin examples, command workflow examples, settings examples, and license boundary.
+- Architect mapped reusable product patterns into DGentic-native concepts: terminal-first command recipes, plugin bundles, hook-style safety policies, managed settings, specialized review workflows, and git/PR workflow automation.
+- PM added `docs/architecture/claude-code-incorporation-study.md` to record the incorporation plan and license boundary.
+- PM updated the Sprint 15 through Sprint 19 backlog so the patterns map into security policy, UI/settings, CLI/VS Code, CI/observability, and provider-adapter follow-up work.
+- PM updated repository architecture planned layout with future `apps/cli`, `plugins`, and `config/managed-settings` areas.
+
+Decisions:
+- DGentic will not copy Claude Code implementation artifacts because the studied repository is marked all rights reserved.
+- DGentic should implement original equivalents that fit its backend-first orchestration, approval, audit, auth, credential, network, and role-boundary model.
+- The highest-leverage incorporation path is a DGentic-native plugin and command recipe layer, then UI/CLI/VS Code surfaces for those recipes and policies.
+
+Next:
+- Keep Sprint 15 focused on security follow-ups that enable hook policy records, managed settings, plugin trust controls, and pre-action safety checks.
+- Use Sprint 16 and Sprint 17 to surface command recipes, plugins, hooks, managed settings, and git/PR workflow automation through the UI, dedicated CLI client, and VS Code extension.
+
 ### Sprint 15 BL-009i Task-Scoped Orchestration Agent Context Verification
 
 Status: completed for the scoped active-task verification slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, non-provider network enforcement surfaces, and broader CLI host-boundary enforcement.

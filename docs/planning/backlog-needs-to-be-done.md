@@ -291,6 +291,7 @@ User value:
 Needs to be done:
 - Select concrete provider targets based on product need, account availability, and API-contract differences.
 - Add provider-specific request/stream/usage adapters only when they need behavior not covered by the generic OpenAI-compatible adapter.
+- Prefer delivering provider-specific adapters as DGentic plugin packages when the adapter can preserve the shared provider, credential, network, approval, routing, telemetry, and test contracts.
 - Preserve existing provider egress, approval, retry, circuit, pricing, role-routing, and safe telemetry controls.
 - Add provider-specific usage/cost normalization and error mapping where APIs differ materially.
 
@@ -413,9 +414,9 @@ Definition of Done:
 - README, setup docs, architecture docs, usage docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, legacy persisted-token compatibility, persisted-token startup bootstrap after env-token removal, assignment-limited token issuance, deactivated-operator token rejection, operator-id actor binding for persisted-token approval decisions, authenticated principal binding for direct CLI execution/runs, direct CLI approval execution, filesystem and command-policy audit events, provider generation/streaming, generated-tool execution, task, agent, memory, tool, and session mutations, persisted external credential references, OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values, shell-free external-process credential resolver adapters with timeout/output bounds, provider-call network/domain guardrails with allow, deny, approval-required, audit decisions, single-use bound network approval records for approval-required provider transport, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator display/role fields plus auth-token and credential-reference labels across responses, audit metadata, and new or mutated JSON state.
+- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, legacy persisted-token compatibility, persisted-token startup bootstrap after env-token removal, assignment-limited token issuance, deactivated-operator token rejection, operator-id actor binding for persisted-token approval decisions, authenticated principal binding for direct CLI execution/runs, direct CLI approval execution, filesystem and command-policy audit events, provider generation/streaming, generated-tool execution, task, agent, memory, tool, and session mutations, persisted external credential references, OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values, shell-free external-process credential resolver adapters with timeout/output bounds, provider-call network/domain guardrails with allow, deny, approval-required, audit decisions, single-use bound network approval records for approval-required provider transport, configured Python socket network policy guardrail for generated-tool subprocesses, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator display/role fields plus auth-token and credential-reference labels across responses, audit metadata, and new or mutated JSON state.
 - Risk updated after Sprint 9 hardening: built-in read-only CLI path operands now receive cwd-aware rootDir checks, symlink escape checks, shell expansion checks, and Windows/POSIX path-shape regressions; broader host-boundary risks remain for trusted custom policy rules, non-built-in exfiltration commands, and time-of-check/time-of-use workspace changes.
-- Remaining: richer user/group identity workflows beyond persisted operators, encrypted local credential vaulting, first-class external secret manager adapters beyond the generic process-adapter bridge, broader CLI host-boundary enforcement beyond the current built-in read-only command set, and non-provider network enforcement surfaces such as web retrieval and generated-tool network access.
+- Remaining: richer user/group identity workflows beyond persisted operators, encrypted local credential vaulting, first-class external secret manager adapters beyond the generic process-adapter bridge, broader CLI host-boundary enforcement beyond the current built-in read-only command set, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation beyond the current Python socket guardrail.
 
 ### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
 
@@ -428,6 +429,7 @@ Needs to be done:
 - Build the web frontend shell for chat/task workflows, sub-agent progress, and rich output rendering.
 - Add interactive approval UI for CLI, filesystem, tool, provider, and network approval-required actions.
 - Add settings UI for auth/session connection, providers, routing, filesystem boundaries, CLI policy, memory, tools, and agent blueprints.
+- Add settings and dashboard surfaces for DGentic-native plugin bundles, command recipes, hook-style safety rules, managed policy sources, and git workflow checkpoints inspired by the Claude Code study.
 - Add dashboard views for runtime status, action logs, provider usage, memory health, tool reliability, and task history.
 - Add API client contracts, authentication handling, loading/error states, and responsive layouts.
 - Add frontend testing strategy and smoke validation against the backend.
@@ -436,6 +438,7 @@ Acceptance criteria:
 - A user can submit a task, inspect plan/progress, review approval-required actions, and view action logs through the UI.
 - Approval UI displays safe review metadata without secret values and records reviewer decisions.
 - Settings and dashboard views cover the core backend surfaces needed for MVP operation.
+- Plugin, command recipe, hook policy, and managed-settings views expose effective policy state without leaking secrets or permitting unaudited enablement.
 - UI works on common desktop browser sizes and remains usable on smaller screens.
 
 Definition of Done:
@@ -458,12 +461,16 @@ Needs to be done:
 - Add VS Code task submission, active agent status, memory/tool status, and approval review surfaces.
 - Add generated-tool discovery or launch integration where safe.
 - Build a dedicated CLI client for health checks, task planning/execution, approvals, CLI runs, providers, memory, tools, and logs.
+- Add a terminal-first command recipe layer for repeated workflows such as sprint execution, approval review, provider checks, git commit/push/PR preparation, branch cleanup, PR review, and release closeout.
+- Define an original DGentic plugin package format for reusable command recipes, agent blueprints, skills, hook policies, generated-tool references, MCP/tool adapter references, and documentation.
 - Share or align API contracts between the web UI, VS Code extension, and CLI client where practical.
 - Add packaging, installation, and smoke validation for both interfaces.
 
 Acceptance criteria:
 - VS Code users can connect to a DGentic backend, submit a task, inspect active agents, and review approval-required actions.
 - CLI users can perform core operational workflows without manually crafting HTTP requests.
+- CLI and VS Code command recipes are auditable, capability-gated, and use the same safe review contracts as backend approvals.
+- Git workflow automation checks the dirty worktree, blocks obvious secret files, records test evidence when available, and asks for approval before destructive branch cleanup or remote publication.
 - Tokens and sensitive settings are masked and not logged.
 - Interface packaging and local install instructions are documented.
 
@@ -484,10 +491,12 @@ User value:
 
 Needs to be done:
 - Add CI pipeline for tests, lint, format, packaging, and release artifact checks.
+- Add CI validation for DGentic plugin manifests, hook policy schemas, command recipe contracts, and dedicated CLI smoke flows.
 - Add deployment infrastructure for local/staging/production environments.
 - Add container or service packaging strategy where appropriate.
 - Add runtime metrics for API latency, task/agent state, provider usage, CLI/tool runs, memory health, and errors.
 - Add structured logs, dashboards, alerts, and operational runbooks.
+- Add managed-settings deployment guidance for organization-wide auth, network, command, hook, plugin trust, provider, and approval policies.
 - Add or validate production-safe CLI process ownership leases before enabling multi-worker deployments, or explicitly constrain deployment to a single worker until BL-001/BL-002 follow-up work lands.
 - Add rollback automation and deployment smoke checks.
 - Add release readiness gates for deployment validation and incident response.
@@ -496,6 +505,7 @@ Acceptance criteria:
 - CI runs the documented quality gates and produces actionable results.
 - A staging deployment can be created and smoke-tested reproducibly.
 - Operators can see health, metrics, logs, and alerts for critical runtime surfaces.
+- Operators can audit effective settings, plugin trust state, hook decisions, command recipe usage, PR review outcomes, and git checkpoint freshness.
 - Rollback procedure is documented and verified through a smoke workflow.
 
 Definition of Done:
@@ -680,7 +690,9 @@ Current Sprint 15 status:
 - Completed checkpoint: BL-009g authenticated audit actor propagation is implemented and focused-validation clean. This slice covers authenticated principal override for spoofed direct execution/generation requesters, cross-principal direct CLI approval execution blocking unless admin, and authenticated audit actors for filesystem, CLI policy, CLI runs, provider generation/streaming, generated tools, task, agent, memory, tool, and session mutation events.
 - Completed checkpoint: BL-009h network approval records are implemented and focused-validation clean. This slice covers `network-approvals.json`, safe review/list/approve/deny APIs, HMAC-bound URL and policy digests, single-use provider transport claims through `network_approval_id`, authenticated requester/decider binding, and no-secret URL/query/context persistence.
 - Completed checkpoint: BL-009i task-scoped orchestration agent-context verification is implemented and focused-validation clean. This slice adds shared active-task context verification for CLI, generated-tool, provider, and network approval surfaces, blocks partial or unmatched caller-supplied `agent_id`/`agent_role`/`task_id` while orchestration tasks are running, preserves omitted-context compatibility, and keeps provider/network approval digests bound to the verified context.
-- Remaining after BL-009i: richer user/group identity workflows, encrypted local credential vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, non-provider network enforcement surfaces, and broader CLI host-boundary enforcement.
+- Completed checkpoint: BL-009j generated-tool network policy guardrail is implemented and focused-validation clean. This slice validates the configured `DGENTIC_NETWORK_DOMAIN_POLICY` before generated-tool subprocess launch, passes only sanitized domain/mode rules to the child process, installs Python socket guards before generated tool imports run, allows `allow` and `audit`, and fails closed for `deny` or `approval_required` generated-tool Python socket attempts.
+- Remaining after BL-009j: richer user/group identity workflows, encrypted local credential vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and broader CLI host-boundary enforcement.
+- Claude Code study incorporation: remaining Sprint 15 security work should also shape DGentic-native hook policy records, managed-settings precedence, plugin trust controls, and pre-action command/filesystem/network safety checks rather than treating these as UI-only features.
 
 Exit criteria:
 - Tokens are hashed at rest and support rotation, expiry, and revocation.
@@ -702,6 +714,7 @@ Exit criteria:
 - Dashboard surfaces provider, memory, tool, task, CLI, approval, and runtime health data.
 - Settings UI covers provider, routing, filesystem, CLI policy, memory, tools, and agent blueprint configuration.
 - UI approval decisions use safe review metadata and do not expose secrets.
+- UI exposes command recipes, plugin trust, hook decisions, managed settings, and git workflow checkpoint state without bypassing backend approvals.
 
 ### Sprint 17: VS Code Extension And Dedicated CLI Client
 
@@ -714,6 +727,8 @@ Stories:
 Exit criteria:
 - VS Code extension can connect to DGentic, submit tasks, show agent/status context, and review approvals.
 - CLI client can run core health, task, approval, CLI-run, provider, memory, tool, session, and log workflows.
+- CLI client includes original DGentic command recipes for common terminal workflows, including safe git commit/push/PR preparation and PR review orchestration.
+- DGentic plugin packages can describe reusable command recipes, agent blueprints, skills, hook policies, generated-tool references, and documentation with audited installation.
 - Extension and CLI auth handling masks tokens and avoids sensitive logs.
 - Local installation and smoke validation are documented.
 
@@ -727,8 +742,10 @@ Stories:
 
 Exit criteria:
 - CI runs tests, lint, format, package build, and release artifact checks.
+- CI validates plugin manifests, hook policy schemas, command recipe contracts, and CLI smoke flows.
 - Staging deployment can be created and smoke-tested reproducibly.
 - Runtime metrics, structured logs, dashboards, and alerts cover critical surfaces.
+- Observability covers hook decisions, plugin execution, command recipe usage, PR review outcomes, and git checkpoint freshness.
 - Multi-worker CLI deployments either have DB-backed process ownership lease validation or are explicitly constrained to a single backend worker.
 - Rollback workflow is documented and smoke-verified.
 
@@ -742,6 +759,7 @@ Stories:
 
 Exit criteria:
 - At least one selected named adapter has a documented configuration contract, guarded generation/streaming support where applicable, approval-safe credential handling, routing integration, no-secret telemetry, and provider-specific tests.
+- Named adapters are packaged as DGentic plugins when that packaging can preserve provider, credential, network, approval, routing, telemetry, streaming, and no-secret guarantees.
 - Existing OpenAI-compatible provider contracts remain backward compatible.
 
 ## Not-Yet-Implemented Coverage Map
@@ -753,7 +771,7 @@ Exit criteria:
 - Production deployment infrastructure and CI/CD pipeline: BL-012, Sprint 18.
 - Provider-specific external AI adapters beyond the generic OpenAI-compatible adapter: BL-013, Sprint 19.
 - Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15. Persisted operator profiles, generated token lifecycle APIs, identity/token/credential metadata redaction, generic external-process credential adapter plumbing, and active-task verification for caller-supplied orchestration agent context are complete; richer identity workflows, encrypted local vaulting, and first-class secret-manager adapters remain.
-- Provider-call network/domain guardrails: completed under BL-009/Sprint 15 BL-009c, with provider-call network approval records completed under BL-009h. Non-provider network enforcement surfaces remain under BL-009/Sprint 15 follow-up.
+- Provider-call network/domain guardrails: completed under BL-009/Sprint 15 BL-009c, with provider-call network approval records completed under BL-009h and generated-tool Python socket policy enforcement completed under BL-009j. Web retrieval network enforcement and OS-level/non-Python egress isolation remain under BL-009/Sprint 15 follow-up.
 - Runtime monitoring, metrics, alerting, and rollback automation: BL-012, Sprint 18.
 - Full process adoption/resumable output after backend restart: BL-002 follow-up, scheduled after the MVP CLI hardening scope.
 - Production multi-worker CLI process ownership and lease validation: BL-001 and BL-012 follow-up, Sprint 18 deployment gating.

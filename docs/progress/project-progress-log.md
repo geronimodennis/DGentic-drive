@@ -4,6 +4,46 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008q Scheduler Lease And Fencing Hardening
+
+Status: completed for the backend MVP scope; Sprint 14 autonomous agent orchestration is closed.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected production scheduling lease/fencing as the final Sprint 14 blocker after detached worker restart adoption.
+- Completed: Developer added a JSON-backed run-level scheduler lease collection with private lease tokens, public execution lease ids, lease acquisition/release/renewal helpers, and active background execution conflict handling for foreground advance/cycle/loop scheduling.
+- Completed: Developer changed scheduling to persist pending-to-running task claims with fixed agent ids before spawning agents, repair missing agent rows with the persisted id, and roll back unspawned claims when agent spawn fails.
+- Completed: Developer added stale-update conflict detection for scheduling mutations and moved agent terminal updates until after the guarded run write succeeds.
+- Completed: Developer required background-owned task updates to hold the current scheduler lease, preflighted detached execution start against active foreground leases, released queued-execution leases on cancellation, and finalized executions that lost their scheduler lease as stale instead of leaving active records wedged.
+- Completed: QA added focused service/API coverage for concurrent scheduler fencing, foreground scheduler conflicts during detached execution, detached start rejection during active foreground scheduling, stale background write rejection, lost-lease stale finalization, startup adoption with scheduler leasing, spawn-failure rollback/retry, and API non-exposure of private scheduler lease tokens.
+- Completed: Reviewer/Security/DevOps findings were remediated for stale background writes, background-start conflict behavior, lost-lease finalization, pre-persist agent mutation, and stale `run_cycle` overwrites.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: scheduler passes now acquire a durable run-level lease before claiming ready tasks.
+- Implemented in this slice: ready tasks transition to `running` with fixed agent ids in persisted run state before agent spawn occurs, preventing duplicate spawn from stale snapshots.
+- Implemented in this slice: if a scheduler crashes after claim but before agent persistence, the next leased scheduler repairs by spawning the same persisted agent id.
+- Implemented in this slice: if agent spawn fails before an agent row exists, the task claim rolls back to pending and the private lease is released so retry can proceed.
+- Implemented in this slice: detached workers hold and renew private scheduler leases; foreground advance/cycle/loop calls return conflict while a detached execution owns the run.
+- Implemented in this slice: stale background workers that lose the scheduler lease cannot persist task completions/failures, and lost-lease finalization marks the execution stale.
+- Implemented in this slice: execution API records expose `scheduler_lease_id` only; private lease tokens stay in the local scheduler-lease collection.
+
+Remaining Sprint 14 work:
+- None for the backend MVP orchestration scope.
+
+Validation:
+- Focused scheduler lease service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "scheduler_lease or background_execution_start_rejects or background_task_update_requires or finalize_marks_lost or task_update_during_detached"` passed with 7 tests.
+- Focused scheduler lease API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "background_execution_cancel_starting or background_execution_start_poll_and_list or advance_and_cycle_reject_active_background_execution"` passed with 3 tests.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 109 tests.
+- Broader orchestration/background API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration or background_execution"` passed with 35 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 837 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Initiate Sprint 15 for production identity, secrets, and network guardrails.
+
 ### Sprint 14 BL-008p Detached Worker Restart Adoption
 
 Status: completed for the scoped detached worker restart adoption/resume slice; Sprint 14 remains active for production scheduling/lease hardening.

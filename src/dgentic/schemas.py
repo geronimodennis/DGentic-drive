@@ -439,6 +439,7 @@ class OrchestrationExecution(BaseModel):
     result: OrchestrationLoopResult | None = None
     requested_by: str | None = None
     supervisor_id: str | None = None
+    scheduler_lease_id: str | None = None
     status_reason: str | None = None
     error: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

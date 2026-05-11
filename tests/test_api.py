@@ -553,7 +553,10 @@ def test_orchestration_api_background_execution_start_poll_and_list(
     assert start_response.status_code == 202
     assert start_response.json()["status"] == "starting"
     assert start_response.json()["request"]["max_iterations"] == 2
+    assert "scheduler_lease_id" in start_response.json()
+    assert "scheduler_lease_token" not in start_response.json()
     assert completed["status"] == "completed"
+    assert "scheduler_lease_token" not in completed
     assert completed["result"]["stopped_reason"] == "waiting_for_agents"
     assert completed["result"]["running_task_ids"] == ["qa-validation"]
     assert list_response.status_code == 200
@@ -750,6 +753,51 @@ def test_orchestration_api_loop_rejects_active_background_execution(
     assert start_response.status_code == 202
     assert loop_response.status_code == 409
     assert start_response.json()["id"] in loop_response.json()["detail"]
+
+
+def test_orchestration_api_advance_and_cycle_reject_active_background_execution(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject foreground schedulers during detached execution from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate detached scheduler exclusion.",
+                    "description": "Foreground schedulers should receive conflict.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Foreground advance and cycle receive conflict.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    start_response = client.post(f"/tasks/orchestrations/{run_id}/executions")
+    advance_response = client.post(f"/tasks/orchestrations/{run_id}/advance")
+    cycle_response = client.post(f"/tasks/orchestrations/{run_id}/cycle")
+
+    assert create_response.status_code == 201
+    assert start_response.status_code == 202
+    assert advance_response.status_code == 409
+    assert cycle_response.status_code == 409
+    assert start_response.json()["id"] in advance_response.json()["detail"]
+    assert start_response.json()["id"] in cycle_response.json()["detail"]
 
 
 def test_orchestration_api_exposes_dependency_context_on_spawned_agent(

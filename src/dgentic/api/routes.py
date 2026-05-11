@@ -472,7 +472,13 @@ def _orchestration_http_error(exc: OrchestrationError) -> HTTPException:
     lowered = message.lower()
     if "not found" in lowered:
         status_code = 404
-    elif "already has active background execution" in lowered or "is not active" in lowered:
+    elif (
+        "already has active background execution" in lowered
+        or "scheduler lease is active" in lowered
+        or "changed during update" in lowered
+        or "no longer active" in lowered
+        or "is not active" in lowered
+    ):
         status_code = 409
     else:
         status_code = 400

@@ -4,12 +4,15 @@ import json
 import re
 import threading
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import PurePosixPath
 from threading import RLock, Thread
 from typing import Any, ParamSpec, TypeVar
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from dgentic.agents import get_agent, spawn_agent, update_agent_status
 from dgentic.database import get_db_session
@@ -68,6 +71,7 @@ ACTIVE_EXECUTION_STATUSES = {
 }
 BACKGROUND_EXECUTION_STALE_AFTER_SECONDS = 300
 BACKGROUND_EXECUTION_HEARTBEAT_INTERVAL_SECONDS = 30
+SCHEDULER_LEASE_SECONDS = 300
 WRITE_FILE_ACTIONS = {
     "write",
     "binary_write",
@@ -76,6 +80,23 @@ WRITE_FILE_ACTIONS = {
     "copy",
     "rename",
 }
+
+
+class _SchedulerLease(BaseModel):
+    id: str
+    run_id: str
+    supervisor_id: str
+    lease_token: str
+    execution_id: str | None = None
+    acquired_at: datetime
+    heartbeat_at: datetime
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class _ScheduleClaim:
+    task_id: str
+    agent_id: str
 
 
 class OrchestrationError(ValueError):
@@ -118,6 +139,11 @@ class OrchestrationService:
     def __init__(self) -> None:
         self._runs = JsonCollection("orchestrations", OrchestrationRun)
         self._executions = JsonCollection("orchestration-executions", OrchestrationExecution)
+        self._scheduler_leases = JsonCollection(
+            "orchestration-scheduler-leases",
+            _SchedulerLease,
+            key_field="run_id",
+        )
         self._mutation_lock = RLock()
         self.supervisor_id = f"orchestration-supervisor-{uuid4()}"
         self.resume_stale_background_executions()
@@ -167,8 +193,8 @@ class OrchestrationService:
             follow_ups=follow_ups,
             requested_by=actor or request.requested_by,
         )
-        run = self._schedule_ready_tasks(run, actor=actor)
         run = self._persist(run)
+        run = self._schedule_ready_tasks(run, actor=actor)
         event_log.record(
             LogEventType.task,
             "Created orchestration run.",
@@ -292,8 +318,7 @@ class OrchestrationService:
     ) -> OrchestrationRun:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
-        updated = self._schedule_ready_tasks(run, actor=actor)
-        return self._persist(updated)
+        return self._schedule_ready_tasks(run, actor=actor)
 
     @_locked_mutation
     def run_cycle(
@@ -302,9 +327,22 @@ class OrchestrationService:
         *,
         actor: str | None = None,
         include_all: bool = True,
+        background_execution_id: str | None = None,
     ) -> OrchestrationRun:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
+        scheduler_lease_token: str | None = None
+        if background_execution_id is not None:
+            scheduler_lease_token = self._scheduler_lease_token_for_execution(
+                background_execution_id
+            )
+            self._require_scheduler_lease(run.id, scheduler_lease_token)
+        self.reconcile_stale_background_executions()
+        active_execution = self._active_background_execution_for_run(run.id)
+        if active_execution is not None and active_execution.id != background_execution_id:
+            raise OrchestrationError(
+                f"Orchestration already has active background execution: {active_execution.id}"
+            )
         task_updates = [
             (task.id, update)
             for task in run.tasks
@@ -314,8 +352,11 @@ class OrchestrationService:
         ]
 
         if not task_updates:
-            updated = self._schedule_ready_tasks(run, actor=actor)
-            return self._persist(updated)
+            return self._schedule_ready_tasks(
+                run,
+                actor=actor,
+                background_execution_id=background_execution_id,
+            )
 
         scheduled_task_ids: list[str] = []
         for task_id, update in task_updates:
@@ -325,6 +366,8 @@ class OrchestrationService:
                 update,
                 actor=actor,
                 include_all=include_all,
+                background_execution_id=background_execution_id,
+                scheduler_lease_token=scheduler_lease_token,
             )
             scheduled_task_ids.extend(
                 task_id for task_id in run.scheduled_task_ids if task_id not in scheduled_task_ids
@@ -341,7 +384,7 @@ class OrchestrationService:
                 "scheduled": scheduled_task_ids,
             },
         )
-        return self._persist(run)
+        return run
 
     @_locked_mutation
     def run_loop(
@@ -369,7 +412,12 @@ class OrchestrationService:
 
         while stopped_reason is None and iterations < request.max_iterations:
             before = _progress_signature(run)
-            run = self.run_cycle(run.id, actor=actor, include_all=include_all)
+            run = self.run_cycle(
+                run.id,
+                actor=actor,
+                include_all=include_all,
+                background_execution_id=background_execution_id,
+            )
             iterations += 1
             progressed = _progress_signature(run) != before
             made_progress = made_progress or progressed
@@ -433,7 +481,17 @@ class OrchestrationService:
             started_at=now,
             last_heartbeat_at=now,
         )
-        saved = self._claim_background_execution(execution)
+        lease = self._acquire_scheduler_lease(
+            run.id,
+            execution_id=execution.id,
+            actor=actor,
+        )
+        execution = execution.model_copy(update={"scheduler_lease_id": lease.id})
+        try:
+            saved = self._claim_background_execution(execution)
+        except Exception:
+            self._release_scheduler_lease(run.id, lease.lease_token)
+            raise
         event_log.record(
             LogEventType.task,
             "Recorded orchestration background execution launch intent.",
@@ -442,6 +500,7 @@ class OrchestrationService:
             metadata={
                 "run_id": saved.run_id,
                 "supervisor_id": saved.supervisor_id,
+                "scheduler_lease_id": lease.id,
                 "max_iterations": request.max_iterations,
                 "stop_on_blocked": request.stop_on_blocked,
             },
@@ -522,6 +581,8 @@ class OrchestrationService:
             raise OrchestrationError(
                 f"Orchestration background execution not found: {execution_id}"
             )
+        if execution.scheduler_lease_id and saved.status == OrchestrationExecutionStatus.cancelled:
+            self._release_scheduler_lease_by_id(run_id, execution.scheduler_lease_id)
         event_log.record(
             LogEventType.task,
             (
@@ -628,9 +689,18 @@ class OrchestrationService:
         *,
         actor: str | None = None,
         include_all: bool = True,
+        background_execution_id: str | None = None,
+        scheduler_lease_token: str | None = None,
     ) -> OrchestrationRun:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
+        if background_execution_id is not None:
+            scheduler_lease_token = (
+                scheduler_lease_token
+                or self._scheduler_lease_token_for_execution(background_execution_id)
+            )
+            self._require_scheduler_lease(run.id, scheduler_lease_token)
+        base_signature = _progress_signature(run)
         task = _task_by_id(run, task_id)
         _validate_task_update(task, update)
         now = datetime.now(UTC)
@@ -675,12 +745,22 @@ class OrchestrationService:
                 "updated_at": now,
             }
         )
+        run = self._persist_if_run_unchanged(
+            run,
+            expected_signature=base_signature,
+            scheduler_lease_token=scheduler_lease_token,
+        )
         if task.agent_id:
             _update_agent_for_task(task.agent_id, update.status, update.error)
         if updated_task.status == StepStatus.completed:
-            self._publish_completed_task_memory(run, updated_task, actor=actor)
+            self._publish_completed_task_memory(run, _task_by_id(run, updated_task.id), actor=actor)
         if updated_task.status in {StepStatus.completed, StepStatus.pending}:
-            run = self._schedule_ready_tasks(run, actor=actor)
+            run = self._schedule_ready_tasks(
+                run,
+                actor=actor,
+                background_execution_id=background_execution_id,
+                skip_foreground_conflict=True,
+            )
         _record_task_update_event(
             run,
             task,
@@ -690,7 +770,7 @@ class OrchestrationService:
             previous_follow_up_ids=previous_follow_up_ids,
             actor=actor,
         )
-        return self._persist(run)
+        return run
 
     @_locked_mutation
     def recover_task(
@@ -704,6 +784,7 @@ class OrchestrationService:
     ) -> OrchestrationRun:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
+        base_signature = _progress_signature(run)
         task = _task_by_id(run, task_id)
         if task.status != StepStatus.blocked:
             raise OrchestrationError(
@@ -801,8 +882,9 @@ class OrchestrationService:
                 ),
             },
         )
+        run = self._persist_if_run_unchanged(run, expected_signature=base_signature)
         run = self._schedule_ready_tasks(run, actor=actor)
-        return self._persist(run)
+        return run
 
     @_locked_mutation
     def resolve_blocker(
@@ -816,6 +898,7 @@ class OrchestrationService:
     ) -> OrchestrationRun:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
+        base_signature = _progress_signature(run)
         blocker = _blocker_by_id(run, blocker_id)
         if not _is_unresolved_blocker(blocker):
             raise OrchestrationError(f"Blocker is already resolved: {blocker_id}")
@@ -865,6 +948,7 @@ class OrchestrationService:
                 "updated_at": now,
             }
         )
+        run = self._persist_if_run_unchanged(run, expected_signature=base_signature)
         if should_reschedule:
             run = self._schedule_ready_tasks(run, actor=actor)
         was_rescheduled = blocker.task_id in run.scheduled_task_ids
@@ -883,7 +967,7 @@ class OrchestrationService:
                 "rescheduled": was_rescheduled,
             },
         )
-        return self._persist(run)
+        return run
 
     @_locked_mutation
     def close_run(
@@ -1210,13 +1294,14 @@ class OrchestrationService:
                 execution,
                 supervisor_id=self.supervisor_id,
                 now=now,
-            ):
+            ) and not self._background_execution_lost_scheduler_lease(execution, now=now):
                 updated_executions.append(execution)
                 continue
             stale_execution = execution.model_copy(
                 update={
                     "status": OrchestrationExecutionStatus.stale,
                     "status_reason": ("Background execution supervisor heartbeat expired."),
+                    "scheduler_lease_id": None,
                     "completed_at": now,
                     "last_heartbeat_at": now,
                 }
@@ -1224,6 +1309,27 @@ class OrchestrationService:
             stale_executions.append(stale_execution)
             updated_executions.append(stale_execution)
         return updated_executions, stale_executions
+
+    def _background_execution_lost_scheduler_lease(
+        self,
+        execution: OrchestrationExecution,
+        *,
+        now: datetime,
+    ) -> bool:
+        if (
+            execution.status not in ACTIVE_EXECUTION_STATUSES
+            or execution.supervisor_id != self.supervisor_id
+            or not execution.scheduler_lease_id
+        ):
+            return False
+        lease = self._scheduler_leases.get(execution.run_id)
+        return (
+            lease is None
+            or lease.id != execution.scheduler_lease_id
+            or lease.execution_id != execution.id
+            or lease.supervisor_id != self.supervisor_id
+            or lease.expires_at <= now
+        )
 
     def _adopt_stale_background_executions(
         self,
@@ -1260,6 +1366,7 @@ class OrchestrationService:
                             "Orchestration background execution cancelled after restart."
                         ),
                         "error": None,
+                        "scheduler_lease_id": None,
                         "completed_at": now,
                         "last_heartbeat_at": now,
                     }
@@ -1274,6 +1381,7 @@ class OrchestrationService:
                         "status_reason": (
                             "Stale background execution skipped because the run is not resumable."
                         ),
+                        "scheduler_lease_id": None,
                         "completed_at": now,
                         "last_heartbeat_at": now,
                     }
@@ -1288,6 +1396,7 @@ class OrchestrationService:
                         "status_reason": (
                             "Duplicate stale background execution skipped during adoption."
                         ),
+                        "scheduler_lease_id": None,
                         "completed_at": now,
                         "last_heartbeat_at": now,
                     }
@@ -1301,6 +1410,7 @@ class OrchestrationService:
                     "supervisor_id": self.supervisor_id,
                     "status_reason": ("Orchestration background execution adopted after restart."),
                     "error": None,
+                    "scheduler_lease_id": None,
                     "completed_at": None,
                     "last_heartbeat_at": now,
                 }
@@ -1418,6 +1528,19 @@ class OrchestrationService:
         self,
         execution_id: str,
     ) -> OrchestrationExecution | None:
+        current_execution = self._executions.get(execution_id)
+        if (
+            current_execution is None
+            or current_execution.status not in ACTIVE_EXECUTION_STATUSES
+            or current_execution.supervisor_id != self.supervisor_id
+        ):
+            return None
+        if (
+            current_execution.scheduler_lease_id
+            and self._renew_scheduler_lease_for_execution(current_execution) is None
+        ):
+            return None
+
         def heartbeat(
             items: list[OrchestrationExecution],
         ) -> tuple[list[OrchestrationExecution], OrchestrationExecution | None]:
@@ -1485,6 +1608,7 @@ class OrchestrationService:
                                 "Orchestration background execution cancelled before start."
                             ),
                             "error": None,
+                            "scheduler_lease_id": None,
                             "completed_at": now,
                             "last_heartbeat_at": now,
                         }
@@ -1515,6 +1639,21 @@ class OrchestrationService:
         *,
         actor: str | None,
     ) -> OrchestrationExecution | None:
+        current_execution = self._executions.get(execution_id)
+        if (
+            current_execution is None
+            or current_execution.status != OrchestrationExecutionStatus.starting
+            or current_execution.supervisor_id != self.supervisor_id
+        ):
+            return None
+        lease = self._scheduler_lease_for_execution(current_execution)
+        if lease is None:
+            lease = self._acquire_scheduler_lease(
+                current_execution.run_id,
+                execution_id=execution_id,
+                actor=actor,
+            )
+
         def mark_running(
             items: list[OrchestrationExecution],
         ) -> tuple[list[OrchestrationExecution], OrchestrationExecution | None]:
@@ -1535,6 +1674,7 @@ class OrchestrationService:
                     update={
                         "status": OrchestrationExecutionStatus.running,
                         "status_reason": "Orchestration background execution is running.",
+                        "scheduler_lease_id": lease.id,
                         "last_heartbeat_at": now,
                     }
                 )
@@ -1543,6 +1683,7 @@ class OrchestrationService:
 
         saved = self._executions.transact(mark_running)
         if saved is None:
+            self._release_scheduler_lease(current_execution.run_id, lease.lease_token)
             return None
         event_log.record(
             LogEventType.task,
@@ -1552,6 +1693,7 @@ class OrchestrationService:
             metadata={
                 "run_id": saved.run_id,
                 "supervisor_id": saved.supervisor_id,
+                "scheduler_lease_id": lease.id,
             },
         )
         return saved
@@ -1582,6 +1724,25 @@ class OrchestrationService:
                 ):
                     updated_items.append(execution)
                     continue
+                if execution.scheduler_lease_id and not self._scheduler_lease_matches(
+                    execution.run_id,
+                    execution.scheduler_lease_id,
+                ):
+                    saved = execution.model_copy(
+                        update={
+                            "status": OrchestrationExecutionStatus.stale,
+                            "result": None,
+                            "status_reason": (
+                                "Background execution lost its scheduler lease before finalizing."
+                            ),
+                            "error": None,
+                            "scheduler_lease_id": None,
+                            "completed_at": now,
+                            "last_heartbeat_at": now,
+                        }
+                    )
+                    updated_items.append(saved)
+                    continue
                 resolved_status = (
                     OrchestrationExecutionStatus.cancelled
                     if execution.status == OrchestrationExecutionStatus.cancelling
@@ -1608,6 +1769,8 @@ class OrchestrationService:
         saved = self._executions.transact(finalize)
         if saved is None:
             return None
+        if saved.scheduler_lease_id:
+            self._release_scheduler_lease_by_id(saved.run_id, saved.scheduler_lease_id)
         event_log.record(
             LogEventType.task,
             (
@@ -1689,9 +1852,372 @@ class OrchestrationService:
             if session is not None:
                 session.close()
 
+    def _acquire_scheduler_lease(
+        self,
+        run_id: str,
+        *,
+        execution_id: str | None = None,
+        actor: str | None = None,
+    ) -> _SchedulerLease:
+        now = datetime.now(UTC)
+        if execution_id is None:
+            self.reconcile_stale_background_executions()
+            active_execution = self._active_background_execution_for_run(run_id)
+            if active_execution is not None:
+                raise OrchestrationError(
+                    f"Orchestration already has active background execution: {active_execution.id}"
+                )
+        lease = _SchedulerLease(
+            id=f"orchlease-{uuid4()}",
+            run_id=run_id,
+            supervisor_id=self.supervisor_id,
+            execution_id=execution_id,
+            lease_token=f"orchlease-token-{uuid4()}",
+            acquired_at=now,
+            heartbeat_at=now,
+            expires_at=now + timedelta(seconds=SCHEDULER_LEASE_SECONDS),
+        )
+
+        def claim(
+            items: list[_SchedulerLease],
+        ) -> tuple[list[_SchedulerLease], _SchedulerLease]:
+            updated_items: list[_SchedulerLease] = []
+            replaced = False
+            for existing in items:
+                if existing.run_id != run_id:
+                    updated_items.append(existing)
+                    continue
+                if existing.expires_at > now:
+                    holder = existing.execution_id or existing.supervisor_id
+                    raise OrchestrationError(
+                        f"Orchestration scheduler lease is active for run {run_id}: {holder}"
+                    )
+                updated_items.append(lease)
+                replaced = True
+            if not replaced:
+                updated_items.append(lease)
+            return updated_items, lease
+
+        saved = self._scheduler_leases.transact(claim)
+        event_log.record(
+            LogEventType.task,
+            "Acquired orchestration scheduler lease.",
+            actor=actor or "system",
+            subject_id=run_id,
+            metadata={
+                "lease_id": saved.id,
+                "supervisor_id": saved.supervisor_id,
+                "execution_id": saved.execution_id,
+                "expires_at": saved.expires_at.isoformat(),
+            },
+        )
+        return saved
+
+    def _require_scheduler_lease(
+        self,
+        run_id: str,
+        lease_token: str | None,
+    ) -> _SchedulerLease:
+        if lease_token is None:
+            raise OrchestrationError(f"Orchestration scheduler lease is missing for run {run_id}.")
+        lease = self._scheduler_leases.get(run_id)
+        now = datetime.now(UTC)
+        if lease is None or lease.lease_token != lease_token or lease.expires_at <= now:
+            raise OrchestrationError(
+                f"Orchestration scheduler lease is no longer active for run {run_id}."
+            )
+        return lease
+
+    def _release_scheduler_lease(
+        self,
+        run_id: str,
+        lease_token: str,
+    ) -> None:
+        def release(
+            items: list[_SchedulerLease],
+        ) -> tuple[list[_SchedulerLease], _SchedulerLease | None]:
+            released: _SchedulerLease | None = None
+            updated_items: list[_SchedulerLease] = []
+            for lease in items:
+                if lease.run_id == run_id and lease.lease_token == lease_token:
+                    released = lease
+                    continue
+                updated_items.append(lease)
+            return updated_items, released
+
+        released = self._scheduler_leases.transact(release)
+        if released is None:
+            return
+        event_log.record(
+            LogEventType.task,
+            "Released orchestration scheduler lease.",
+            subject_id=run_id,
+            metadata={
+                "lease_id": released.id,
+                "supervisor_id": released.supervisor_id,
+                "execution_id": released.execution_id,
+            },
+        )
+
+    def _release_scheduler_lease_by_id(
+        self,
+        run_id: str,
+        lease_id: str,
+    ) -> None:
+        lease = self._scheduler_leases.get(run_id)
+        if lease is None or lease.id != lease_id:
+            return
+        self._release_scheduler_lease(run_id, lease.lease_token)
+
+    def _renew_scheduler_lease(
+        self,
+        run_id: str,
+        lease_token: str,
+    ) -> _SchedulerLease | None:
+        def renew(
+            items: list[_SchedulerLease],
+        ) -> tuple[list[_SchedulerLease], _SchedulerLease | None]:
+            now = datetime.now(UTC)
+            updated_items: list[_SchedulerLease] = []
+            saved: _SchedulerLease | None = None
+            for lease in items:
+                if lease.run_id != run_id or lease.lease_token != lease_token:
+                    updated_items.append(lease)
+                    continue
+                if lease.expires_at <= now or lease.supervisor_id != self.supervisor_id:
+                    updated_items.append(lease)
+                    continue
+                saved = lease.model_copy(
+                    update={
+                        "heartbeat_at": now,
+                        "expires_at": now + timedelta(seconds=SCHEDULER_LEASE_SECONDS),
+                    }
+                )
+                updated_items.append(saved)
+            return updated_items, saved
+
+        return self._scheduler_leases.transact(renew)
+
+    def _renew_scheduler_lease_for_execution(
+        self,
+        execution: OrchestrationExecution,
+    ) -> _SchedulerLease | None:
+        lease = self._scheduler_lease_for_execution(execution)
+        if lease is None:
+            return None
+        return self._renew_scheduler_lease(execution.run_id, lease.lease_token)
+
+    def _scheduler_lease_for_execution(
+        self,
+        execution: OrchestrationExecution,
+    ) -> _SchedulerLease | None:
+        lease = self._scheduler_leases.get(execution.run_id)
+        if (
+            lease is None
+            or lease.id != execution.scheduler_lease_id
+            or lease.execution_id != execution.id
+            or lease.supervisor_id != self.supervisor_id
+            or lease.expires_at <= datetime.now(UTC)
+        ):
+            return None
+        return lease
+
+    def _scheduler_lease_matches(
+        self,
+        run_id: str,
+        lease_id: str,
+    ) -> bool:
+        lease = self._scheduler_leases.get(run_id)
+        return (
+            lease is not None
+            and lease.id == lease_id
+            and lease.supervisor_id == self.supervisor_id
+            and lease.expires_at > datetime.now(UTC)
+        )
+
+    def _scheduler_lease_token_for_execution(self, execution_id: str | None) -> str:
+        if execution_id is None:
+            raise OrchestrationError("Background scheduler execution id is missing.")
+        execution = self._executions.get(execution_id)
+        if (
+            execution is None
+            or execution.status not in ACTIVE_EXECUTION_STATUSES
+            or execution.supervisor_id != self.supervisor_id
+            or not execution.scheduler_lease_id
+        ):
+            raise OrchestrationError(
+                f"Background execution does not hold the scheduler lease: {execution_id}"
+            )
+        lease = self._scheduler_leases.get(execution.run_id)
+        if (
+            lease is None
+            or lease.id != execution.scheduler_lease_id
+            or lease.execution_id != execution.id
+            or lease.supervisor_id != self.supervisor_id
+            or lease.expires_at <= datetime.now(UTC)
+        ):
+            raise OrchestrationError(
+                f"Background execution does not hold the scheduler lease: {execution_id}"
+            )
+        return lease.lease_token
+
+    def _claim_ready_tasks_for_schedule(
+        self,
+        run_id: str,
+        lease_token: str,
+    ) -> tuple[OrchestrationRun, list[_ScheduleClaim], list[str]]:
+        self._require_scheduler_lease(run_id, lease_token)
+
+        def claim(
+            items: list[OrchestrationRun],
+        ) -> tuple[
+            list[OrchestrationRun],
+            tuple[OrchestrationRun, list[_ScheduleClaim], list[str]],
+        ]:
+            self._require_scheduler_lease(run_id, lease_token)
+            now = datetime.now(UTC)
+            updated_items: list[OrchestrationRun] = []
+            saved: OrchestrationRun | None = None
+            claims: list[_ScheduleClaim] = []
+            scheduled_task_ids: list[str] = []
+            for candidate in items:
+                if candidate.id != run_id:
+                    updated_items.append(candidate)
+                    continue
+                _ensure_run_open(candidate)
+                tasks_by_id = {task.id: task for task in candidate.tasks}
+                updated_tasks: list[OrchestrationTask] = []
+                for task in candidate.tasks:
+                    if (
+                        len(scheduled_task_ids) < MAX_READY_TASKS_PER_ADVANCE
+                        and task.status == StepStatus.pending
+                        and all(
+                            tasks_by_id[dependency].status == StepStatus.completed
+                            for dependency in task.dependencies
+                        )
+                    ):
+                        agent_id = task.agent_id or f"agent-{uuid4()}"
+                        updated_tasks.append(
+                            task.model_copy(
+                                update={"status": StepStatus.running, "agent_id": agent_id}
+                            )
+                        )
+                        claims.append(_ScheduleClaim(task_id=task.id, agent_id=agent_id))
+                        scheduled_task_ids.append(task.id)
+                        continue
+                    if (
+                        task.status == StepStatus.running
+                        and task.agent_id
+                        and get_agent(task.agent_id) is None
+                    ):
+                        claims.append(_ScheduleClaim(task_id=task.id, agent_id=task.agent_id))
+                    updated_tasks.append(task)
+                saved = candidate.model_copy(
+                    update={
+                        "tasks": updated_tasks,
+                        "scheduled_task_ids": scheduled_task_ids,
+                        "updated_at": now,
+                    }
+                )
+                updated_items.append(saved)
+            if saved is None:
+                raise OrchestrationError(f"Orchestration not found: {run_id}")
+            return updated_items, (saved, claims, scheduled_task_ids)
+
+        return self._runs.transact(claim)
+
+    def _rollback_unspawned_schedule_claims(
+        self,
+        run_id: str,
+        claims: list[_ScheduleClaim],
+        *,
+        spawned_agent_ids: set[str],
+    ) -> OrchestrationRun:
+        unspawned_agent_ids = {
+            claim.agent_id for claim in claims if claim.agent_id not in spawned_agent_ids
+        }
+        if not unspawned_agent_ids:
+            current = self._runs.get(run_id)
+            if current is None:
+                raise OrchestrationError(f"Orchestration not found: {run_id}")
+            return current
+
+        def rollback(
+            items: list[OrchestrationRun],
+        ) -> tuple[list[OrchestrationRun], OrchestrationRun]:
+            updated_items: list[OrchestrationRun] = []
+            saved: OrchestrationRun | None = None
+            for candidate in items:
+                if candidate.id != run_id:
+                    updated_items.append(candidate)
+                    continue
+                tasks: list[OrchestrationTask] = []
+                for task in candidate.tasks:
+                    if task.status == StepStatus.running and task.agent_id in unspawned_agent_ids:
+                        tasks.append(
+                            task.model_copy(update={"status": StepStatus.pending, "agent_id": None})
+                        )
+                    else:
+                        tasks.append(task)
+                saved = candidate.model_copy(
+                    update={
+                        "tasks": tasks,
+                        "scheduled_task_ids": [
+                            task_id
+                            for task_id in candidate.scheduled_task_ids
+                            if _task_by_id(candidate, task_id).agent_id not in unspawned_agent_ids
+                        ],
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+                updated_items.append(saved)
+            if saved is None:
+                raise OrchestrationError(f"Orchestration not found: {run_id}")
+            return updated_items, saved
+
+        return self._runs.transact(rollback)
+
     def _persist(self, run: OrchestrationRun) -> OrchestrationRun:
         run = run.model_copy(update={"updated_at": datetime.now(UTC)})
         saved = self._runs.upsert(run)
+        self._sync_project_documents(saved)
+        return saved
+
+    def _persist_if_run_unchanged(
+        self,
+        run: OrchestrationRun,
+        *,
+        expected_signature: str,
+        scheduler_lease_token: str | None = None,
+    ) -> OrchestrationRun:
+        run = run.model_copy(update={"updated_at": datetime.now(UTC)})
+
+        def save(
+            items: list[OrchestrationRun],
+        ) -> tuple[list[OrchestrationRun], OrchestrationRun]:
+            if scheduler_lease_token is not None:
+                self._require_scheduler_lease(run.id, scheduler_lease_token)
+            updated_items: list[OrchestrationRun] = []
+            saved: OrchestrationRun | None = None
+            for candidate in items:
+                if candidate.id != run.id:
+                    updated_items.append(candidate)
+                    continue
+                if _progress_signature(candidate) != expected_signature:
+                    raise OrchestrationError(
+                        f"Orchestration changed during update; retry run {run.id}."
+                    )
+                saved = run
+                updated_items.append(saved)
+            if saved is None:
+                raise OrchestrationError(f"Orchestration not found: {run.id}")
+            return updated_items, saved
+
+        saved = self._runs.transact(save)
+        self._sync_project_documents(saved)
+        return saved
+
+    def _sync_project_documents(self, saved: OrchestrationRun) -> None:
         try:
             sync_result = sync_orchestration_documents(self._runs.list)
         except (OSError, ValueError) as exc:
@@ -1711,60 +2237,80 @@ class OrchestrationService:
                 subject_id=saved.id,
                 metadata=sync_result.model_dump(),
             )
-        return saved
 
     def _schedule_ready_tasks(
         self,
         run: OrchestrationRun,
         *,
         actor: str | None = None,
+        background_execution_id: str | None = None,
+        skip_foreground_conflict: bool = False,
     ) -> OrchestrationRun:
-        tasks_by_id = {task.id: task for task in run.tasks}
-        scheduled_task_ids: list[str] = []
-        updated_tasks: list[OrchestrationTask] = []
+        foreground_lease = background_execution_id is None
+        lease_token: str | None = None
+        if foreground_lease:
+            try:
+                lease = self._acquire_scheduler_lease(run.id, actor=actor)
+            except OrchestrationError:
+                if skip_foreground_conflict:
+                    current = self._runs.get(run.id)
+                    return current or run
+                raise
+            lease_token = lease.lease_token
+        else:
+            lease_token = self._scheduler_lease_token_for_execution(background_execution_id)
+            self._require_scheduler_lease(run.id, lease_token)
 
-        for task in run.tasks:
-            if len(scheduled_task_ids) >= MAX_READY_TASKS_PER_ADVANCE:
-                updated_tasks.append(task)
-                continue
-            if task.status != StepStatus.pending:
-                updated_tasks.append(task)
-                continue
-            if not all(
-                tasks_by_id[dependency].status == StepStatus.completed
-                for dependency in task.dependencies
-            ):
-                updated_tasks.append(task)
-                continue
+        spawned_agent_ids: set[str] = set()
+        try:
+            saved, claims, scheduled_task_ids = self._claim_ready_tasks_for_schedule(
+                run.id,
+                lease_token,
+            )
+            if not claims:
+                self._sync_project_documents(saved)
+                return saved
 
-            agent = spawn_agent(
-                _agent_brief_for_task(
-                    run,
-                    task,
-                    tasks_by_id,
-                    memory_context=self._memory_context_for_task(run, task),
+            try:
+                for claim in claims:
+                    task = _task_by_id(saved, claim.task_id)
+                    if get_agent(claim.agent_id) is not None:
+                        spawned_agent_ids.add(claim.agent_id)
+                        continue
+                    tasks_by_id = {candidate.id: candidate for candidate in saved.tasks}
+                    brief = _agent_brief_for_task(
+                        saved,
+                        task,
+                        tasks_by_id,
+                        memory_context=self._memory_context_for_task(saved, task),
+                    ).model_copy(update={"id": claim.agent_id})
+                    agent = spawn_agent(brief)
+                    spawned_agent_ids.add(agent.id)
+            except Exception as exc:
+                rolled_back = self._rollback_unspawned_schedule_claims(
+                    saved.id,
+                    claims,
+                    spawned_agent_ids=spawned_agent_ids,
                 )
-            )
-            updated_tasks.append(
-                task.model_copy(update={"status": StepStatus.running, "agent_id": agent.id})
-            )
-            scheduled_task_ids.append(task.id)
+                self._sync_project_documents(rolled_back)
+                safe_error = redact_sensitive_values(f"{type(exc).__name__}: {exc}")
+                raise OrchestrationError(
+                    f"Failed to spawn scheduled orchestration agent: {safe_error}"
+                ) from exc
 
-        if scheduled_task_ids:
-            event_log.record(
-                LogEventType.task,
-                "Scheduled orchestration tasks.",
-                actor=actor or "system",
-                subject_id=run.id,
-                metadata={"task_ids": scheduled_task_ids},
-            )
-        return run.model_copy(
-            update={
-                "tasks": updated_tasks,
-                "scheduled_task_ids": scheduled_task_ids,
-                "updated_at": datetime.now(UTC),
-            }
-        )
+            if scheduled_task_ids:
+                event_log.record(
+                    LogEventType.task,
+                    "Scheduled orchestration tasks.",
+                    actor=actor or "system",
+                    subject_id=saved.id,
+                    metadata={"task_ids": scheduled_task_ids},
+                )
+            self._sync_project_documents(saved)
+            return saved
+        finally:
+            if foreground_lease and lease_token is not None:
+                self._release_scheduler_lease(run.id, lease_token)
 
     def _validate_graph(self, tasks: list[OrchestrationTask]) -> None:
         task_ids = [task.id for task in tasks]

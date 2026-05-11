@@ -1,10 +1,12 @@
 import json
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from dgentic.agents import get_agent, update_agent_status
+from dgentic.agents import get_agent, list_agents, update_agent_status
+from dgentic.agents import spawn_agent as real_spawn_agent
 from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
 from dgentic.memory.metadata_service import MetadataService
@@ -22,6 +24,7 @@ from dgentic.schemas import (
     OrchestrationExecutionStatus,
     OrchestrationLoopRequest,
     OrchestrationLoopResult,
+    OrchestrationRun,
     OrchestrationTask,
     OrchestrationTaskRecoveryRequest,
     OrchestrationTaskSpec,
@@ -902,6 +905,307 @@ def test_background_execution_blocks_foreground_loop_while_active(
 
     with pytest.raises(OrchestrationError, match=execution.id):
         service.run_loop(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+
+def test_scheduler_lease_fences_concurrent_advance_across_service_instances(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    service1 = OrchestrationService()
+    run = OrchestrationRun(
+        id="orch-scheduler-race",
+        objective="Fence concurrent schedulers.",
+        tasks=[_run_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+    )
+    service1._runs.upsert(run)
+    service2 = OrchestrationService()
+    gate = _SpawnGate(real_spawn_agent)
+    monkeypatch.setattr("dgentic.orchestration.spawn_agent", gate)
+
+    worker = _start_thread(lambda: service1.advance_run(run.id))
+    assert gate.entered.wait(5), "first scheduler did not reach spawn"
+
+    with pytest.raises(OrchestrationError, match="scheduler lease is active"):
+        service2.advance_run(run.id)
+
+    gate.release.set()
+    scheduled = _finish_thread(worker)
+    final = service2.get_run(run.id)
+    assert final is not None
+    task = _task_by_id(final, "qa-validation")
+    scheduled_task = _task_by_id(scheduled, "qa-validation")
+    matching_agents = [agent for agent in list_agents() if agent.task_id == "qa-validation"]
+
+    assert task.status == StepStatus.running
+    assert task.agent_id == scheduled_task.agent_id
+    assert [agent.id for agent in matching_agents] == [task.agent_id]
+    assert service2._scheduler_leases.get(run.id) is None
+
+
+def test_background_execution_start_rejects_active_foreground_scheduler_lease(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    service1 = OrchestrationService()
+    run = OrchestrationRun(
+        id="orch-background-start-foreground-lease",
+        objective="Reject detached start while foreground scheduling owns the run.",
+        tasks=[_run_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+    )
+    service1._runs.upsert(run)
+    service2 = OrchestrationService()
+    gate = _SpawnGate(real_spawn_agent)
+    monkeypatch.setattr("dgentic.orchestration.spawn_agent", gate)
+
+    worker = _start_thread(lambda: service1.advance_run(run.id))
+    assert gate.entered.wait(5), "foreground scheduler did not reach spawn"
+
+    with pytest.raises(OrchestrationError, match="scheduler lease is active"):
+        service2.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    gate.release.set()
+    _finish_thread(worker)
+    assert service2.list_background_executions(run.id) == []
+
+
+def test_scheduler_lease_blocks_foreground_advance_and_cycle_during_detached_execution(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Fence foreground schedulers during detached execution.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    execution = service.start_background_execution(run.id, OrchestrationLoopRequest())
+
+    with pytest.raises(OrchestrationError, match=execution.id):
+        service.advance_run(run.id)
+    with pytest.raises(OrchestrationError, match=execution.id):
+        service.run_cycle(run.id)
+
+
+def test_background_task_update_requires_active_scheduler_lease(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject stale background task writes.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    assert task.agent_id
+    now = datetime.now(UTC)
+    lease = service._acquire_scheduler_lease(run.id, execution_id="orchexec-stale-writer")
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-stale-writer",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id=service.supervisor_id,
+            scheduler_lease_id=lease.id,
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+    )
+    service._scheduler_leases.upsert(
+        lease.model_copy(update={"expires_at": now - timedelta(seconds=1)})
+    )
+
+    with pytest.raises(OrchestrationError, match="does not hold the scheduler lease"):
+        service.update_task(
+            run.id,
+            "qa-validation",
+            OrchestrationTaskUpdate(status=StepStatus.completed, output={"done": True}),
+            background_execution_id="orchexec-stale-writer",
+        )
+
+    persisted = service.get_run(run.id)
+    assert persisted is not None
+    persisted_task = _task_by_id(persisted, "qa-validation")
+    agent = get_agent(task.agent_id)
+    assert persisted_task.status == StepStatus.running
+    assert persisted_task.output == {}
+    assert agent is not None
+    assert agent.status == AgentStatus.running
+
+
+def test_background_execution_finalize_marks_lost_scheduler_lease_stale(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = OrchestrationRun(
+        id="orch-expired-background-lease",
+        objective="Avoid wedging expired background leases.",
+        tasks=[_run_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+    )
+    service._runs.upsert(run)
+    now = datetime.now(UTC)
+    lease = service._acquire_scheduler_lease(run.id, execution_id="orchexec-expired-lease")
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-expired-lease",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id=service.supervisor_id,
+            scheduler_lease_id=lease.id,
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+    )
+    service._scheduler_leases.upsert(
+        lease.model_copy(update={"expires_at": now - timedelta(seconds=1)})
+    )
+
+    finalized = service._finalize_background_execution(
+        "orchexec-expired-lease",
+        status=OrchestrationExecutionStatus.completed,
+        status_reason="Should not complete after lease loss.",
+        actor="qa-owner",
+    )
+
+    assert finalized is not None
+    assert finalized.status == OrchestrationExecutionStatus.stale
+    assert finalized.scheduler_lease_id is None
+    retry = service.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+    assert retry.status == OrchestrationExecutionStatus.starting
+
+
+def test_task_update_during_detached_execution_does_not_foreground_schedule_dependency(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Complete task while detached scheduler owns the run.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    service.start_background_execution(run.id, OrchestrationLoopRequest())
+
+    updated = service.update_task(
+        run.id,
+        "dev-implementation",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"done": True}),
+    )
+    qa_task = _task_by_id(updated, "qa-validation")
+
+    assert _task_by_id(updated, "dev-implementation").status == StepStatus.completed
+    assert qa_task.status == StepStatus.pending
+    assert qa_task.agent_id is None
+    assert updated.scheduled_task_ids == []
+
+
+def test_adopted_background_execution_holds_scheduler_lease_and_schedules_once(
+    orchestration_state,
+) -> None:
+    service1 = OrchestrationService()
+    run = OrchestrationRun(
+        id="orch-adopt-scheduler",
+        objective="Adopt a scheduler after restart.",
+        tasks=[_run_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+    )
+    service1._runs.upsert(run)
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-adopt-scheduler",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="old-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    service2 = OrchestrationService()
+    completed = _poll_execution(service2, run.id, "orchexec-adopt-scheduler")
+    final = service2.get_run(run.id)
+    assert final is not None
+    task = _task_by_id(final, "qa-validation")
+    matching_agents = [agent for agent in list_agents() if agent.task_id == "qa-validation"]
+
+    assert completed.status == OrchestrationExecutionStatus.completed
+    assert completed.supervisor_id == service2.supervisor_id
+    assert completed.scheduler_lease_id is not None
+    assert task.status == StepStatus.running
+    assert task.agent_id
+    assert [agent.id for agent in matching_agents] == [task.agent_id]
+    assert service2._scheduler_leases.get(run.id) is None
+
+
+def test_scheduler_spawn_failure_rolls_back_claim_and_allows_retry(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    service = OrchestrationService()
+    run = OrchestrationRun(
+        id="orch-scheduler-spawn-failure",
+        objective="Rollback failed scheduler claims.",
+        tasks=[_run_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+    )
+    service._runs.upsert(run)
+
+    def failing_spawn(_brief):  # noqa: ANN001
+        raise RuntimeError("SECRET=scheduler-secret")
+
+    monkeypatch.setattr("dgentic.orchestration.spawn_agent", failing_spawn)
+
+    with pytest.raises(OrchestrationError) as exc_info:
+        service.advance_run(run.id)
+
+    persisted = service.get_run(run.id)
+    assert persisted is not None
+    task = _task_by_id(persisted, "qa-validation")
+    assert "scheduler-secret" not in str(exc_info.value)
+    assert task.status == StepStatus.pending
+    assert task.agent_id is None
+    assert service._scheduler_leases.get(run.id) is None
+
+    monkeypatch.setattr("dgentic.orchestration.spawn_agent", real_spawn_agent)
+    service2 = OrchestrationService()
+    retried = service2.advance_run(run.id)
+    retry_task = _task_by_id(retried, "qa-validation")
+
+    assert retry_task.status == StepStatus.running
+    assert retry_task.agent_id
+    assert get_agent(retry_task.agent_id) is not None
 
 
 def test_background_execution_reconciles_prior_supervisor_active_records(
@@ -3386,6 +3690,72 @@ def _task(
         validation=validation or f"{task_id} validation",
         retry_limit=retry_limit,
     )
+
+
+def _run_task(
+    task_id: str,
+    *,
+    role: str,
+    dependencies: list[str] | None = None,
+    paths: list[str] | None = None,
+    status: StepStatus = StepStatus.pending,
+    agent_id: str | None = None,
+) -> OrchestrationTask:
+    return OrchestrationTask(
+        id=task_id,
+        title=f"{task_id} title",
+        description=f"{task_id} description",
+        role=role,
+        dependencies=dependencies or [],
+        declared_write_paths=paths or [],
+        expected_output=f"{task_id} output",
+        validation=f"{task_id} validation",
+        status=status,
+        agent_id=agent_id,
+    )
+
+
+class _SpawnGate:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+        self._calls = 0
+
+    def __call__(self, brief):  # noqa: ANN001
+        with self._lock:
+            self._calls += 1
+            should_wait = self._calls == 1
+        if should_wait:
+            self.entered.set()
+            if not self.release.wait(5):
+                raise RuntimeError("Timed out waiting to release spawn gate.")
+        return self.delegate(brief)
+
+
+def _start_thread(action):
+    result = {}
+
+    def target() -> None:
+        try:
+            result["value"] = action()
+        except BaseException as exc:  # pragma: no cover - reraised by caller.
+            result["error"] = exc
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, result
+
+
+def _finish_thread(handle):
+    thread, result = handle
+    thread.join(5)
+    if thread.is_alive():
+        pytest.fail("Thread did not finish before timeout.")
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
 
 
 def _invalid_graph_tasks(case: str) -> list[OrchestrationTask]:

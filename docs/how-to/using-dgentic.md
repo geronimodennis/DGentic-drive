@@ -313,6 +313,18 @@ curl -X POST http://127.0.0.1:8000/api/v1/memory/lifecycle/apply `
   -d '{"category":"planning","reference_time":"2027-01-01T00:00:00+00:00"}'
 ```
 
+Preview or apply deterministic metadata-description compression for frequently used older records:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/memory/compression/preview `
+  -H "Content-Type: application/json" `
+  -d '{"category":"planning","compress_after_days":30,"compress_access_count_threshold":10,"max_summary_chars":240}'
+
+curl -X POST http://127.0.0.1:8000/api/v1/memory/compression/apply `
+  -H "Content-Type: application/json" `
+  -d '{"category":"planning","compress_after_days":30,"compress_access_count_threshold":10,"max_summary_chars":240}'
+```
+
 Register a tool in the SQLAlchemy-backed registry:
 
 ```powershell
@@ -407,7 +419,7 @@ DGentic should persist session state so future sessions can resume with context,
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while encrypted credential storage, provider billing reconciliation, and provider-specific external adapters remain future work.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
-- Hybrid retrieval works through deterministic local hash embeddings and the SQLite JSON-vector backend abstraction for MVP usage, includes baseline retrieval performance smoke coverage, and excludes archived/soft-pruned metadata by default after lifecycle policy runs; pgvector production storage, optional model packaging, compression/summarization execution, scheduled lifecycle jobs, and broader performance validation remain follow-up work.
+- Hybrid retrieval works through deterministic local hash embeddings and the SQLite JSON-vector backend abstraction for MVP usage, includes baseline retrieval performance smoke coverage, can deterministically compress metadata descriptions on threshold, and excludes archived/soft-pruned metadata by default after lifecycle policy runs; pgvector production storage, optional model packaging, full-content/LLM summarization, scheduled lifecycle/compression jobs, and broader performance validation remain follow-up work.
 - Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, migrated to strictly newer same-name versions with explicit overwrite, executed with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, local-only dependency import isolation, process-group timeout cleanup hardening, and deprecation controls, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

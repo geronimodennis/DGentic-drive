@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 13 BL-007c Deterministic Memory Compression
+
+Status: completed for the scoped deterministic metadata-description compression slice; Sprint 13 remains active for pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, and source-attribution/scoring improvements.
+
+Current story:
+- BL-007: Memory And Retrieval Production Lifecycle.
+
+Checklist:
+- Completed: PM selected deterministic metadata compression after BL-007b because lifecycle candidate detection and vector reindexing boundaries were stable enough for a safe execution slice.
+- Completed: Architect/QA read-only review recommended a no-LLM extractive compression workflow, separate from lifecycle policy apply, with protected-retention exclusions and stale-embedding replacement.
+- Completed: Developer updated production source only for compression schemas, compression preview/apply service, compression routes, embedding reindexing on apply, and memory package exports.
+- Completed: QA updated tests only for compression preview/apply behavior, protected retention, inactive/default filtering, idempotence, stale embedding replacement, API contract, and retrieval after compression.
+- Completed: PM updated README, backlog, usage docs, setup docs, memory architecture, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /api/v1/memory/compression/preview` returns deterministic compression candidates without mutation.
+- Implemented in this slice: `POST /api/v1/memory/compression/apply` shortens eligible metadata descriptions, preserves lifecycle state, records lifecycle audit fields and `last_compacted_at`, and replaces existing stored embeddings.
+- Implemented in this slice: compression is extractive/word-boundary based and does not call external models or invent new content.
+- Implemented in this slice: manual/permanent retention records remain protected, inactive records are excluded by default, and recently compacted records do not immediately requalify.
+
+Validation:
+- Focused compression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_memory_compression_service.py tests\test_api.py tests\test_memory_lifecycle_service.py tests\test_retrieval_service.py -k "compression or lifecycle or retrieval or memory"` passed with 20 tests and 104 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\memory src\dgentic\api\memory_routes.py tests\test_memory_compression_service.py tests\test_api.py` passed.
+- Focused format gate after formatting two files: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\memory src\dgentic\api\memory_routes.py tests\test_memory_compression_service.py tests\test_api.py` passed with 12 files already formatted.
+- Focused final compression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_memory_compression_service.py` passed with 4 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 666 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 55 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 13 with either pgvector production backend integration or scheduled lifecycle/compression job execution, depending on PM/Architect risk assessment.
+
 ### Sprint 13 BL-007b Vector Backend Abstraction And Retrieval Baseline
 
 Status: completed for the scoped vector-backend abstraction and baseline performance smoke slice; Sprint 13 remains active for pgvector integration, compression execution, scheduled lifecycle jobs, broader performance validation, and source-attribution/scoring improvements.

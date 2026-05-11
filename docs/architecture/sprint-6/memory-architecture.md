@@ -230,7 +230,7 @@ Response: List of metadata without vector scoring
 
 **Base Path:** `/api/v1/memory/lifecycle`
 
-The lifecycle service is SQL-backed and deterministic. It can preview or apply lifecycle decisions for metadata records using age, retention policy, expiry, relevance, and access count. Preview never mutates data. Apply mutates only `promote`, `archive`, and `soft_prune`; `compress_candidate` remains advisory until a compression workflow exists.
+The lifecycle service is SQL-backed and deterministic. It can preview or apply lifecycle decisions for metadata records using age, retention policy, expiry, relevance, and access count. Preview never mutates data. Apply mutates only `promote`, `archive`, and `soft_prune`; `compress_candidate` is executed through the separate compression endpoints.
 
 ```
 POST /api/v1/memory/lifecycle/preview
@@ -264,6 +264,25 @@ Response (200):
 ```
 
 Hybrid, vector, and metadata retrieval exclude `archived` and `soft_pruned` metadata by default. Callers can request inactive metadata with `include_inactive` for review or maintenance workflows.
+
+### Sprint 13: Deterministic Metadata Compression
+
+**Base Path:** `/api/v1/memory/compression`
+
+Compression is deterministic and extractive for the current SQL metadata surface. It shortens long metadata descriptions that meet age/access thresholds, records `last_compacted_at`, updates lifecycle audit fields, preserves lifecycle state, and reindexes an existing stored embedding. It does not call an external LLM and does not summarize legacy JSON `MemoryRecord.content`.
+
+```
+POST /api/v1/memory/compression/preview
+POST /api/v1/memory/compression/apply
+Request:
+{
+  "category": "planning",
+  "compress_after_days": 30,
+  "compress_access_count_threshold": 10,
+  "max_summary_chars": 240,
+  "reference_time": "2027-01-01T00:00:00Z"
+}
+```
 
 ### Story 7.1: Tool Registry API
 
@@ -459,6 +478,7 @@ dgentic/
 ├── memory/
 │   ├── __init__.py
 │   ├── models.py              # SQLAlchemy ORM models
+│   ├── compression_service.py # Deterministic metadata compression
 │   ├── metadata_service.py    # CRUD for metadata
 │   ├── retrieval_service.py   # Hybrid search logic
 │   ├── embedding_service.py   # Vector generation
@@ -480,7 +500,7 @@ dgentic/
 
 **Story 6.1:** ✓ Metadata schema defined | ✓ Database backend selected | ✓ API contracts defined
 
-**Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | ✓ Vector backend abstraction implemented | Compression strategy remains future summarization work
+**Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | ✓ Vector backend abstraction implemented | ✓ Deterministic metadata compression implemented | Full-content summarization remains future work
 
 **Story 7.1:** ✓ Tool manifest schema defined | ✓ API contracts defined | ✓ Duplicate detection endpoint
 

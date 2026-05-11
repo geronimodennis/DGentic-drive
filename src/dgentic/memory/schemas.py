@@ -119,6 +119,45 @@ class MemoryLifecycleResponse(BaseModel):
     applied: bool
 
 
+class MemoryCompressionRequest(BaseModel):
+    """Request to preview or apply deterministic memory compression."""
+
+    entity_types: list[str] | None = Field(default=None, description="Filter by entity types")
+    tags: list[str] | None = Field(default=None, description="Filter by tags")
+    category: str | None = Field(default=None, description="Filter by category")
+    retention_policy: str | None = Field(default=None, description="Filter by retention policy")
+    include_inactive: bool = Field(default=False, description="Evaluate archived/pruned records")
+    limit: int = Field(default=100, ge=1, le=500, description="Maximum records to evaluate")
+    compress_after_days: int = Field(default=30, ge=1, le=3650)
+    compress_access_count_threshold: int = Field(default=10, ge=1, le=1_000_000)
+    max_summary_chars: int = Field(default=240, ge=80, le=4_000)
+    reference_time: datetime | None = Field(
+        default=None, description="Deterministic compression timestamp for tests/jobs"
+    )
+
+
+class MemoryCompressionCandidate(BaseModel):
+    """A deterministic compression candidate."""
+
+    metadata_id: UUID
+    entity_type: str
+    entity_id: str
+    original_description: str | None
+    compressed_description: str
+    original_length: int
+    compressed_length: int
+    reason: str
+    embedding_reindexed: bool = False
+
+
+class MemoryCompressionResponse(BaseModel):
+    """Compression preview/apply response."""
+
+    candidates: list[MemoryCompressionCandidate]
+    total: int
+    applied: bool
+
+
 class RetrievalResult(BaseModel):
     """Single result from hybrid retrieval."""
 

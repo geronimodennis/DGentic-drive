@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from dgentic.database import get_db_session
+from dgentic.memory.compression_service import MemoryCompressionService
 from dgentic.memory.embedding_service import EmbeddingService
 from dgentic.memory.lifecycle_service import MemoryLifecycleService
 from dgentic.memory.metadata_service import MetadataService
@@ -17,6 +18,8 @@ from dgentic.memory.schemas import (
     DuplicateCheckResponse,
     HybridRetrievalRequest,
     HybridRetrievalResponse,
+    MemoryCompressionRequest,
+    MemoryCompressionResponse,
     MemoryLifecycleRequest,
     MemoryLifecycleResponse,
     MetadataCreateRequest,
@@ -71,6 +74,28 @@ def apply_memory_lifecycle(
     service = MemoryLifecycleService(session)
     decisions = service.apply(request)
     return MemoryLifecycleResponse(decisions=decisions, total=len(decisions), applied=True)
+
+
+@router.post("/api/v1/memory/compression/preview", response_model=MemoryCompressionResponse)
+def preview_memory_compression(
+    request: MemoryCompressionRequest,
+    session: DBSession,
+) -> MemoryCompressionResponse:
+    embedding_service = EmbeddingService(session)
+    service = MemoryCompressionService(session, embedding_service)
+    candidates = service.preview(request)
+    return MemoryCompressionResponse(candidates=candidates, total=len(candidates), applied=False)
+
+
+@router.post("/api/v1/memory/compression/apply", response_model=MemoryCompressionResponse)
+def apply_memory_compression(
+    request: MemoryCompressionRequest,
+    session: DBSession,
+) -> MemoryCompressionResponse:
+    embedding_service = EmbeddingService(session)
+    service = MemoryCompressionService(session, embedding_service)
+    candidates = service.apply(request)
+    return MemoryCompressionResponse(candidates=candidates, total=len(candidates), applied=True)
 
 
 @router.get("/api/v1/memory/metadata/{metadata_id}", response_model=MetadataResponse)

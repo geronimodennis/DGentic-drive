@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 from dgentic import provider_runtime, provider_transport, providers
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
-from dgentic.database import reset_database_state
+from dgentic.database import get_db_session, reset_database_state
 from dgentic.main import create_app
+from dgentic.memory.models import MemoryMetadata
 from dgentic.redaction import REDACTED_SECRET_MARKER
 from dgentic.schemas import PermissionMode
 from dgentic.settings import get_settings
@@ -1950,6 +1951,81 @@ def test_memory_lifecycle_api_previews_applies_and_excludes_inactive(
     assert inactive_retrieval_response.json()["results"][0]["entity_id"] == "stale-memory"
     assert archived_list_response.status_code == 200
     assert archived_list_response.json()["total"] == 1
+
+
+def test_memory_compression_api_applies_and_retrieves_compressed_metadata(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    long_description = (
+        "This memory has been used repeatedly by agents while planning retrieval work. "
+        "It contains implementation context, validation notes, and follow-up details that "
+        "can be summarized into a shorter durable record without losing its purpose."
+    )
+
+    create_response = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "compress-api-memory",
+            "tags": ["compression", "retrieval"],
+            "category": "planning",
+            "description": long_description,
+            "relevance_score": 0.6,
+        },
+    )
+    metadata_id = create_response.json()["id"]
+    session = get_db_session()
+    try:
+        stored = session.query(MemoryMetadata).filter(MemoryMetadata.id == metadata_id).one()
+        stored.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        stored.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+        stored.access_count = 15
+        session.commit()
+    finally:
+        session.close()
+
+    preview_response = client.post(
+        "/api/v1/memory/compression/preview",
+        json={
+            "category": "planning",
+            "reference_time": "2026-02-15T00:00:00+00:00",
+            "max_summary_chars": 120,
+        },
+    )
+    apply_response = client.post(
+        "/api/v1/memory/compression/apply",
+        json={
+            "category": "planning",
+            "reference_time": "2026-02-15T00:00:00+00:00",
+            "max_summary_chars": 120,
+        },
+    )
+    get_response = client.get(f"/api/v1/memory/metadata/{metadata_id}")
+    retrieval_response = client.post(
+        "/api/v1/memory/retrieve/hybrid",
+        json={
+            "query": "planning retrieval work",
+            "metadata_filters": {"category": "planning"},
+            "similarity_threshold": 0.0,
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert preview_response.status_code == 200
+    assert preview_response.json()["applied"] is False
+    assert preview_response.json()["total"] == 1
+    assert apply_response.status_code == 200
+    assert apply_response.json()["applied"] is True
+    assert apply_response.json()["total"] == 1
+    candidate = apply_response.json()["candidates"][0]
+    assert candidate["compressed_length"] < candidate["original_length"]
+    assert get_response.status_code == 200
+    assert get_response.json()["description"] == candidate["compressed_description"]
+    assert get_response.json()["last_compacted_at"] is not None
+    assert retrieval_response.status_code == 200
+    assert retrieval_response.json()["total"] == 1
+    assert retrieval_response.json()["results"][0]["entity_id"] == "compress-api-memory"
 
 
 def test_tool_registry_api_duplicate_usage_and_deprecation(tmp_path, monkeypatch) -> None:

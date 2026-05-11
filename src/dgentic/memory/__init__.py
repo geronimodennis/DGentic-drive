@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from dgentic.events import event_log
+from dgentic.memory.compression_service import MemoryCompressionService
 from dgentic.memory.embedding_service import EmbeddingService
 from dgentic.memory.lifecycle_service import MemoryLifecycleService
 from dgentic.memory.metadata_service import MetadataService
@@ -59,6 +60,7 @@ def search_memory(query: MemoryQuery) -> list[MemorySearchResult]:
 
 __all__ = [
     "EmbeddingService",
+    "MemoryCompressionService",
     "MemoryLifecycleService",
     "MetadataService",
     "RetrievalService",

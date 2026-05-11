@@ -31,6 +31,7 @@ dgentic/
       migrations.py
       memory/
         embedding_service.py
+        compression_service.py
         metadata_service.py
         models.py
         retrieval_service.py
@@ -82,7 +83,7 @@ Current modules:
 - `provider_runtime.py`: Ollama, LM Studio, and OpenAI-compatible external chat/completion request execution with provider endpoint policy enforcement, Ollama/OpenAI-compatible streaming, bounded retry/backoff, in-process circuit breakers, deferred credential-safe headers for external fail-fast paths, model allowlist checks, single-use bound external provider approvals, advisory usage-based cost estimates, and safe response telemetry.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
-- `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, lifecycle policy service, optional embedding service, vector backend contract/default SQLite implementation, and retrieval service contracts.
+- `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, lifecycle policy service, deterministic compression service, optional embedding service, vector backend contract/default SQLite implementation, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
 - `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, monotonic same-name version migration, usage tracking, reliability scoring, and source-path validation.
 - `tool_runtime.py`: Generated tool approval records, bound approval validation, process-group subprocess execution and timeout cleanup, SQL registry permission/deprecation checks, local-only dependency import isolation, reduced inherited execution environment, redacted output/audit events, SQL reliability counter sync, and runtime reliability policy automation.
@@ -95,7 +96,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, vector backend contracts, retrieval inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 

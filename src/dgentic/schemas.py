@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -246,6 +246,103 @@ class AgentReconciliation(BaseModel):
     accepted_outputs: list[AgentOutput] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class RoleBoundaryDecision(BaseModel):
+    task_id: str
+    role: str
+    allowed: bool
+    reason: str
+    violating_paths: list[str] = Field(default_factory=list)
+    suggested_owner_role: str | None = None
+
+
+class OrchestrationBlocker(BaseModel):
+    id: str
+    task_id: str
+    reason: str
+    severity: str = "blocked"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OrchestrationFollowUp(BaseModel):
+    id: str
+    task_id: str
+    assigned_role: str
+    description: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OrchestrationTask(BaseModel):
+    id: str
+    title: str
+    description: str
+    role: str
+    dependencies: list[str] = Field(default_factory=list)
+    declared_write_paths: list[str] = Field(default_factory=list)
+    expected_output: str = ""
+    validation: str = ""
+    retry_limit: int = Field(default=0, ge=0, le=10)
+    retry_count: int = Field(default=0, ge=0)
+    status: StepStatus = StepStatus.pending
+    agent_id: str | None = None
+    output: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    completed_at: datetime | None = None
+
+
+class OrchestrationTaskSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=240)
+    description: str = Field(min_length=1, max_length=2000)
+    role: str = Field(min_length=1, max_length=120)
+    dependencies: list[str] = Field(default_factory=list, max_length=20)
+    declared_write_paths: list[str] = Field(default_factory=list, max_length=20)
+    expected_output: str = Field(default="", max_length=2000)
+    validation: str = Field(default="", max_length=2000)
+    retry_limit: int = Field(default=0, ge=0, le=10)
+
+
+class OrchestrationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    objective: str = Field(min_length=1)
+    tasks: list[OrchestrationTaskSpec] = Field(min_length=1, max_length=50)
+    required_dod_evidence: list[str] = Field(default_factory=lambda: ["tests", "docs", "review"])
+    requested_by: str | None = None
+
+
+class OrchestrationTaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: StepStatus
+    output: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class OrchestrationCloseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: dict[str, str] = Field(default_factory=dict)
+
+
+class OrchestrationRun(BaseModel):
+    id: str
+    objective: str
+    status: PlanStatus = PlanStatus.running
+    tasks: list[OrchestrationTask]
+    required_dod_evidence: list[str] = Field(default_factory=list)
+    dod_evidence: dict[str, str] = Field(default_factory=dict)
+    role_boundary_decisions: list[RoleBoundaryDecision] = Field(default_factory=list)
+    blockers: list[OrchestrationBlocker] = Field(default_factory=list)
+    follow_ups: list[OrchestrationFollowUp] = Field(default_factory=list)
+    scheduled_task_ids: list[str] = Field(default_factory=list)
+    requested_by: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
 
 
 class ToolManifest(BaseModel):

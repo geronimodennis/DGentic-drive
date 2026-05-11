@@ -43,6 +43,7 @@ from dgentic.guardrails import (
     write_guarded_text_file,
 )
 from dgentic.memory import add_memory, search_memory
+from dgentic.orchestration import OrchestrationError, orchestration_service
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_pricing import ProviderPricingConfigurationError
 from dgentic.provider_routing import ProviderRoutingConfigurationError
@@ -112,6 +113,10 @@ from dgentic.schemas import (
     MemoryQuery,
     MemoryRecord,
     MemorySearchResult,
+    OrchestrationCloseRequest,
+    OrchestrationCreateRequest,
+    OrchestrationRun,
+    OrchestrationTaskUpdate,
     ProviderConfig,
     ProviderHealth,
     RoutingDecision,
@@ -196,6 +201,118 @@ def execute_task_plan(plan: TaskPlan) -> TaskRun:
 @router.get("/tasks/runs", response_model=list[TaskRun])
 def get_task_runs() -> list[TaskRun]:
     return execution_engine.list_runs()
+
+
+@router.post("/tasks/orchestrations", response_model=OrchestrationRun, status_code=201)
+def create_orchestration_run(
+    payload: OrchestrationCreateRequest,
+    request: Request,
+) -> OrchestrationRun:
+    try:
+        return orchestration_service.create_run(
+            payload,
+            actor=_orchestration_actor(request),
+        )
+    except OrchestrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/tasks/orchestrations", response_model=list[OrchestrationRun])
+def get_orchestration_runs(request: Request) -> list[OrchestrationRun]:
+    return orchestration_service.list_runs(
+        actor=_orchestration_actor(request),
+        include_all=_orchestration_include_all(request),
+    )
+
+
+@router.get("/tasks/orchestrations/{run_id}", response_model=OrchestrationRun)
+def get_orchestration_run(run_id: str, request: Request) -> OrchestrationRun:
+    try:
+        return _require_orchestration_run(run_id, request)
+    except OrchestrationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/tasks/orchestrations/{run_id}/advance", response_model=OrchestrationRun)
+def advance_orchestration_run(run_id: str, request: Request) -> OrchestrationRun:
+    try:
+        return orchestration_service.advance_run(
+            run_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.patch(
+    "/tasks/orchestrations/{run_id}/tasks/{task_id}",
+    response_model=OrchestrationRun,
+)
+def update_orchestration_task(
+    run_id: str,
+    task_id: str,
+    update: OrchestrationTaskUpdate,
+    request: Request,
+) -> OrchestrationRun:
+    try:
+        return orchestration_service.update_task(
+            run_id,
+            task_id,
+            update,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.post("/tasks/orchestrations/{run_id}/close", response_model=OrchestrationRun)
+def close_orchestration_run(
+    run_id: str,
+    payload: OrchestrationCloseRequest,
+    request: Request,
+) -> OrchestrationRun:
+    try:
+        return orchestration_service.close_run(
+            run_id,
+            payload,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+def _require_orchestration_run(run_id: str, request: Request) -> OrchestrationRun:
+    run = orchestration_service.get_run(
+        run_id,
+        actor=_orchestration_actor(request),
+        include_all=_orchestration_include_all(request),
+    )
+    if run is None:
+        raise OrchestrationError(f"Orchestration not found: {run_id}")
+    return run
+
+
+def _orchestration_http_error(exc: OrchestrationError) -> HTTPException:
+    message = str(exc)
+    status_code = 404 if "not found" in message.lower() else 400
+    return HTTPException(status_code=status_code, detail=message)
+
+
+def _orchestration_actor(request: Request) -> str | None:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return None
+    return principal.token_id
+
+
+def _orchestration_include_all(request: Request) -> bool:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return True
+    return bool(set(principal.capabilities) & {"admin", "*"})
 
 
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)

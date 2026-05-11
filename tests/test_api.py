@@ -113,6 +113,242 @@ def test_task_history_is_persisted_to_local_state(tmp_path, monkeypatch) -> None
     get_settings.cache_clear()
 
 
+def test_orchestration_api_lifecycle_enforces_dag_and_close_gates(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Coordinate Sprint 14 BL-008a.",
+            "required_dod_evidence": ["tests", "review"],
+            "tasks": [
+                {
+                    "id": "developer-implementation",
+                    "title": "Implement orchestration control plane.",
+                    "description": "Wire production orchestration behavior.",
+                    "role": "Developer",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "expected_output": "Production behavior is implemented.",
+                    "validation": "Developer smoke passes.",
+                },
+                {
+                    "id": "qa-validation",
+                    "title": "Validate orchestration control plane.",
+                    "description": "Add focused orchestration regressions.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "expected_output": "Focused tests cover control-plane behavior.",
+                    "validation": "pytest tests/test_orchestration.py passes.",
+                },
+                {
+                    "id": "pm-closeout",
+                    "title": "Close sprint status.",
+                    "description": "Record validation and closeout evidence.",
+                    "role": "PM",
+                    "dependencies": ["developer-implementation", "qa-validation"],
+                    "declared_write_paths": ["docs/progress/project-progress-log.md"],
+                    "expected_output": "Sprint status is updated.",
+                    "validation": "DoD evidence is present.",
+                },
+            ],
+        },
+    )
+    body = create_response.json()
+    run_id = body["id"]
+
+    assert create_response.status_code == 201
+    assert set(body["scheduled_task_ids"]) == {"developer-implementation", "qa-validation"}
+    assert {task["id"]: task["status"] for task in body["tasks"]} == {
+        "developer-implementation": "running",
+        "qa-validation": "running",
+        "pm-closeout": "pending",
+    }
+
+    list_response = client.get("/tasks/orchestrations")
+    get_response = client.get(f"/tasks/orchestrations/{run_id}")
+    premature_close_response = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        json={"evidence": {"tests": "not enough while tasks are incomplete"}},
+    )
+    first_done_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/developer-implementation",
+        json={"status": "completed", "output": {"source": "implemented"}},
+    )
+    second_done_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        json={"status": "completed", "output": {"tests": "passed"}},
+    )
+    closeout_done_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/pm-closeout",
+        json={"status": "completed", "output": {"progress": "updated"}},
+    )
+    missing_evidence_response = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        json={"evidence": {"tests": "pytest tests/test_orchestration.py passed"}},
+    )
+    close_response = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        json={
+            "evidence": {
+                "tests": "pytest tests/test_orchestration.py passed",
+                "review": "Reviewer reported no blockers.",
+            }
+        },
+    )
+    closed_mutation_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/pm-closeout",
+        json={"status": "failed", "error": "late mutation"},
+    )
+
+    assert list_response.status_code == 200
+    assert any(run["id"] == run_id for run in list_response.json())
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == run_id
+    assert premature_close_response.status_code == 400
+    assert "incomplete tasks" in premature_close_response.json()["detail"]
+    assert first_done_response.status_code == 200
+    assert first_done_response.json()["scheduled_task_ids"] == []
+    assert second_done_response.status_code == 200
+    assert second_done_response.json()["scheduled_task_ids"] == ["pm-closeout"]
+    assert closeout_done_response.status_code == 200
+    assert missing_evidence_response.status_code == 400
+    assert "review" in missing_evidence_response.json()["detail"]
+    assert close_response.status_code == 200
+    assert close_response.json()["status"] == "completed"
+    assert close_response.json()["dod_evidence"]["review"] == "Reviewer reported no blockers."
+    assert closed_mutation_response.status_code == 400
+    assert "closed orchestration" in closed_mutation_response.json()["detail"]
+
+
+def test_orchestration_api_rejects_cycles_and_reports_role_boundary_follow_ups(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+
+    cycle_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject cyclic orchestration graphs.",
+            "tasks": [
+                {
+                    "id": "developer-implementation",
+                    "title": "Implementation",
+                    "description": "Implementation depends on QA.",
+                    "role": "Developer",
+                    "dependencies": ["qa-validation"],
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "No cycle.",
+                },
+                {
+                    "id": "qa-validation",
+                    "title": "QA",
+                    "description": "QA depends on implementation.",
+                    "role": "QA",
+                    "dependencies": ["developer-implementation"],
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "validation": "No cycle.",
+                },
+            ],
+        },
+    )
+    boundary_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block out-of-bound QA writes.",
+            "tasks": [
+                {
+                    "id": "qa-source-edit",
+                    "title": "QA attempts source edit.",
+                    "description": "QA must not modify production source.",
+                    "role": "QA",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "Boundary blocks source edit.",
+                }
+            ],
+        },
+    )
+    forged_state_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject server-owned task state.",
+            "tasks": [
+                {
+                    "id": "forged-complete",
+                    "title": "Forged state",
+                    "description": "Caller tries to bypass scheduling.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "status": "completed",
+                    "agent_id": "agent-forged",
+                    "validation": "Should be rejected.",
+                }
+            ],
+        },
+    )
+
+    assert cycle_response.status_code == 400
+    assert "acyclic" in cycle_response.json()["detail"]
+    assert boundary_response.status_code == 201
+    body = boundary_response.json()
+    assert body["tasks"][0]["status"] == "blocked"
+    assert body["blockers"][0]["severity"] == "role_boundary"
+    assert body["follow_ups"][0]["assigned_role"] == "Developer"
+    assert body["role_boundary_decisions"][0]["suggested_owner_role"] == "Developer"
+    assert forged_state_response.status_code == 422
+
+
+def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped orchestration.",
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate owner filtering.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_orchestration.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    beta_list = client.get(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    beta_get = client.get(
+        f"/tasks/orchestrations/{alpha_create.json()['id']}",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    admin_list = client.get(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert alpha_create.status_code == 201
+    assert alpha_create.json()["requested_by"]
+    assert beta_list.status_code == 200
+    assert beta_list.json() == []
+    assert beta_get.status_code == 404
+    assert admin_list.status_code == 200
+    assert [run["id"] for run in admin_list.json()] == [alpha_create.json()["id"]]
+    get_settings.cache_clear()
+
+
 def test_guardrails_classify_filesystem_and_commands() -> None:
     client = TestClient(create_app())
 

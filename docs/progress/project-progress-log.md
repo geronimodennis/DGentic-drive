@@ -4,6 +4,52 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008a Backend Orchestration Control Plane
+
+Status: completed for the first autonomous-agent orchestration foundation slice; Sprint 14 remains active for end-to-end autonomous execution and automatic project-document updates.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected the backend orchestration control plane as the smallest useful Sprint 14 slice after Sprint 13 closeout.
+- Completed: Developer updated production source only for orchestration schemas, the orchestration service, and `/tasks/orchestrations` API routes.
+- Completed: QA updated tests only for orchestration scheduling, dependency ordering, invalid graphs, role-boundary blocking, retry escalation, DoD close gates, and API lifecycle behavior.
+- Completed: PM/Developer-docs updated README, backlog, usage docs, repository architecture, and this progress log.
+- Completed: Reviewer/Security found pre-commit blockers around non-canonical role paths, mutable closed runs, and server-owned task state exposure; Developer remediated them before checkpoint.
+- Completed: Reviewer/Security/DevOps validation found no remaining blocking correctness, role-boundary, secret-exposure, deployment, or runtime concerns for the scoped backend MVP slice.
+
+Feature tracking:
+- Implemented in this slice: persisted orchestration runs stored in `orchestrations.json`.
+- Implemented in this slice: DAG validation rejects duplicate task ids, unknown dependencies, self-dependencies, and cycles.
+- Implemented in this slice: dependency-ready tasks are scheduled into sub-agent briefs while dependent tasks wait for prerequisite completion, with each scheduling pass bounded to limit authorized fan-out.
+- Implemented in this slice: declared write paths are canonicalized and checked against role-boundary policy, with blockers and follow-ups for out-of-bound or non-canonical work.
+- Implemented in this slice: create requests accept client-owned task specs only, rejecting server-owned lifecycle fields such as task status and agent ids.
+- Implemented in this slice: authenticated non-admin task principals see only their own orchestration runs, while admin principals retain full run visibility.
+- Implemented in this slice: failed tasks can retry up to their configured limit, then escalate to blockers and follow-ups.
+- Implemented in this slice: closeout requires completed tasks, no unresolved blockers, and required Definition of Done evidence, after which run mutation is rejected.
+
+Remaining Sprint 14 work:
+- Add a real autonomous execution loop beyond scheduling briefs.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+- Add runtime binding between orchestration role decisions and filesystem, CLI, and tool actions.
+- Add richer blocked-run recovery or reassignment semantics.
+
+Validation:
+- Focused orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "orchestration or orchestration_api"` passed with 18 tests and 109 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\schemas.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\schemas.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 686 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+- Whitespace gate: `git diff --check` passed with only LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 14 with the autonomous execution loop and event-driven project progress/backlog update slice.
+
 ### Sprint 13 Memory Production Lifecycle Closeout
 
 Status: closed for the scoped backend MVP memory-production contract.

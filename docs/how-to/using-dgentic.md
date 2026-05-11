@@ -74,6 +74,30 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
 curl http://127.0.0.1:8000/tasks/plans
 ```
 
+Create a backend-managed orchestration run for a role-bounded task graph:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/tasks/orchestrations `
+  -H "Content-Type: application/json" `
+  -d '{"objective":"Coordinate a sprint slice.","required_dod_evidence":["tests","review"],"tasks":[{"id":"dev-implementation","title":"Implement source changes","description":"Modify production code only.","role":"Developer","declared_write_paths":["src/dgentic/orchestration.py"],"expected_output":"Source changes are ready.","validation":"Developer smoke passes."},{"id":"qa-validation","title":"Validate behavior","description":"Add tests only.","role":"QA","declared_write_paths":["tests/test_orchestration.py"],"expected_output":"Focused tests pass.","validation":"pytest tests/test_orchestration.py passes."},{"id":"pm-closeout","title":"Record progress","description":"Update sprint status after validation.","role":"PM","dependencies":["dev-implementation","qa-validation"],"declared_write_paths":["docs/progress/project-progress-log.md"],"expected_output":"Progress is recorded.","validation":"DoD evidence is present."}]}'
+```
+
+The response includes `role_boundary_decisions`, `scheduled_task_ids`, blockers, follow-ups, and sub-agent ids for tasks that are dependency-ready and inside their role write boundary. The create request accepts client-owned task specs only; lifecycle fields such as `status`, `agent_id`, `output`, `error`, and `completed_at` are server-owned. Update running tasks as agent work completes:
+
+```powershell
+curl -X PATCH http://127.0.0.1:8000/tasks/orchestrations/[run_id]/tasks/dev-implementation `
+  -H "Content-Type: application/json" `
+  -d '{"status":"completed","output":{"source":"implemented"}}'
+```
+
+Close an orchestration only after every task is completed and required Definition of Done evidence is present:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/tasks/orchestrations/[run_id]/close `
+  -H "Content-Type: application/json" `
+  -d '{"evidence":{"tests":"pytest tests/test_orchestration.py passed","review":"Reviewer reported no blockers."}}'
+```
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/guardrails/commands `
   -H "Content-Type: application/json" `
@@ -421,6 +445,7 @@ DGentic should persist session state so future sessions can resume with context,
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while encrypted credential storage, provider billing reconciliation, and provider-specific external adapters remain future work.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
+- Backend orchestration runs can validate task graphs, enforce canonical declared role write boundaries, schedule dependency-ready tasks into sub-agent briefs, track blockers/follow-ups, retry failed tasks until the configured limit, reject closed-run mutation, bound a single scheduling pass, and require DoD evidence before closeout, but there is not yet a real autonomous execution loop, automatic sprint document mutation from run events, shared context/memory coordination, runtime binding between orchestration roles and filesystem/CLI/tool actions, blocked-run recovery, or production scheduling/lease semantics.
 - Hybrid retrieval works through deterministic local hash embeddings and the SQLite JSON-vector backend abstraction for MVP usage, includes baseline retrieval performance smoke coverage and additive attribution/score explanations, can deterministically compress metadata descriptions on threshold, and excludes archived/soft-pruned metadata by default after lifecycle policy runs; pgvector production storage, optional model packaging, full-content/LLM summarization, scheduled lifecycle/compression jobs, and broader performance validation remain follow-up work.
 - Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, migrated to strictly newer same-name versions with explicit overwrite, executed with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, local-only dependency import isolation, process-group timeout cleanup hardening, and deprecation controls, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.

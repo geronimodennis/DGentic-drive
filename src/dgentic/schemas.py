@@ -262,7 +262,11 @@ class OrchestrationBlocker(BaseModel):
     task_id: str
     reason: str
     severity: str = "blocked"
+    status: Literal["open", "resolved"] = "open"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    resolution: str | None = None
 
 
 class OrchestrationFollowUp(BaseModel):
@@ -329,6 +333,21 @@ class OrchestrationTaskRecoveryRequest(BaseModel):
     role: str | None = Field(default=None, min_length=1, max_length=120)
     declared_write_paths: list[str] | None = Field(default=None, max_length=20)
     reset_retry_count: bool = False
+
+    @field_validator("resolution")
+    @classmethod
+    def resolution_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("resolution must not be blank.")
+        return stripped
+
+
+class OrchestrationBlockerResolutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: str = Field(min_length=1, max_length=2000)
+    reschedule: bool = False
 
     @field_validator("resolution")
     @classmethod

@@ -113,6 +113,7 @@ from dgentic.schemas import (
     MemoryQuery,
     MemoryRecord,
     MemorySearchResult,
+    OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationRun,
@@ -302,6 +303,29 @@ def recover_orchestration_task(
         raise _orchestration_http_error(exc) from exc
 
 
+@router.post(
+    "/tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve",
+    response_model=OrchestrationRun,
+)
+def resolve_orchestration_blocker(
+    run_id: str,
+    blocker_id: str,
+    payload: OrchestrationBlockerResolutionRequest,
+    request: Request,
+) -> OrchestrationRun:
+    _require_orchestration_admin(request)
+    try:
+        return orchestration_service.resolve_blocker(
+            run_id,
+            blocker_id,
+            payload,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
 @router.post("/tasks/orchestrations/{run_id}/close", response_model=OrchestrationRun)
 def close_orchestration_run(
     run_id: str,
@@ -348,6 +372,17 @@ def _orchestration_include_all(request: Request) -> bool:
     if principal is None:
         return True
     return bool(set(principal.capabilities) & {"admin", "*"})
+
+
+def _require_orchestration_admin(request: Request) -> None:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return
+    if not set(principal.capabilities) & {"admin", "*"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Bearer token lacks the required capability.",
+        )
 
 
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)

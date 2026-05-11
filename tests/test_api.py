@@ -544,6 +544,95 @@ def test_orchestration_api_recovery_respects_authenticated_task_owner(
     get_settings.cache_clear()
 
 
+def test_orchestration_api_resolves_manual_blocker_with_admin_audit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Resolve manual blocker through admin review.",
+        "required_dod_evidence": ["tests"],
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate manual blocker resolution.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_orchestration.py"],
+                "validation": "Manual blocker can be resolved.",
+            }
+        ],
+    }
+
+    create_response = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = create_response.json()["id"]
+    blocked_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"status": "blocked", "error": "Needs security review."},
+    )
+    blocker_id = blocked_response.json()["blockers"][0]["id"]
+    task_token_response = client.post(
+        f"/tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve",
+        headers={"Authorization": "Bearer beta-token"},
+        json={"resolution": "Attempt non-admin resolution.", "reschedule": True},
+    )
+    admin_response = client.post(
+        f"/tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve",
+        headers={"Authorization": "Bearer admin-token"},
+        json={"resolution": "SECRET=hidden accepted mitigation.", "reschedule": True},
+    )
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"status": "completed", "output": {"tests": "passed"}},
+    )
+    close_response = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"evidence": {"tests": "pytest passed"}},
+    )
+    logs_response = client.get(
+        "/logs",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert create_response.status_code == 201
+    assert blocked_response.status_code == 200
+    assert task_token_response.status_code == 403
+    assert admin_response.status_code == 200
+    body = admin_response.json()
+    assert body["tasks"][0]["status"] == "running"
+    assert body["follow_ups"] == []
+    assert body["scheduled_task_ids"] == ["qa-validation"]
+    assert body["blockers"][0]["status"] == "resolved"
+    assert body["blockers"][0]["resolution"] == "SECRET=[REDACTED] accepted mitigation."
+    assert body["blockers"][0]["resolved_by"]
+    assert completed_response.status_code == 200
+    assert close_response.status_code == 200
+    assert close_response.json()["status"] == "completed"
+    assert close_response.json()["blockers"][0]["status"] == "resolved"
+    resolution_event = next(
+        event
+        for event in logs_response.json()
+        if event["subject_id"] == run_id and event["message"] == "Resolved orchestration blocker."
+    )
+    assert resolution_event["metadata"]["resolution"] == "SECRET=[REDACTED] accepted mitigation."
+    assert "hidden" not in json.dumps(resolution_event)
+    get_settings.cache_clear()
+
+
 def test_orchestration_api_cycle_respects_authenticated_task_owner(
     tmp_path,
     monkeypatch,

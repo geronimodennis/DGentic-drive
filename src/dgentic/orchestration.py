@@ -14,6 +14,7 @@ from dgentic.schemas import (
     LogEventType,
     OrchestrationActionDecision,
     OrchestrationBlocker,
+    OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationFollowUp,
@@ -32,6 +33,7 @@ MAX_READY_TASKS_PER_ADVANCE = 20
 TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
 RECOVERABLE_TASK_BLOCKER_SEVERITIES = {"role_boundary", "retry_exhausted"}
+RESOLVABLE_TASK_BLOCKER_SEVERITIES = {"blocked", "security"}
 WRITE_FILE_ACTIONS = {
     "write",
     "binary_write",
@@ -267,7 +269,11 @@ class OrchestrationService:
                 f"Cannot recover task {task_id} from {task.status}; "
                 "only blocked tasks can be recovered."
             )
-        task_blockers = [blocker for blocker in run.blockers if blocker.task_id == task_id]
+        task_blockers = [
+            blocker
+            for blocker in run.blockers
+            if blocker.task_id == task_id and _is_unresolved_blocker(blocker)
+        ]
         if not task_blockers:
             raise OrchestrationError(
                 f"Cannot recover task {task_id}; no recoverable blockers are recorded."
@@ -357,6 +363,86 @@ class OrchestrationService:
         run = self._schedule_ready_tasks(run, actor=actor)
         return self._persist(run)
 
+    def resolve_blocker(
+        self,
+        run_id: str,
+        blocker_id: str,
+        request: OrchestrationBlockerResolutionRequest,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationRun:
+        run = self._require_run(run_id, actor=actor, include_all=include_all)
+        _ensure_run_open(run)
+        blocker = _blocker_by_id(run, blocker_id)
+        if not _is_unresolved_blocker(blocker):
+            raise OrchestrationError(f"Blocker is already resolved: {blocker_id}")
+        if blocker.severity not in RESOLVABLE_TASK_BLOCKER_SEVERITIES:
+            raise OrchestrationError(
+                f"Cannot resolve {blocker.severity} blocker through manual review."
+            )
+
+        now = datetime.now(UTC)
+        resolved_blocker = blocker.model_copy(
+            update={
+                "status": "resolved",
+                "resolved_at": now,
+                "resolved_by": actor or "system",
+                "resolution": redact_sensitive_values(request.resolution),
+            }
+        )
+        blockers = [
+            resolved_blocker if existing.id == blocker_id else existing for existing in run.blockers
+        ]
+        task = _task_by_id(run, blocker.task_id)
+        should_unblock_task = task.status == StepStatus.blocked and not _unresolved_blockers(
+            blockers, task_id=task.id
+        )
+        should_reschedule = request.reschedule and should_unblock_task
+        tasks = list(run.tasks)
+        follow_ups = list(run.follow_ups)
+        if should_unblock_task:
+            unblocked_task = task.model_copy(
+                update={
+                    "status": StepStatus.pending,
+                    "agent_id": None,
+                    "output": {},
+                    "error": None,
+                    "completed_at": None,
+                }
+            )
+            tasks = [unblocked_task if existing.id == task.id else existing for existing in tasks]
+            follow_ups = [follow_up for follow_up in follow_ups if follow_up.task_id != task.id]
+
+        run = run.model_copy(
+            update={
+                "tasks": tasks,
+                "blockers": blockers,
+                "follow_ups": follow_ups,
+                "scheduled_task_ids": [],
+                "updated_at": now,
+            }
+        )
+        if should_reschedule:
+            run = self._schedule_ready_tasks(run, actor=actor)
+        was_rescheduled = blocker.task_id in run.scheduled_task_ids
+        event_log.record(
+            LogEventType.task,
+            "Resolved orchestration blocker.",
+            actor=actor or "system",
+            subject_id=run.id,
+            metadata={
+                "blocker_id": blocker_id,
+                "task_id": blocker.task_id,
+                "severity": blocker.severity,
+                "resolution": redact_sensitive_values(request.resolution),
+                "reschedule_requested": request.reschedule,
+                "task_unblocked": should_unblock_task,
+                "rescheduled": was_rescheduled,
+            },
+        )
+        return self._persist(run)
+
     def close_run(
         self,
         run_id: str,
@@ -373,7 +459,7 @@ class OrchestrationService:
             raise OrchestrationError(
                 "Cannot close orchestration with incomplete tasks: " + ", ".join(incomplete)
             )
-        if run.blockers:
+        if _unresolved_blockers(run.blockers):
             raise OrchestrationError("Cannot close orchestration with unresolved blockers.")
         missing_evidence = [
             gate for gate in run.required_dod_evidence if not str(evidence.get(gate, "")).strip()
@@ -1035,6 +1121,29 @@ def _task_by_id(run: OrchestrationRun, task_id: str) -> OrchestrationTask:
         if task.id == task_id:
             return task
     raise OrchestrationError(f"Task not found in orchestration: {task_id}")
+
+
+def _blocker_by_id(run: OrchestrationRun, blocker_id: str) -> OrchestrationBlocker:
+    for blocker in run.blockers:
+        if blocker.id == blocker_id:
+            return blocker
+    raise OrchestrationError(f"Blocker not found in orchestration: {blocker_id}")
+
+
+def _is_unresolved_blocker(blocker: OrchestrationBlocker) -> bool:
+    return blocker.status != "resolved"
+
+
+def _unresolved_blockers(
+    blockers: list[OrchestrationBlocker],
+    *,
+    task_id: str | None = None,
+) -> list[OrchestrationBlocker]:
+    return [
+        blocker
+        for blocker in blockers
+        if _is_unresolved_blocker(blocker) and (task_id is None or blocker.task_id == task_id)
+    ]
 
 
 def _replace_role_boundary_decision(

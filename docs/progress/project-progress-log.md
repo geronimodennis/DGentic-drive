@@ -4,6 +4,50 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008g Manual/Security Blocker Resolution
+
+Status: completed for the scoped manual/security blocker resolution slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, shared context/memory coordination, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected manual/security blocker resolution as the next Sprint 14 slice because BL-008e intentionally preserved manual blockers for explicit review instead of recovery bypass.
+- Completed: Developer updated production source only for blocker resolution schema fields, `resolve_blocker`, unresolved-blocker close semantics, and `/tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve`.
+- Completed: Developer updated implementation docs for the manual/security blocker resolution contract.
+- Completed: QA updated tests only for manual blocker resolution, security blocker resolution, system blocker rejection, repeated resolution rejection, non-blank resolution validation, pending task state when `reschedule=false`, API admin-only access, audit redaction, rescheduling, and closeout over resolved blocker history.
+- Completed: Reviewer/Security identified a stranded-run blocker where resolving the final blocker with `reschedule=false` left the task blocked, plus low-risk stale-output and audit scheduling accuracy follow-ups.
+- Completed: Developer remediated by unblocking the task to pending when the final unresolved blocker is resolved, clearing stale output, and logging actual task rescheduling after the scheduling pass.
+- Completed: QA added regressions for `reschedule=false` pending-task recovery, stale output clearing, and requested-versus-actual reschedule audit metadata.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve` resolves manual or security blockers with a non-blank resolution note.
+- Implemented in this slice: resolved blockers remain in run history with `status`, `resolved_at`, `resolved_by`, and redacted `resolution` metadata.
+- Implemented in this slice: role-boundary and retry-exhaustion blockers are rejected from the manual review path and remain on the task recovery path.
+- Implemented in this slice: resolving the final unresolved blocker clears task error/follow-ups and moves the task to pending unless immediate rescheduling is requested.
+- Implemented in this slice: `reschedule=true` schedules the unblocked task immediately when dependencies are satisfied.
+- Implemented in this slice: closeout ignores resolved blocker history but still rejects any unresolved blockers.
+- Implemented in this slice: the API route requires admin authority when authentication is enabled, while preserving development-mode no-auth behavior.
+
+Remaining Sprint 14 work:
+- Add a fully autonomous background execution loop beyond explicit cycle calls.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused blocker service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "resolve or blocker or recovery"` passed with 12 tests after the reviewer follow-ups.
+- Focused blocker API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration_api_resolves or orchestration_api_recovery or owner"` passed with 4 tests.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 181 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 766 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+
+Next:
+- Continue Sprint 14 with the autonomous background execution loop or automatic project document mutation slice, depending on architecture and risk review.
+
 ### Sprint 14 BL-008f Agent Lifecycle Reconciliation Cycle
 
 Status: completed for the scoped explicit-cycle slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.

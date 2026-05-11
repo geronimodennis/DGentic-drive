@@ -1,10 +1,14 @@
 import pytest
 
 from dgentic.agents import get_agent, update_agent_status
+from dgentic.events import event_log
 from dgentic.orchestration import OrchestrationError, OrchestrationService
 from dgentic.schemas import (
     AgentStatus,
     AgentStatusUpdate,
+    LogEventType,
+    OrchestrationBlocker,
+    OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationTask,
@@ -978,6 +982,266 @@ def test_orchestration_recovery_preserves_manual_blockers(
     assert [(follow_up.task_id, follow_up.assigned_role) for follow_up in unchanged.follow_ups] == [
         ("qa-validation", "QA")
     ]
+
+
+def test_orchestration_resolves_manual_blocker_and_preserves_audit_history(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Resolve a manually blocked task.",
+            required_dod_evidence=["tests"],
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Needs security review."),
+    )
+    blocker_id = blocked.blockers[0].id
+
+    resolved = service.resolve_blocker(
+        blocked.id,
+        blocker_id,
+        OrchestrationBlockerResolutionRequest(
+            resolution="TOKEN=secret-value mitigation accepted.",
+            reschedule=True,
+        ),
+        actor="admin-actor",
+    )
+    task = _task_by_id(resolved, "qa-validation")
+
+    assert task.status == StepStatus.running
+    assert task.error is None
+    assert task.agent_id
+    assert resolved.follow_ups == []
+    assert resolved.scheduled_task_ids == ["qa-validation"]
+    assert len(resolved.blockers) == 1
+    blocker = resolved.blockers[0]
+    assert blocker.id == blocker_id
+    assert blocker.status == "resolved"
+    assert blocker.resolved_by == "admin-actor"
+    assert blocker.resolution == "TOKEN=[REDACTED] mitigation accepted."
+    assert blocker.resolved_at is not None
+
+    done = service.update_task(
+        resolved.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+    closed = service.close_run(
+        done.id,
+        OrchestrationCloseRequest(evidence={"tests": "pytest passed"}),
+    )
+
+    assert closed.status == PlanStatus.completed
+    assert closed.blockers[0].status == "resolved"
+
+
+def test_orchestration_resolving_final_blocker_without_reschedule_leaves_task_pending(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Resolve without immediate scheduling.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(
+            status=StepStatus.blocked,
+            output={"partial": "stale"},
+            error="Needs review.",
+        ),
+    )
+
+    resolved = service.resolve_blocker(
+        blocked.id,
+        blocked.blockers[0].id,
+        OrchestrationBlockerResolutionRequest(resolution="Reviewed without immediate schedule."),
+    )
+    task = _task_by_id(resolved, "qa-validation")
+
+    assert task.status == StepStatus.pending
+    assert task.agent_id is None
+    assert task.output == {}
+    assert task.error is None
+    assert resolved.scheduled_task_ids == []
+    assert resolved.blockers[0].status == "resolved"
+    assert resolved.follow_ups == []
+
+    advanced = service.advance_run(resolved.id)
+
+    assert advanced.scheduled_task_ids == ["qa-validation"]
+    assert _task_by_id(advanced, "qa-validation").status == StepStatus.running
+
+
+def test_orchestration_blocker_resolution_reports_actual_reschedule(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Do not overreport scheduling.",
+            tasks=[
+                _task("dev-impl", role="Developer", paths=["src/dgentic/orchestration.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-impl"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    blocker = OrchestrationBlocker(
+        id="blocker-dependent-qa",
+        task_id="qa-validation",
+        reason="Manual review before dependency is done.",
+    )
+    blocked_tasks = [
+        task.model_copy(
+            update={
+                "status": StepStatus.blocked,
+                "error": blocker.reason,
+            }
+        )
+        if task.id == "qa-validation"
+        else task.model_copy(update={"status": StepStatus.pending, "agent_id": None})
+        for task in run.tasks
+    ]
+    blocked = run.model_copy(
+        update={
+            "tasks": blocked_tasks,
+            "blockers": [blocker],
+            "scheduled_task_ids": [],
+        }
+    )
+    service._runs.upsert(blocked)
+
+    resolved = service.resolve_blocker(
+        blocked.id,
+        blocker.id,
+        OrchestrationBlockerResolutionRequest(
+            resolution="Reviewed, but dependency remains incomplete.",
+            reschedule=True,
+        ),
+    )
+
+    assert _task_by_id(resolved, "qa-validation").status == StepStatus.pending
+    assert resolved.scheduled_task_ids == ["dev-impl"]
+    resolution_event = next(
+        event
+        for event in reversed(event_log.list(LogEventType.task))
+        if event.subject_id == resolved.id and event.message == "Resolved orchestration blocker."
+    )
+    assert resolution_event.metadata["reschedule_requested"] is True
+    assert resolution_event.metadata["rescheduled"] is False
+
+
+def test_orchestration_resolves_security_blocker(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Resolve security blocker.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Needs security review."),
+    )
+    security_blocker = blocked.blockers[0].model_copy(update={"severity": "security"})
+    blocked = blocked.model_copy(update={"blockers": [security_blocker]})
+    service._runs.upsert(blocked)
+
+    resolved = service.resolve_blocker(
+        blocked.id,
+        security_blocker.id,
+        OrchestrationBlockerResolutionRequest(
+            resolution="Security accepted mitigation.",
+            reschedule=True,
+        ),
+        actor="security-admin",
+    )
+
+    assert resolved.blockers[0].severity == "security"
+    assert resolved.blockers[0].status == "resolved"
+    assert resolved.blockers[0].resolved_by == "security-admin"
+    assert _task_by_id(resolved, "qa-validation").status == StepStatus.running
+
+
+def test_orchestration_resolve_blocker_rejects_system_blockers_and_repeats(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep system blockers on the recovery path.",
+            tasks=[
+                _task(
+                    "qa-source-edit",
+                    role="QA",
+                    paths=["src/dgentic/orchestration.py"],
+                )
+            ],
+        )
+    )
+    blocker_id = run.blockers[0].id
+
+    with pytest.raises(OrchestrationError, match="role_boundary blocker"):
+        service.resolve_blocker(
+            run.id,
+            blocker_id,
+            OrchestrationBlockerResolutionRequest(resolution="Manual override."),
+        )
+
+    unchanged = service.get_run(run.id)
+    assert unchanged is not None
+    assert unchanged.blockers[0].status == "open"
+
+    recovered = service.recover_task(
+        run.id,
+        "qa-source-edit",
+        OrchestrationTaskRecoveryRequest(
+            resolution="Reassigned to Developer.",
+            role="Developer",
+            declared_write_paths=["src/dgentic/orchestration.py"],
+        ),
+    )
+    blocked = service.update_task(
+        recovered.id,
+        "qa-source-edit",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Needs manual review."),
+    )
+    manual_blocker_id = blocked.blockers[0].id
+    resolved = service.resolve_blocker(
+        blocked.id,
+        manual_blocker_id,
+        OrchestrationBlockerResolutionRequest(resolution="Reviewed."),
+    )
+
+    with pytest.raises(OrchestrationError, match="already resolved"):
+        service.resolve_blocker(
+            resolved.id,
+            manual_blocker_id,
+            OrchestrationBlockerResolutionRequest(resolution="Reviewed again."),
+        )
+
+
+def test_orchestration_blocker_resolution_requires_meaningful_resolution(
+    orchestration_state,
+) -> None:
+    with pytest.raises(ValueError, match="resolution must not be blank"):
+        OrchestrationBlockerResolutionRequest(resolution="   ")
 
 
 def test_orchestration_recovery_can_reset_retry_count(

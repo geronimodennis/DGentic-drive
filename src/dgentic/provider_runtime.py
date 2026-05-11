@@ -309,7 +309,6 @@ def create_provider_approval(
     _reject_external_runtime_base_url(request)
     _validate_external_model(request.model, settings)
     base_url = _external_base_url(settings)
-    _external_headers(settings)
     credential_env = settings.external_openai_compatible_api_key_env.strip()
     model_allowlist = _external_models(settings)
     requested_by_value = requested_by or request.requested_by
@@ -542,7 +541,9 @@ def generate_provider_completion(
         url, payload, headers = _build_provider_request(request)
         circuit_key = _provider_circuit_key(request, url)
         _raise_if_provider_circuit_open(circuit_key)
-        _authorize_provider_request_for_transport(request)
+        approval = _authorize_provider_request_for_transport(request)
+        headers = _provider_transport_headers(request, headers)
+        _claim_provider_request_for_transport(approval, request)
         if headers:
             transport_result = _post_json(
                 url,
@@ -616,7 +617,9 @@ def stream_provider_completion(
         url, payload, headers = _build_provider_stream_request(request)
         circuit_key = _provider_circuit_key(request, url)
         _raise_if_provider_circuit_open(circuit_key)
-        _authorize_provider_request_for_transport(request)
+        approval = _authorize_provider_request_for_transport(request)
+        headers = _provider_transport_headers(request, headers)
+        _claim_provider_request_for_transport(approval, request)
         transport_result = _open_stream(
             url,
             payload,
@@ -689,7 +692,6 @@ def _build_provider_request(
         _reject_external_runtime_base_url(request)
         _validate_external_model(request.model, settings)
         base_url = _external_base_url(settings)
-        headers = _external_headers(settings)
         payload = {
             "model": request.model,
             "messages": messages,
@@ -702,7 +704,7 @@ def _build_provider_request(
         return (
             f"{base_url}/chat/completions",
             payload,
-            headers,
+            {},
         )
 
     raise ValueError(f"Unsupported provider_id: {request.provider_id}")
@@ -747,7 +749,6 @@ def _build_provider_stream_request(
         _reject_external_runtime_base_url(request)
         _validate_external_model(request.model, settings)
         base_url = _external_base_url(settings)
-        headers = _external_headers(settings)
         payload = {
             "model": request.model,
             "messages": messages,
@@ -757,7 +758,7 @@ def _build_provider_stream_request(
             payload["temperature"] = request.temperature
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
-        return f"{base_url}/chat/completions", payload, headers
+        return f"{base_url}/chat/completions", payload, {}
 
     if request.provider_id == EXTERNAL_PLACEHOLDER_PROVIDER_ID:
         raise ProviderFeatureNotSupportedError(
@@ -1558,24 +1559,20 @@ def _authorize_external_provider_request(
     request: ProviderGenerationRequest,
     *,
     settings: Any,
-) -> None:
+) -> ProviderApproval | None:
     if request.approval_id:
         try:
             approval = _get_provider_approval_or_raise(request.approval_id)
         except KeyError as exc:
             raise ProviderApprovalRequiredError(str(exc)) from exc
-        _claim_bound_provider_approval(
-            approval,
-            request=request,
-            settings=settings,
-        )
-        return
+        _validate_bound_provider_approval(approval, request=request, settings=settings)
+        return approval
     if request.approved and settings.environment.strip().lower() in {
         "development",
         "test",
         "testing",
     }:
-        return
+        return None
     if request.approved:
         raise ProviderApprovalRequiredError(
             "External provider requires an approved approval_id before generation; "
@@ -1584,9 +1581,29 @@ def _authorize_external_provider_request(
     raise ProviderApprovalRequiredError("External provider requires explicit approval.")
 
 
-def _authorize_provider_request_for_transport(request: ProviderGenerationRequest) -> None:
+def _authorize_provider_request_for_transport(
+    request: ProviderGenerationRequest,
+) -> ProviderApproval | None:
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
-        _authorize_external_provider_request(request, settings=get_settings())
+        return _authorize_external_provider_request(request, settings=get_settings())
+    return None
+
+
+def _provider_transport_headers(
+    request: ProviderGenerationRequest,
+    headers: dict[str, str],
+) -> dict[str, str]:
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        return {**headers, **_external_headers(get_settings())}
+    return headers
+
+
+def _claim_provider_request_for_transport(
+    approval: ProviderApproval | None,
+    request: ProviderGenerationRequest,
+) -> None:
+    if approval is not None:
+        _claim_bound_provider_approval(approval, request=request, settings=get_settings())
 
 
 def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> None:
@@ -1664,7 +1681,6 @@ def _validate_bound_provider_approval(
     _reject_external_runtime_base_url(request)
     _validate_external_model(request.model, settings)
     base_url = _external_base_url(settings)
-    _external_headers(settings)
     credential_env = settings.external_openai_compatible_api_key_env.strip()
     model_allowlist = _external_models(settings)
     message_digest = provider_messages_digest(request.messages)

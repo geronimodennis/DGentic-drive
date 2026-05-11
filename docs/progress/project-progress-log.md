@@ -4,9 +4,56 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006k External Credential-Resolution Ordering Hardening
+
+Status: completed for the scoped external-provider credential-resolution ordering contract; stable checkpoint committed and pushed.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected a narrow security hardening slice after BL-006j because encrypted credential storage belongs with Sprint 15 identity/secrets, while current Sprint 12 external-provider runtime still needed stronger fail-fast ordering around credential lookup, approval claims, and outbound transport.
+- Completed: Reviewer/Security read-only review confirmed the implementation shape and requested additional runtime/API coverage for streaming, boolean-bypass rejection, open-circuit, approval drift/denied/expired, and reused approval paths.
+- Completed: Developer updated production source only to build configured external provider requests without Authorization headers, run pricing/config/circuit/approval gates first, resolve credential headers only after transport is eligible, and claim bound approvals immediately before outbound transport.
+- Completed: QA updated tests only to prove fail-fast runtime/API paths do not read credential values or hit transport, while successful external transport resolves the credential exactly once and missing credentials do not claim the bound approval.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+- Completed: Full regression/lint/format/whitespace gates.
+- Completed: Stable checkpoint committed and pushed.
+
+Feature tracking:
+- Implemented in this slice: external non-streaming and streaming request builders now return payloads without credential headers.
+- Implemented in this slice: external pricing validation, base URL/model configuration checks, circuit-open checks, and approval authorization run before API-key env-value lookup or Authorization header construction.
+- Implemented in this slice: bound provider approvals are validated before credential lookup, but claimed only after credential/header resolution succeeds and immediately before outbound transport.
+- Implemented in this slice: approval, configuration, pricing, circuit-open, drift, denied, expired, reused-approval, and missing-credential fail-fast paths avoid outbound transport; the paths that should avoid credential lookup now have explicit blocking-env regressions.
+
+Validation:
+- Focused provider/API ordering gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "external_generation or external_streaming or external_provider_generate_api or external_provider_generate_stream_api or bound_provider_approval"` passed with 42 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed with 3 files already formatted.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 199 tests.
+- Full test gate: `uv --cache-dir .uv-cache run pytest -q` passed with 640 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 48 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+- Reviewer/Security review: read-only reviewer reported no implementation path that resolves `_external_headers()` before fail-fast checks and requested the coverage gaps QA then added.
+
+Residual risks:
+- Credential values are still environment-referenced secrets, not encrypted DGentic-managed secrets; encrypted credential storage or secret-manager integration remains Sprint 15/BL-009 work.
+- Circuit state remains in-process and non-durable across workers; durable multi-worker circuit state remains deployment follow-up work.
+- Provider-specific billing reconciliation and non-OpenAI-compatible external adapters remain future work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/provider_runtime.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Continue Sprint 12 by reassessing whether the next safest slice is provider-specific adapters or deferring remaining provider work to Sprint 15/18 dependencies.
+
 ### Sprint 12 BL-006j Provider Pricing Catalog And Cost Estimation
 
-Status: completed for the scoped advisory provider/model pricing contract; checkpoint commit remains pending.
+Status: completed for the scoped advisory provider/model pricing contract; stable checkpoint committed and pushed.
 
 Current story:
 - BL-006: Provider System Productionization.
@@ -18,7 +65,7 @@ Checklist:
 - Completed: QA updated tests only for configured non-streaming cost, streaming usage-chunk cost using the request model, invalid pricing rejection before transport/probes/listing/health checks, routing max-cost behavior, API cost output, and no-content/no-secret logs.
 - Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
 - Completed: Reviewer/Security found invalid pricing could still allow provider listing/health probes and that generation validated pricing after request/header construction; Developer remediated both and QA added focused coverage.
-- Pending: Commit and push.
+- Completed: Stable checkpoint committed and pushed.
 
 Feature tracking:
 - Implemented in this slice: `DGENTIC_PROVIDER_PRICING_CATALOG` accepts a bounded JSON object keyed by exact provider id and model, with `prompt_usd_per_1k_tokens`, `completion_usd_per_1k_tokens`, and optional `request_estimate_usd`.
@@ -50,7 +97,8 @@ Role boundary:
 - Workflow docs under `docs/agentic-workflows/` were followed but not modified.
 
 Next:
-- Commit/push the stable BL-006j checkpoint, then reassess remaining Sprint 12 encrypted credential strategy and provider-specific adapter scope.
+- Continue Sprint 12 with the credential-resolution ordering hardening slice, then reassess remaining encrypted credential strategy and provider-specific adapter scope.
+
 
 ### Sprint 12 BL-006i Provider Circuit Breaker
 

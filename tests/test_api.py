@@ -488,6 +488,26 @@ class FakeStreamResponse:
         self.closed = True
 
 
+class BlockingCredentialEnviron:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        self.calls.append(key)
+        raise AssertionError("credential lookup should not happen")
+
+
+class TrackingCredentialEnviron:
+    def __init__(self, *, key: str, value: str) -> None:
+        self.key = key
+        self.value = value
+        self.calls: list[str] = []
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        self.calls.append(key)
+        return self.value if key == self.key else default
+
+
 def openai_stream_lines(*chunks: dict, done: bool = True) -> list[str]:
     lines = [f"data: {json.dumps(chunk)}\n" for chunk in chunks]
     if done:
@@ -2981,6 +3001,7 @@ def test_external_provider_generate_stream_api_requires_approval_before_transpor
     monkeypatch,
 ) -> None:
     configure_external_provider_api(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -2988,6 +3009,7 @@ def test_external_provider_generate_stream_api_requires_approval_before_transpor
         raise AssertionError("transport should not be called")
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
     client = TestClient(create_app())
 
     response = client.post(
@@ -2995,12 +3017,14 @@ def test_external_provider_generate_stream_api_requires_approval_before_transpor
         json={
             "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
             "model": "gpt-test",
-            "messages": [{"role": "user", "content": "hello"}],
+            "messages": [{"role": "user", "content": "hello TOKEN=stream-prompt-secret"}],
         },
     )
 
     assert response.status_code == 403
     assert calls == []
+    assert blocked_credentials.calls == []
+    assert "stream-prompt-secret" not in response.text
     get_settings.cache_clear()
 
 
@@ -3012,6 +3036,11 @@ def test_external_provider_generate_stream_api_accepts_bound_approval_in_product
     monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider_api(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_TEST_EXTERNAL_API_KEY",
+        value="external-api-key-secret",
+    )
     calls: list[dict] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -3041,6 +3070,7 @@ def test_external_provider_generate_stream_api_accepts_bound_approval_in_product
         )
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
     client = TestClient(create_app())
     provider_id = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
     approval_body = {
@@ -3050,6 +3080,10 @@ def test_external_provider_generate_stream_api_accepts_bound_approval_in_product
         "stream": True,
         "requested_by": "tester",
     }
+    bypass_response = client.post(
+        "/providers/generate/stream",
+        json={**approval_body, "approved": True},
+    )
     create_response = client.post(
         f"/providers/{provider_id}/approvals",
         json=approval_body,
@@ -3059,16 +3093,25 @@ def test_external_provider_generate_stream_api_accepts_bound_approval_in_product
         f"/providers/approvals/{approval_id}/approve",
         json={"decided_by": "reviewer"},
     )
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
     response = client.post(
+        "/providers/generate/stream",
+        json={**approval_body, "stream": False, "approval_id": approval_id},
+    )
+    second_response = client.post(
         "/providers/generate/stream",
         json={**approval_body, "stream": False, "approval_id": approval_id},
     )
     logs_response = client.get("/logs?event_type=provider")
 
+    assert bypass_response.status_code == 403
+    assert "approval_id" in bypass_response.json()["detail"]
     assert create_response.status_code == 201
     assert approve_response.status_code == 200
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert second_response.status_code == 403
+    assert "not executable" in second_response.json()["detail"]
     assert calls == [
         {
             "url": "https://provider.example.test/v1/chat/completions",
@@ -3087,6 +3130,8 @@ def test_external_provider_generate_stream_api_accepts_bound_approval_in_product
     assert "upstream-stream-token-secret" not in serialized
     assert "Approved" in response.text
     assert "Approved" not in logs_response.text
+    assert blocked_credentials.calls == []
+    assert tracked_credentials.calls == ["DGENTIC_TEST_EXTERNAL_API_KEY"]
     get_settings.cache_clear()
 
 
@@ -3469,6 +3514,7 @@ def test_external_provider_generate_api_requires_approval_before_transport(
 ) -> None:
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider_api(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -3476,6 +3522,7 @@ def test_external_provider_generate_api_requires_approval_before_transport(
         raise AssertionError("transport should not be called")
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
     client = TestClient(create_app())
 
     response = client.post(
@@ -3483,14 +3530,16 @@ def test_external_provider_generate_api_requires_approval_before_transport(
         json={
             "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
             "model": "gpt-test",
-            "messages": [{"role": "user", "content": "hello"}],
+            "messages": [{"role": "user", "content": "hello TOKEN=api-prompt-secret"}],
         },
     )
 
     assert response.status_code == 403
     assert response.json()["detail"] == "External provider requires explicit approval."
     assert calls == []
+    assert blocked_credentials.calls == []
     assert "external-api-key-secret" not in response.text
+    assert "api-prompt-secret" not in response.text
     get_settings.cache_clear()
 
 
@@ -3502,6 +3551,11 @@ def test_external_provider_generate_api_requires_bound_approval_in_production(
     monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider_api(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_TEST_EXTERNAL_API_KEY",
+        value="external-api-key-secret",
+    )
     calls: list[dict] = []
     raw_response = {
         "id": "chatcmpl-provider-approval-api",
@@ -3539,6 +3593,7 @@ def test_external_provider_generate_api_requires_bound_approval_in_production(
         return FakeResponse()
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
     client = TestClient(create_app())
     provider_id = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
     approval_body = {
@@ -3575,6 +3630,7 @@ def test_external_provider_generate_api_requires_bound_approval_in_production(
             "requested_by": "tester",
         },
     )
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
     execute_response = client.post(
         "/providers/generate",
         json={**approval_body, "approval_id": approval_id, "requested_by": "tester"},
@@ -3631,6 +3687,8 @@ def test_external_provider_generate_api_requires_bound_approval_in_production(
     assert "provider-api-prompt-secret" not in serialized
     assert "Approved API response." in execute_response.text
     assert "Approved API response." not in logs_response.text
+    assert blocked_credentials.calls == []
+    assert tracked_credentials.calls == ["DGENTIC_TEST_EXTERNAL_API_KEY"]
     get_settings.cache_clear()
 
 

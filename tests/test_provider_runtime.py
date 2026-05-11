@@ -78,6 +78,26 @@ class FakeStreamResponse:
         self.closed = True
 
 
+class BlockingCredentialEnviron:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        self.calls.append(key)
+        raise AssertionError("credential lookup should not happen")
+
+
+class TrackingCredentialEnviron:
+    def __init__(self, *, key: str, value: str) -> None:
+        self.key = key
+        self.value = value
+        self.calls: list[str] = []
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        self.calls.append(key)
+        return self.value if key == self.key else default
+
+
 @pytest.fixture(autouse=True)
 def reset_provider_circuit_state():
     provider_runtime.reset_provider_circuit_state()
@@ -611,6 +631,7 @@ def test_external_generation_rejects_invalid_pricing_before_transport(
 
 def test_external_generation_requires_approval_before_transport(monkeypatch) -> None:
     configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -618,17 +639,47 @@ def test_external_generation_requires_approval_before_transport(monkeypatch) -> 
         raise AssertionError("transport should not be called")
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
 
     with pytest.raises(provider_runtime.ProviderApprovalRequiredError):
         generate_provider_completion(
             ProviderGenerationRequest(
                 provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
                 model="gpt-test",
-                messages=[{"role": "user", "content": "Say hello."}],
+                messages=[{"role": "user", "content": "Say hello. TOKEN=prompt-secret"}],
             )
         )
 
     assert calls == []
+    assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
+def test_external_streaming_requires_approval_before_credential_lookup(monkeypatch) -> None:
+    configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                    model="gpt-test",
+                    messages=[{"role": "user", "content": "Stream hello. TOKEN=prompt-secret"}],
+                )
+            )
+        )
+
+    assert calls == []
+    assert blocked_credentials.calls == []
     get_settings.cache_clear()
 
 
@@ -641,6 +692,7 @@ def test_external_generation_rejects_approved_boolean_outside_development(
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", environment)
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -648,6 +700,7 @@ def test_external_generation_rejects_approved_boolean_outside_development(
         raise AssertionError("transport should not be called")
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
 
     with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="approval_id"):
         generate_provider_completion(
@@ -660,6 +713,43 @@ def test_external_generation_rejects_approved_boolean_outside_development(
         )
 
     assert calls == []
+    assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_external_streaming_rejects_approved_boolean_before_credential_lookup(
+    environment,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", environment)
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="approval_id"):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                    model="gpt-test",
+                    messages=[{"role": "user", "content": "Stream hello."}],
+                    approved=True,
+                )
+            )
+        )
+
+    assert calls == []
+    assert blocked_credentials.calls == []
     get_settings.cache_clear()
 
 
@@ -670,6 +760,10 @@ def test_external_generation_accepts_bound_approval_id_in_production(
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider(monkeypatch)
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_TEST_EXTERNAL_API_KEY",
+        value="external-api-key-secret",
+    )
     event_log = RecordingEventLog()
     calls: list[dict] = []
 
@@ -686,6 +780,7 @@ def test_external_generation_accepts_bound_approval_id_in_production(
 
     monkeypatch.setattr(provider_runtime, "event_log", event_log)
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
     request = ProviderGenerationRequest(
         provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
         model="gpt-test",
@@ -741,6 +836,7 @@ def test_external_generation_accepts_bound_approval_id_in_production(
     executed = provider_runtime.list_provider_approvals()[0]
     assert executed.status == provider_runtime.ProviderApprovalStatus.executed
     assert executed.executed_at is not None
+    assert tracked_credentials.calls == ["DGENTIC_TEST_EXTERNAL_API_KEY"]
 
     with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="not executable"):
         generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
@@ -804,6 +900,61 @@ def test_external_generation_open_circuit_preserves_bound_approval_id(
     assert approvals[second_approval.id].status == provider_runtime.ProviderApprovalStatus.approved
     assert approvals[second_approval.id].executed_at is None
     assert calls == ["https://provider.example.test/v1/chat/completions"]
+    get_settings.cache_clear()
+
+
+def test_external_generation_open_circuit_skips_credential_lookup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    configure_external_provider(monkeypatch)
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise http_error(503)
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    first_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(first_approval.id, decided_by="reviewer")
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request.model_copy(update={"approval_id": first_approval.id}))
+
+    blocked_credentials = BlockingCredentialEnviron()
+    second_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(second_approval.id, decided_by="reviewer")
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+        generate_provider_completion(request.model_copy(update={"approval_id": second_approval.id}))
+
+    approvals = {approval.id: approval for approval in provider_runtime.list_provider_approvals()}
+    assert approvals[second_approval.id].status == provider_runtime.ProviderApprovalStatus.approved
+    assert approvals[second_approval.id].executed_at is None
+    assert calls == ["https://provider.example.test/v1/chat/completions"]
+    assert blocked_credentials.calls == []
     get_settings.cache_clear()
 
 
@@ -871,6 +1022,7 @@ def test_bound_provider_approval_rejects_request_drift_denied_and_expired(
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -878,6 +1030,7 @@ def test_bound_provider_approval_rejects_request_drift_denied_and_expired(
         raise AssertionError("transport should not be called")
 
     monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
     request = ProviderGenerationRequest(
         provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
         model="gpt-test",
@@ -929,6 +1082,7 @@ def test_bound_provider_approval_rejects_request_drift_denied_and_expired(
         generate_provider_completion(request.model_copy(update={"approval_id": expired.id}))
 
     assert calls == []
+    assert blocked_credentials.calls == []
     get_settings.cache_clear()
 
 
@@ -1009,6 +1163,47 @@ def test_external_generation_requires_configuration_before_transport(
     assert calls == []
     serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
     assert "external-api-key-secret" not in serialized_event
+    get_settings.cache_clear()
+
+
+def test_external_generation_missing_credential_does_not_claim_bound_approval(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch, api_key="")
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_TEST_EXTERNAL_API_KEY",
+        value="",
+    )
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+
+    stored_approval = provider_runtime.list_provider_approvals()[0]
+    assert stored_approval.status == provider_runtime.ProviderApprovalStatus.approved
+    assert stored_approval.executed_at is None
+    assert calls == []
+    assert tracked_credentials.calls == ["DGENTIC_TEST_EXTERNAL_API_KEY"]
     get_settings.cache_clear()
 
 

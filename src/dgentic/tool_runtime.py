@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import secrets
+import signal
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -255,28 +256,13 @@ def execute_tool(
     dependency_paths = _tool_dependency_paths(manifest, tool_dir)
 
     started_at = perf_counter()
-    try:
-        completed = subprocess.run(
-            _tool_subprocess_args(entrypoint, dependency_paths),
-            cwd=tool_dir,
-            input=json.dumps(payload or {}),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-            env=_subprocess_env(),
-        )
-        exit_code = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
-    except subprocess.TimeoutExpired as exc:
-        exit_code = TIMEOUT_EXIT_CODE
-        stdout = _coerce_timeout_output(exc.stdout)
-        stderr = _coerce_timeout_output(exc.stderr)
-        timeout_message = f"Tool timed out after {timeout_seconds} seconds."
-        stderr = f"{stderr}\n{timeout_message}" if stderr else timeout_message
+    exit_code, stdout, stderr = _run_tool_subprocess(
+        entrypoint=entrypoint,
+        tool_dir=tool_dir,
+        payload=payload or {},
+        timeout_seconds=timeout_seconds,
+        dependency_paths=dependency_paths,
+    )
 
     duration_ms = round((perf_counter() - started_at) * 1000)
     parsed_output = _parse_json_output(stdout)
@@ -956,6 +942,111 @@ def _tool_subprocess_args(entrypoint: Path, dependency_paths: list[Path]) -> lis
     ]
 
 
+def _run_tool_subprocess(
+    *,
+    entrypoint: Path,
+    tool_dir: Path,
+    payload: dict[str, Any],
+    timeout_seconds: int,
+    dependency_paths: list[Path],
+) -> tuple[int, str, str]:
+    process = subprocess.Popen(
+        _tool_subprocess_args(entrypoint, dependency_paths),
+        cwd=tool_dir,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=_subprocess_env(),
+        **_tool_popen_isolation_kwargs(),
+    )
+    try:
+        stdout, stderr = process.communicate(
+            json.dumps(payload),
+            timeout=timeout_seconds,
+        )
+        exit_code = process.returncode
+        if exit_code is None:
+            exit_code = process.wait()
+        return exit_code, stdout or "", stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        _terminate_tool_process_tree(process)
+        drained_stdout, drained_stderr = _drain_tool_process_output(process)
+        stdout = _coerce_timeout_output(exc.stdout) or drained_stdout
+        stderr = _coerce_timeout_output(exc.stderr) or drained_stderr
+        timeout_message = f"Tool timed out after {timeout_seconds} seconds."
+        stderr = f"{stderr}\n{timeout_message}" if stderr else timeout_message
+        return TIMEOUT_EXIT_CODE, stdout, stderr
+
+
+def _drain_tool_process_output(process: subprocess.Popen) -> tuple[str, str]:
+    try:
+        stdout, stderr = process.communicate(timeout=1)
+    except (subprocess.TimeoutExpired, ValueError):
+        return "", ""
+    return stdout or "", stderr or ""
+
+
+def _tool_popen_isolation_kwargs() -> dict[str, bool | int]:
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    if os.name != "nt":
+        return {"start_new_session": True}
+    return {}
+
+
+def _terminate_tool_process_tree(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        process.terminate()
+        if process.pid is not None:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if process.poll() is None:
+            process.kill()
+        return
+
+    if process.pid is not None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.terminate()
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=1)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    if process.pid is not None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.kill()
+    else:
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
 def _path_has_symlink_between(root: Path, candidate: Path) -> bool:
     root = root.resolve()
     current = candidate
@@ -1178,6 +1269,7 @@ def _record_execution_event(
             "reliability_policy_action": reliability_policy,
             "reliability_policy_reason": manifest.deprecated_reason,
             "dependency_isolation": "local-only",
+            "process_isolation": "process-group",
             "dependency_paths": [
                 path.relative_to(
                     _tool_dir_for(manifest.name, get_settings().root_dir.resolve())

@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005f Generated-Tool Process Cleanup Hardening
+
+Status: completed for the scoped generated-tool process cleanup slice; Sprint 11 remains open for full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management, and richer version migration policy.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected process cleanup hardening as the next Sprint 11 slice after the pushed BL-005e checkpoint because it improves timeout/process boundaries without claiming a full OS sandbox.
+- Completed: QA read-only explorer recommended deterministic fake-process coverage for launch isolation, timeout cleanup, POSIX process-group cleanup, and Windows taskkill fallback.
+- Completed: Developer updated production source only to replace one-shot `subprocess.run` generated-tool execution with controlled `Popen`, process-group/new-process-group startup where supported, timeout cleanup, partial-output drain after timeout, and Windows taskkill failure fallback.
+- Completed: QA updated tests only for controlled `Popen` launch args/env/pipe wiring, timeout cleanup delegation, host process-tree termination behavior, Windows taskkill timeout fallback, and timeout redaction regression.
+- Completed: Focused and full regression, lint, and format gates for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: generated-tool execution uses explicit `Popen` launch controls instead of one-shot `subprocess.run`.
+- Implemented in this slice: POSIX hosts launch generated tools with a new session/process group; Windows hosts use `CREATE_NEW_PROCESS_GROUP` when available.
+- Implemented in this slice: timed-out generated tools invoke process-tree cleanup, preserve available partial stdout/stderr, append the timeout message, and still record the run as a failed reliability attempt.
+- Implemented in this slice: POSIX timeout cleanup attempts process-group TERM then KILL when the first wait expires.
+- Implemented in this slice: Windows timeout cleanup calls `taskkill /PID <pid> /T /F` and falls back to `process.kill()` if taskkill fails or times out.
+- Implemented in this slice: execution audit metadata marks generated-tool process isolation as `process-group`.
+
+Validation:
+- Focused cleanup gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py::test_tool_subprocess_does_not_inherit_host_python_environment tests\test_tool_runtime.py::test_timed_out_tool_terminates_process_tree tests\test_tool_runtime.py::test_terminate_tool_process_tree_uses_host_tree_termination tests\test_tool_runtime.py::test_windows_taskkill_failure_falls_back_to_process_kill tests\test_tool_runtime.py::test_timed_out_tool_redacts_partial_output_and_records_audit_event` passed with 5 tests.
+- Focused tool/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "tool or approval or dependency or timeout"` passed with 49 tests and 24 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\tool_runtime.py tests\test_tool_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\tool_runtime.py tests\test_tool_runtime.py tests\test_api.py` passed with 3 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 485 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+
+Residual risks:
+- This is process cleanup hardening, not a full sandbox; generated tools still run as local Python subprocesses under the same operating-system user.
+- The runtime still does not enforce filesystem, network, syscall, CPU, or memory isolation for generated tools.
+- SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/tool_runtime.py`.
+- QA-owned files: `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- No untracked files are present after the BL-005e checkpoint; previous backup files are no longer in the working tree.
+
+Next:
+- Continue Sprint 11 with richer version migration policy or explicit full sandbox design after this stable checkpoint is pushed.
+
 ### Sprint 11 BL-005e Per-Tool Local Dependency Import Isolation
 
 Status: completed for the scoped local dependency import isolation slice; Sprint 11 remains open for OS/process sandboxing, production package/dependency lifecycle management, and richer version migration policy.
@@ -50,7 +98,7 @@ Workspace hygiene:
 - Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
 
 Next:
-- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with OS/process sandbox hardening or richer version migration policy.
+- Completed checkpoint commit and push for this Sprint 11 slice as `0735678`; continue Sprint 11 with process hardening or richer version migration policy.
 
 ### Sprint 11 BL-005d Runtime Reliability Policy Automation
 

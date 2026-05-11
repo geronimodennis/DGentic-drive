@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import signal
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -932,17 +933,28 @@ def test_tool_subprocess_does_not_inherit_host_python_environment(
     )
     call: dict[str, object] = {}
 
-    def fake_run(args, **kwargs):
+    class FakeProcess:
+        pid = 4242
+        returncode = 0
+
+        def communicate(self, input, timeout):
+            call["input"] = input
+            call["timeout"] = timeout
+            return '{"ok": true}\n', ""
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    def fake_popen(args, **kwargs):
         call["args"] = args
         call["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout='{"ok": true}\n',
-            stderr="",
-        )
+        call["kwargs"] = kwargs
+        return FakeProcess()
 
-    monkeypatch.setattr(tool_runtime.subprocess, "run", fake_run)
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fake_popen)
 
     result = execute_tool("subprocess-env-isolation", {})
 
@@ -956,10 +968,179 @@ def test_tool_subprocess_does_not_inherit_host_python_environment(
     assert "-X" in args
     assert "utf8" in args
     assert isinstance(env, dict)
+    assert call["input"] == "{}"
+    assert call["timeout"] == 30
     for key, value in host_python_vars.items():
         assert key not in env
         assert value not in env.values()
     assert env["DGENTIC_TOOL_DEPENDENCY_MODE"] == "local-only"
+    kwargs = call["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["cwd"] == (root_dir / "localmcp" / "subprocess-env-isolation").resolve()
+    assert kwargs["stdin"] == subprocess.PIPE
+    assert kwargs["stdout"] == subprocess.PIPE
+    assert kwargs["stderr"] == subprocess.PIPE
+    if tool_runtime.os.name == "nt" and hasattr(
+        tool_runtime.subprocess, "CREATE_NEW_PROCESS_GROUP"
+    ):
+        assert kwargs["creationflags"] == tool_runtime.subprocess.CREATE_NEW_PROCESS_GROUP
+    elif tool_runtime.os.name != "nt":
+        assert kwargs["start_new_session"] is True
+
+
+def test_timed_out_tool_terminates_process_tree(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "timeout-process-tree",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="timeout-process-tree",
+            description="Verifies timeout cleanup is invoked.",
+            entrypoint="localmcp/timeout-process-tree/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    terminated: list[object] = []
+
+    class TimeoutProcess:
+        pid = 4242
+        returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(
+                cmd="timeout-process-tree",
+                timeout=timeout,
+                output="partial stdout",
+                stderr="partial stderr",
+            )
+
+        def poll(self):
+            return None
+
+    process = TimeoutProcess()
+
+    def fake_popen(args, **kwargs):
+        return process
+
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        tool_runtime,
+        "_terminate_tool_process_tree",
+        lambda process: terminated.append(process),
+    )
+
+    result = execute_tool("timeout-process-tree", {}, timeout_seconds=1)
+    stored = get_tool("timeout-process-tree")
+
+    assert result.exit_code == TIMEOUT_EXIT_CODE
+    assert result.stdout == "partial stdout"
+    assert "partial stderr" in result.stderr
+    assert "Tool timed out after 1 seconds." in result.stderr
+    assert terminated == [process]
+    assert stored is not None
+    assert stored.usage_count == 1
+    assert stored.failure_count == 1
+
+
+def test_terminate_tool_process_tree_uses_host_tree_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.poll_calls = 0
+            self.terminated = False
+            self.killed = False
+            self.waits: list[int | None] = []
+
+        def poll(self):
+            self.poll_calls += 1
+            if tool_runtime.os.name == "nt":
+                return None if self.poll_calls == 1 else 0
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.waits.append(timeout)
+            if tool_runtime.os.name != "nt" and len(self.waits) == 1:
+                raise subprocess.TimeoutExpired(cmd="tool", timeout=timeout)
+            return 0
+
+    process = FakeProcess()
+    if tool_runtime.os.name == "nt":
+        calls: list[list[str]] = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(tool_runtime.subprocess, "run", fake_run)
+
+        tool_runtime._terminate_tool_process_tree(process)
+
+        assert process.terminated is True
+        assert calls == [["taskkill", "/PID", "4242", "/T", "/F"]]
+        assert process.killed is False
+    else:
+        signals: list[tuple[int, signal.Signals]] = []
+        monkeypatch.setattr(
+            tool_runtime.os,
+            "killpg",
+            lambda pgid, sig: signals.append((pgid, sig)),
+        )
+
+        tool_runtime._terminate_tool_process_tree(process)
+
+        assert signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+        assert process.waits == [1, 5]
+        assert process.terminated is False
+        assert process.killed is False
+
+
+def test_windows_taskkill_failure_falls_back_to_process_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if tool_runtime.os.name != "nt":
+        pytest.skip("Windows taskkill fallback is only used on Windows.")
+
+    class FakeProcess:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    def fake_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=kwargs["timeout"])
+
+    process = FakeProcess()
+    monkeypatch.setattr(tool_runtime.subprocess, "run", fake_run)
+
+    tool_runtime._terminate_tool_process_tree(process)
+
+    assert process.terminated is True
+    assert process.killed is True
 
 
 def test_manifest_entrypoint_must_stay_under_named_localmcp_tool_dir(

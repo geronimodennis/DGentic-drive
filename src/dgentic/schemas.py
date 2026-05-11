@@ -292,6 +292,7 @@ class OrchestrationTask(BaseModel):
     role: str
     dependencies: list[str] = Field(default_factory=list)
     declared_write_paths: list[str] = Field(default_factory=list)
+    shared_memory_tags: list[str] = Field(default_factory=list)
     expected_output: str = ""
     validation: str = ""
     retry_limit: int = Field(default=0, ge=0, le=10)
@@ -312,6 +313,7 @@ class OrchestrationTaskSpec(BaseModel):
     role: str = Field(min_length=1, max_length=120)
     dependencies: list[str] = Field(default_factory=list, max_length=20)
     declared_write_paths: list[str] = Field(default_factory=list, max_length=20)
+    shared_memory_tags: list[str] = Field(default_factory=list, max_length=20)
     expected_output: str = Field(default="", max_length=2000)
     validation: str = Field(default="", max_length=2000)
     retry_limit: int = Field(default=0, ge=0, le=10)
@@ -323,6 +325,7 @@ class OrchestrationCreateRequest(BaseModel):
     objective: str = Field(min_length=1)
     tasks: list[OrchestrationTaskSpec] = Field(min_length=1, max_length=50)
     required_dod_evidence: list[str] = Field(default_factory=lambda: ["tests", "docs", "review"])
+    shared_memory_tags: list[str] = Field(default_factory=list, max_length=20)
     requested_by: str | None = None
 
 
@@ -393,6 +396,7 @@ class OrchestrationRun(BaseModel):
     blockers: list[OrchestrationBlocker] = Field(default_factory=list)
     follow_ups: list[OrchestrationFollowUp] = Field(default_factory=list)
     scheduled_task_ids: list[str] = Field(default_factory=list)
+    shared_memory_tags: list[str] = Field(default_factory=list)
     requested_by: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

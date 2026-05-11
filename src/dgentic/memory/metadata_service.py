@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from dgentic.memory.models import MemoryMetadata
@@ -33,6 +34,69 @@ class MetadataService:
         self.session.expunge(metadata)
         return metadata
 
+    def upsert_by_entity(self, request: MetadataCreateRequest) -> MemoryMetadata:
+        matches = (
+            self.session.query(MemoryMetadata)
+            .filter(
+                MemoryMetadata.entity_type == request.entity_type,
+                MemoryMetadata.entity_id == request.entity_id,
+            )
+            .order_by(MemoryMetadata.created_at.asc())
+            .all()
+        )
+        if matches:
+            metadata = matches[0]
+            for duplicate in matches[1:]:
+                self.session.delete(duplicate)
+        else:
+            metadata = MemoryMetadata(
+                entity_type=request.entity_type,
+                entity_id=request.entity_id,
+            )
+            self.session.add(metadata)
+
+        self._apply_upsert(metadata, request)
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            metadata = (
+                self.session.query(MemoryMetadata)
+                .filter(
+                    MemoryMetadata.entity_type == request.entity_type,
+                    MemoryMetadata.entity_id == request.entity_id,
+                )
+                .order_by(MemoryMetadata.created_at.asc())
+                .first()
+            )
+            if metadata is None:
+                raise
+            self._apply_upsert(metadata, request)
+            self.session.commit()
+
+        self.session.refresh(metadata)
+        self.session.expunge(metadata)
+        return metadata
+
+    def _apply_upsert(
+        self,
+        metadata: MemoryMetadata,
+        request: MetadataCreateRequest,
+    ) -> None:
+        metadata.tags = request.tags
+        metadata.category = request.category
+        metadata.description = request.description
+        metadata.relevance_score = request.relevance_score
+        metadata.retention_policy = request.retention_policy
+        metadata.owner_agent = request.owner_agent
+        metadata.expires_at = request.expires_at
+        metadata.lifecycle_state = "active"
+        metadata.lifecycle_reason = None
+        metadata.lifecycle_updated_at = datetime.now(UTC)
+        metadata.archived_at = None
+        metadata.pruned_at = None
+        metadata.updated_at = datetime.now(UTC)
+
     def get_by_id(self, metadata_id: UUID | str) -> MemoryMetadata | None:
         metadata = (
             self.session.query(MemoryMetadata).filter(MemoryMetadata.id == str(metadata_id)).first()
@@ -48,9 +112,11 @@ class MetadataService:
         entity_type: str | None = None,
         category: str | None = None,
         tags: list[str] | None = None,
+        match_all_tags: bool = False,
         indexed: bool | None = None,
         retention_policy: str | None = None,
         lifecycle_state: str | None = None,
+        owner_agent: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[MemoryMetadata], int]:
@@ -66,11 +132,20 @@ class MetadataService:
             query = query.filter(MemoryMetadata.retention_policy == retention_policy)
         if lifecycle_state:
             query = query.filter(MemoryMetadata.lifecycle_state == lifecycle_state)
+        if owner_agent:
+            query = query.filter(MemoryMetadata.owner_agent == owner_agent)
 
         items = query.order_by(MemoryMetadata.created_at.desc()).all()
         if tags:
             required_tags = set(tags)
-            items = [item for item in items if required_tags.intersection(item.tags or [])]
+            if match_all_tags:
+                items = [
+                    item
+                    for item in items
+                    if (item_tags := set(item.tags or [])) and item_tags.issubset(required_tags)
+                ]
+            else:
+                items = [item for item in items if required_tags.intersection(item.tags or [])]
 
         total = len(items)
         return items[offset : offset + limit], total

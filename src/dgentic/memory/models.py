@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     event,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -66,6 +67,7 @@ class MemoryMetadata(Base):
     tool_manifest = relationship("ToolManifest", back_populates="memory_metadata", uselist=False)
 
     __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", name="uq_metadata_entity"),
         Index("idx_metadata_entity", "entity_type", "entity_id"),
         Index("idx_metadata_category", "category"),
         Index("idx_metadata_indexed", "indexed"),

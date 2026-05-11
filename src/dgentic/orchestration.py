@@ -1,6 +1,7 @@
 """Backend orchestration control plane for autonomous sprint task graphs."""
 
 import json
+import re
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,11 @@ from typing import Any, ParamSpec, TypeVar
 from uuid import uuid4
 
 from dgentic.agents import get_agent, spawn_agent, update_agent_status
+from dgentic.database import get_db_session
 from dgentic.events import event_log
+from dgentic.memory.metadata_service import MetadataService
+from dgentic.memory.models import MemoryMetadata
+from dgentic.memory.schemas import MetadataCreateRequest
 from dgentic.orchestration_documents import sync_orchestration_documents
 from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
 from dgentic.schemas import (
@@ -45,6 +50,12 @@ MAX_DEPENDENCY_CONTEXT_CHARS = 1200
 MAX_CONTEXT_FIELD_CHARS = 1200
 MAX_CONTEXT_OUTPUT_ITEMS = 20
 MAX_CONTEXT_OUTPUT_DEPTH = 4
+MAX_MEMORY_CONTEXT_RESULTS = 3
+MAX_MEMORY_CONTEXT_CHARS = 800
+MAX_SHARED_MEMORY_TAGS = 20
+ORCHESTRATION_MEMORY_CATEGORY = "orchestration_context"
+ORCHESTRATION_MEMORY_ENTITY_PREFIX = "orchestration:"
+SHARED_MEMORY_SYSTEM_OWNER = "system"
 TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
 RECOVERABLE_TASK_BLOCKER_SEVERITIES = {"role_boundary", "retry_exhausted"}
@@ -147,6 +158,7 @@ class OrchestrationService:
             objective=request.objective,
             tasks=list(tasks_by_id.values()),
             required_dod_evidence=request.required_dod_evidence,
+            shared_memory_tags=_normalize_shared_memory_tags(request.shared_memory_tags),
             role_boundary_decisions=decisions,
             blockers=blockers,
             follow_ups=follow_ups,
@@ -475,6 +487,8 @@ class OrchestrationService:
         )
         if task.agent_id:
             _update_agent_for_task(task.agent_id, update.status, update.error)
+        if updated_task.status == StepStatus.completed:
+            self._publish_completed_task_memory(run, updated_task, actor=actor)
         if updated_task.status in {StepStatus.completed, StepStatus.pending}:
             run = self._schedule_ready_tasks(run, actor=actor)
         _record_task_update_event(
@@ -1238,6 +1252,65 @@ class OrchestrationService:
         )
         return saved
 
+    def _publish_completed_task_memory(
+        self,
+        run: OrchestrationRun,
+        task: OrchestrationTask,
+        *,
+        actor: str | None,
+    ) -> None:
+        tags = _shared_memory_tags(run, task)
+        if not tags:
+            return
+
+        session = None
+        try:
+            session = get_db_session()
+            metadata = MetadataService(session).upsert_by_entity(
+                MetadataCreateRequest(
+                    entity_type="memory",
+                    entity_id=_task_memory_entity_id(run, task),
+                    tags=tags,
+                    category=ORCHESTRATION_MEMORY_CATEGORY,
+                    description=_completed_task_memory_description(run, task),
+                    relevance_score=0.75,
+                    retention_policy="automatic",
+                    owner_agent=_shared_memory_owner(run),
+                )
+            )
+        except Exception as exc:
+            if session is not None:
+                session.rollback()
+            event_log.record(
+                LogEventType.memory,
+                "Failed to publish orchestration shared memory.",
+                actor=actor or "system",
+                subject_id=run.id,
+                metadata={
+                    "task_id": _redact_metadata_value(task.id),
+                    "tags": _redact_metadata_values(tags),
+                    "error_type": type(exc).__name__,
+                    "error": redact_sensitive_values(str(exc)),
+                },
+            )
+        else:
+            event_log.record(
+                LogEventType.memory,
+                "Published orchestration shared memory.",
+                actor=actor or "system",
+                subject_id=str(metadata.id),
+                metadata={
+                    "run_id": run.id,
+                    "task_id": _redact_metadata_value(task.id),
+                    "entity_id": metadata.entity_id,
+                    "owner_agent": _redact_metadata_value(metadata.owner_agent or ""),
+                    "tags": _redact_metadata_values(tags),
+                },
+            )
+        finally:
+            if session is not None:
+                session.close()
+
     def _persist(self, run: OrchestrationRun) -> OrchestrationRun:
         run = run.model_copy(update={"updated_at": datetime.now(UTC)})
         saved = self._runs.upsert(run)
@@ -1286,7 +1359,14 @@ class OrchestrationService:
                 updated_tasks.append(task)
                 continue
 
-            agent = spawn_agent(_agent_brief_for_task(run, task, tasks_by_id))
+            agent = spawn_agent(
+                _agent_brief_for_task(
+                    run,
+                    task,
+                    tasks_by_id,
+                    memory_context=self._memory_context_for_task(run, task),
+                )
+            )
             updated_tasks.append(
                 task.model_copy(update={"status": StepStatus.running, "agent_id": agent.id})
             )
@@ -1328,6 +1408,74 @@ class OrchestrationService:
 
         _raise_on_cycle(tasks)
 
+    def _memory_context_for_task(
+        self,
+        run: OrchestrationRun,
+        task: OrchestrationTask,
+    ) -> list[str]:
+        tags = _shared_memory_tags(run, task)
+        if not tags:
+            return []
+
+        session = None
+        try:
+            session = get_db_session()
+            items, _total = MetadataService(session).list_by_filters(
+                entity_type="memory",
+                category=ORCHESTRATION_MEMORY_CATEGORY,
+                tags=tags,
+                match_all_tags=True,
+                lifecycle_state="active",
+                owner_agent=_shared_memory_owner(run),
+                limit=100,
+            )
+            valid_items = [item for item in items if self._is_valid_shared_memory_source(run, item)]
+            return [_memory_context(item) for item in valid_items[:MAX_MEMORY_CONTEXT_RESULTS]]
+        except Exception as exc:
+            if session is not None:
+                session.rollback()
+            event_log.record(
+                LogEventType.memory,
+                "Failed to retrieve orchestration shared memory.",
+                subject_id=run.id,
+                metadata={
+                    "task_id": _redact_metadata_value(task.id),
+                    "owner_agent": _redact_metadata_value(_shared_memory_owner(run)),
+                    "tags": _redact_metadata_values(tags),
+                    "error_type": type(exc).__name__,
+                    "error": redact_sensitive_values(str(exc)),
+                },
+            )
+            return []
+        finally:
+            if session is not None:
+                session.close()
+
+    def _is_valid_shared_memory_source(
+        self,
+        consumer_run: OrchestrationRun,
+        metadata: MemoryMetadata,
+    ) -> bool:
+        source_ids = _parse_task_memory_entity_id(metadata.entity_id)
+        if source_ids is None:
+            return False
+        source_run_id, source_task_id = source_ids
+        source_run = self._runs.get(source_run_id)
+        if source_run is None:
+            return False
+        if _shared_memory_owner(source_run) != _shared_memory_owner(consumer_run):
+            return False
+        if metadata.owner_agent != _shared_memory_owner(source_run):
+            return False
+        try:
+            source_task = _task_by_id(source_run, source_task_id)
+        except OrchestrationError:
+            return False
+        return (
+            source_task.status == StepStatus.completed
+            and metadata.entity_id == _task_memory_entity_id(source_run, source_task)
+        )
+
 
 def _raise_on_cycle(tasks: list[OrchestrationTask]) -> None:
     task_map = {task.id: task for task in tasks}
@@ -1357,6 +1505,7 @@ def _task_from_spec(task: OrchestrationTaskSpec) -> OrchestrationTask:
         role=task.role,
         dependencies=list(task.dependencies),
         declared_write_paths=list(task.declared_write_paths),
+        shared_memory_tags=_normalize_shared_memory_tags(task.shared_memory_tags),
         expected_output=task.expected_output,
         validation=task.validation,
         retry_limit=task.retry_limit,
@@ -1367,11 +1516,13 @@ def _agent_context_for_task(
     run: OrchestrationRun,
     task: OrchestrationTask,
     tasks_by_id: dict[str, OrchestrationTask],
+    memory_context: list[str],
 ) -> list[str]:
     context = [_redacted_context_text(run.objective)]
     for dependency_id in task.dependencies:
         dependency = tasks_by_id[dependency_id]
         context.append(_dependency_context(dependency))
+    context.extend(memory_context)
     return context
 
 
@@ -1379,12 +1530,13 @@ def _agent_brief_for_task(
     run: OrchestrationRun,
     task: OrchestrationTask,
     tasks_by_id: dict[str, OrchestrationTask],
+    memory_context: list[str],
 ) -> AgentBrief:
     return AgentBrief(
         role=_redacted_context_text(task.role),
         task=_redacted_context_text(task.title),
         task_id=_redacted_context_text(task.id),
-        context=_agent_context_for_task(run, task, tasks_by_id),
+        context=_agent_context_for_task(run, task, tasks_by_id, memory_context),
         constraints=[
             _redacted_context_text(
                 f"Declared write paths: {task.declared_write_paths or ['read-only']}"
@@ -1399,6 +1551,71 @@ def _dependency_context(task: OrchestrationTask) -> str:
     output = _redacted_json(task.output)
     return _redacted_context_text(
         f"Dependency {task.id} ({task.role}) completed: {task.title}. Output: {output}"
+    )
+
+
+def _shared_memory_tags(
+    run: OrchestrationRun,
+    task: OrchestrationTask,
+) -> list[str]:
+    return _normalize_shared_memory_tags([*run.shared_memory_tags, *task.shared_memory_tags])
+
+
+def _normalize_shared_memory_tags(values: list[str]) -> list[str]:
+    tags: list[str] = []
+    for value in values:
+        tag = re.sub(r"[^a-z0-9_-]+", "-", value.lower()).strip("-_")
+        if not tag or tag in tags:
+            continue
+        tags.append(tag[:80])
+        if len(tags) >= MAX_SHARED_MEMORY_TAGS:
+            break
+    return tags
+
+
+def _completed_task_memory_description(run: OrchestrationRun, task: OrchestrationTask) -> str:
+    return _redacted_context_text(
+        (
+            f"Orchestration task {task.id} ({task.role}) from run {run.id} completed: "
+            f"{task.title}. Output: {_redacted_json(task.output)}"
+        ),
+        max_chars=MAX_DEPENDENCY_CONTEXT_CHARS,
+    )
+
+
+def _task_memory_entity_id(run: OrchestrationRun, task: OrchestrationTask) -> str:
+    return f"{ORCHESTRATION_MEMORY_ENTITY_PREFIX}{run.id}:{task.id}"
+
+
+def _parse_task_memory_entity_id(entity_id: str) -> tuple[str, str] | None:
+    if not entity_id.startswith(ORCHESTRATION_MEMORY_ENTITY_PREFIX):
+        return None
+    remainder = entity_id[len(ORCHESTRATION_MEMORY_ENTITY_PREFIX) :]
+    run_id, separator, task_id = remainder.partition(":")
+    if not separator or not run_id or not task_id:
+        return None
+    return run_id, task_id
+
+
+def _shared_memory_owner(run: OrchestrationRun) -> str:
+    return _redacted_context_text(
+        run.requested_by or SHARED_MEMORY_SYSTEM_OWNER,
+        max_chars=100,
+    )
+
+
+def _memory_context(metadata: MemoryMetadata) -> str:
+    tags = [
+        _redacted_context_text(tag, max_chars=80)
+        for tag in (metadata.tags or [])[:MAX_CONTEXT_OUTPUT_ITEMS]
+    ]
+    description = _redacted_context_text(
+        metadata.description or "",
+        max_chars=MAX_MEMORY_CONTEXT_CHARS,
+    )
+    return _redacted_context_text(
+        f"Shared memory {metadata.entity_id}. Tags: {tags}. Summary: {description}",
+        max_chars=MAX_DEPENDENCY_CONTEXT_CHARS,
     )
 
 

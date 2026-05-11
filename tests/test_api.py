@@ -710,6 +710,83 @@ def test_orchestration_api_exposes_dependency_context_on_spawned_agent(
     assert agent_response.json()["required_data"] == ["developer-implementation"]
 
 
+def test_orchestration_api_exposes_shared_memory_context_on_spawned_agent(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    spoofed_memory_response = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "api-spoofed-shared-memory",
+            "category": "orchestration_context",
+            "description": "Spoofed memory must not enter context. PASSWORD=memory-secret",
+            "tags": ["qa"],
+            "relevance_score": 0.9,
+            "owner_agent": "system",
+        },
+    )
+    producer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Produce QA validation memory.",
+            "shared_memory_tags": ["qa"],
+            "tasks": [
+                {
+                    "id": "qa-producer",
+                    "title": "QA producer",
+                    "description": "Publish memory context.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "QA publishes memory.",
+                }
+            ],
+        },
+    )
+    producer_id = producer_response.json()["id"]
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{producer_id}/tasks/qa-producer",
+        json={
+            "status": "completed",
+            "output": {"summary": "Use API smoke coverage.", "password": "PASSWORD=memory-secret"},
+        },
+    )
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Coordinate QA validation with memory context.",
+            "shared_memory_tags": ["qa"],
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Use memory context while validating.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "QA receives memory context.",
+                }
+            ],
+        },
+    )
+    body = create_response.json()
+    agent_id = body["tasks"][0]["agent_id"]
+    agent_response = client.get(f"/agents/{agent_id}")
+    list_response = client.get("/api/v1/memory/metadata?category=orchestration_context&tags=qa")
+
+    assert spoofed_memory_response.status_code == 201
+    assert producer_response.status_code == 201
+    assert completed_response.status_code == 200
+    assert create_response.status_code == 201
+    assert agent_response.status_code == 200
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 2
+    serialized_context = "\n".join(agent_response.json()["context"])
+    assert f"Shared memory orchestration:{producer_id}:qa-producer" in serialized_context
+    assert '"password": "[REDACTED]"' in serialized_context
+    assert "api-spoofed-shared-memory" not in serialized_context
+    assert "memory-secret" not in serialized_context
+
+
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
     _configure_production_task_api_state(tmp_path, monkeypatch)
     client = TestClient(create_app())
@@ -752,6 +829,89 @@ def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, mo
     assert beta_get.status_code == 404
     assert admin_list.status_code == 200
     assert [run["id"] for run in admin_list.json()] == [alpha_create.json()["id"]]
+    get_settings.cache_clear()
+
+
+def test_orchestration_api_shared_memory_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure_production_task_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    alpha_headers = {"Authorization": "Bearer alpha-token"}
+    beta_headers = {"Authorization": "Bearer beta-token"}
+    admin_headers = {"Authorization": "Bearer admin-token"}
+    producer_payload = {
+        "objective": "Alpha produces owner-scoped shared memory.",
+        "shared_memory_tags": ["qa-context"],
+        "tasks": [
+            {
+                "id": "qa-producer",
+                "title": "QA producer",
+                "description": "Publish owner-scoped memory.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_api.py"],
+                "validation": "Shared memory is published.",
+            }
+        ],
+    }
+    consumer_task = {
+        "id": "qa-consumer",
+        "title": "QA consumer",
+        "description": "Consume owner-scoped memory.",
+        "role": "QA",
+        "declared_write_paths": ["tests/test_api.py"],
+        "validation": "Shared memory is owner-scoped.",
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers=alpha_headers,
+        json=producer_payload,
+    )
+    alpha_run_id = alpha_create.json()["id"]
+    alpha_complete = client.patch(
+        f"/tasks/orchestrations/{alpha_run_id}/tasks/qa-producer",
+        headers=alpha_headers,
+        json={"status": "completed", "output": {"summary": "Alpha-only memory."}},
+    )
+    beta_create = client.post(
+        "/tasks/orchestrations",
+        headers=beta_headers,
+        json={
+            "objective": "Beta tries matching shared memory tag.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [consumer_task],
+        },
+    )
+    alpha_consumer = client.post(
+        "/tasks/orchestrations",
+        headers=alpha_headers,
+        json={
+            "objective": "Alpha consumes matching shared memory tag.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [consumer_task],
+        },
+    )
+    beta_agent_response = client.get(
+        f"/agents/{beta_create.json()['tasks'][0]['agent_id']}",
+        headers=admin_headers,
+    )
+    alpha_agent_response = client.get(
+        f"/agents/{alpha_consumer.json()['tasks'][0]['agent_id']}",
+        headers=admin_headers,
+    )
+
+    assert alpha_create.status_code == 201
+    assert alpha_complete.status_code == 200
+    assert beta_create.status_code == 201
+    assert alpha_consumer.status_code == 201
+    assert beta_agent_response.status_code == 200
+    assert alpha_agent_response.status_code == 200
+    beta_context = "\n".join(beta_agent_response.json()["context"])
+    alpha_context = "\n".join(alpha_agent_response.json()["context"])
+    assert f"orchestration:{alpha_run_id}:qa-producer" not in beta_context
+    assert f"orchestration:{alpha_run_id}:qa-producer" in alpha_context
     get_settings.cache_clear()
 
 

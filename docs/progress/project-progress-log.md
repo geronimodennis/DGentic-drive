@@ -4,6 +4,47 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008l Opt-In Orchestration Shared Memory
+
+Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume/cancellation, production scheduling/lease hardening, and operations/UI surfacing.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected explicit-tag SQL shared memory as the next safe Sprint 14 slice after detached background execution.
+- Completed: Developer added `shared_memory_tags` to orchestration create/run/task contracts, SQL metadata upsert by entity id, metadata tag filtering, completed-task memory publishing, and bounded matching memory summaries in spawned agent context.
+- Completed: Reviewer/Security identified global tag-namespace leakage risk; Developer remediated with completed-task provenance checks, owner-scope filtering, stricter tag authorization, and duplicate-resilient metadata upsert behavior.
+- Completed: Developer made shared-memory publish/retrieval fail soft with redacted audit events so scheduling and task updates are not blocked by SQL metadata issues.
+- Completed: QA added tests for durable tagged memory publish/reuse, no-tag behavior, inactive-memory exclusion, API-visible agent context, metadata tag filtering, owner scoping, spoofed metadata exclusion, fail-soft SQL behavior, duplicate upsert behavior, and secret redaction.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: orchestration runs and tasks can opt into shared context with explicit `shared_memory_tags`.
+- Implemented in this slice: completing a tagged task upserts one deterministic SQL metadata record with category `orchestration_context` and a redacted, bounded task-output summary.
+- Implemented in this slice: later tagged tasks receive up to three active matching shared-memory summaries in spawned agent brief context after objective/dependency context.
+- Implemented in this slice: shared-memory context injection requires completed orchestration-task provenance, the same authenticated orchestration owner or local `system` owner, active lifecycle state, and consumer tags that cover all stored record tags.
+- Implemented in this slice: archived or soft-pruned SQL metadata is excluded by default through active lifecycle filtering.
+- Implemented in this slice: the metadata list API accepts `tags` query parameters for tag-filter verification and consumers.
+
+Remaining Sprint 14 work:
+- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
+- Add detached worker cancellation and restart adoption/resume.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused shared-memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 6 tests.
+- Focused API shared-memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "shared_memory"` passed with 2 tests.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 86 tests.
+- Broader API/memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration or memory"` passed with 27 tests.
+- Metadata/memory adjacent gate: `uv --cache-dir .uv-cache run pytest -q tests\test_memory_lifecycle_service.py tests\test_retrieval_service.py tests\test_database.py tests\test_metadata_service.py` passed with 35 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\schemas.py src\dgentic\memory\metadata_service.py src\dgentic\memory\models.py src\dgentic\api\memory_routes.py tests\test_orchestration.py tests\test_api.py` passed.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 803 tests and 2 skipped.
+
+Next:
+- Continue Sprint 14 with production scheduling/lease hardening or operations surfacing for orchestration runs.
+
 ### Sprint 14 BL-008k Detached Background Orchestration Execution
 
 Status: completed for the scoped detached process-local execution slice; Sprint 14 remains active for durable shared-memory coordination, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.

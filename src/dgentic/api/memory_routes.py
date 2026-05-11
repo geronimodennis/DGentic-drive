@@ -4,7 +4,7 @@ from collections.abc import Generator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from dgentic.database import get_db_session
@@ -112,6 +112,7 @@ def list_metadata(
     session: DBSession,
     entity_type: str | None = None,
     category: str | None = None,
+    tags: Annotated[list[str] | None, Query()] = None,
     indexed: bool | None = None,
     retention_policy: str | None = None,
     lifecycle_state: str | None = None,
@@ -122,6 +123,7 @@ def list_metadata(
     items, total = service.list_by_filters(
         entity_type=entity_type,
         category=category,
+        tags=tags,
         indexed=indexed,
         retention_policy=retention_policy,
         lifecycle_state=lifecycle_state,

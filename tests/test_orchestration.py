@@ -1,10 +1,14 @@
+import json
 import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from dgentic.agents import get_agent, update_agent_status
+from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
+from dgentic.memory.metadata_service import MetadataService
+from dgentic.memory.schemas import MetadataCreateRequest
 from dgentic.orchestration import OrchestrationError, OrchestrationService
 from dgentic.schemas import (
     AgentStatus,
@@ -36,7 +40,9 @@ def orchestration_state(tmp_path, monkeypatch):
     monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
+    reset_database_state()
     yield data_dir
+    reset_database_state()
     get_settings.cache_clear()
 
 
@@ -148,6 +154,350 @@ def test_orchestration_schedules_dependency_agent_with_redacted_shared_context(
     assert "implementation-secret" not in serialized_context
     assert "plain-secret-value" not in serialized_context
     assert qa_agent.required_data == ["dev-implementation"]
+
+
+def test_orchestration_shared_memory_publishes_and_reuses_tagged_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    producer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce tagged QA memory.",
+            shared_memory_tags=["QA Context"],
+            tasks=[
+                _task(
+                    "qa-producer",
+                    role="QA",
+                    title="QA producer",
+                    paths=["tests/test_orchestration.py"],
+                )
+            ],
+        )
+    )
+    completed = service.update_task(
+        producer.id,
+        "qa-producer",
+        OrchestrationTaskUpdate(
+            status=StepStatus.completed,
+            output={"summary": "Use regression smoke checks.", "secret": "TOKEN=memory-secret"},
+        ),
+    )
+    service._publish_completed_task_memory(
+        completed,
+        _task_by_id(completed, "qa-producer"),
+        actor="qa-owner",
+    )
+    session = get_db_session()
+    try:
+        items, total = MetadataService(session).list_by_filters(
+            entity_type="memory",
+            category="orchestration_context",
+            tags=["qa-context"],
+        )
+    finally:
+        session.close()
+
+    consumer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Consume tagged QA memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[
+                _task(
+                    "qa-consumer",
+                    role="QA",
+                    title="QA consumer",
+                    paths=["tests/test_orchestration.py"],
+                )
+            ],
+        )
+    )
+    agent_id = _task_by_id(consumer, "qa-consumer").agent_id
+    assert agent_id is not None
+    agent = get_agent(agent_id)
+    assert agent is not None
+    rendered_context = "\n".join(agent.context)
+
+    assert total == 1
+    assert len(items) == 1
+    assert items[0].entity_id == f"orchestration:{producer.id}:qa-producer"
+    assert items[0].owner_agent == "system"
+    assert '"secret": "[REDACTED]"' in (items[0].description or "")
+    assert "memory-secret" not in (items[0].description or "")
+    assert "Shared memory" in rendered_context
+    assert "qa-context" in rendered_context
+    assert '"secret": "[REDACTED]"' in rendered_context
+    assert "memory-secret" not in rendered_context
+
+
+def test_orchestration_shared_memory_ignores_untagged_and_inactive_records(
+    orchestration_state,
+) -> None:
+    orchestration = OrchestrationService()
+    active_source = orchestration.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce active shared memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-active", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    archived_source = orchestration.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce archived shared memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-archived", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    orchestration.update_task(
+        active_source.id,
+        "qa-active",
+        OrchestrationTaskUpdate(
+            status=StepStatus.completed, output={"summary": "Active QA memory."}
+        ),
+    )
+    orchestration.update_task(
+        archived_source.id,
+        "qa-archived",
+        OrchestrationTaskUpdate(
+            status=StepStatus.completed,
+            output={"summary": "Archived QA memory."},
+        ),
+    )
+    archived_entity_id = f"orchestration:{archived_source.id}:qa-archived"
+    session = get_db_session()
+    try:
+        items, _total = MetadataService(session).list_by_filters(
+            entity_type="memory",
+            category="orchestration_context",
+            tags=["qa-context"],
+        )
+        archived = next(item for item in items if item.entity_id == archived_entity_id)
+        MetadataService(session).update(archived.id, lifecycle_state="archived")
+    finally:
+        session.close()
+
+    untagged = orchestration.create_run(
+        OrchestrationCreateRequest(
+            objective="No shared memory tags.",
+            tasks=[_task("qa-untagged", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    tagged = orchestration.create_run(
+        OrchestrationCreateRequest(
+            objective="Use shared memory tags.",
+            tasks=[
+                _task(
+                    "qa-tagged",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    shared_memory_tags=["qa-context"],
+                )
+            ],
+        )
+    )
+    untagged_agent = get_agent(_task_by_id(untagged, "qa-untagged").agent_id or "")
+    tagged_agent = get_agent(_task_by_id(tagged, "qa-tagged").agent_id or "")
+    assert untagged_agent is not None
+    assert tagged_agent is not None
+    untagged_context = "\n".join(untagged_agent.context)
+    tagged_context = "\n".join(tagged_agent.context)
+
+    assert f"orchestration:{active_source.id}:qa-active" not in untagged_context
+    assert f"Shared memory orchestration:{active_source.id}:qa-active" in tagged_context
+    assert archived_entity_id not in tagged_context
+
+
+def test_orchestration_shared_memory_requires_all_tags_and_valid_provenance(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    producer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce scoped QA memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[
+                _task(
+                    "qa-producer",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    shared_memory_tags=["smoke"],
+                )
+            ],
+        )
+    )
+    completed = service.update_task(
+        producer.id,
+        "qa-producer",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"summary": "Use smoke."}),
+    )
+    session = get_db_session()
+    try:
+        MetadataService(session).create(
+            MetadataCreateRequest(
+                entity_type="memory",
+                entity_id="orchestration:missing-run:qa-producer",
+                tags=["qa-context", "smoke"],
+                category="orchestration_context",
+                description="Spoofed orchestration memory.",
+                owner_agent="system",
+            )
+        )
+        MetadataService(session).create(
+            MetadataCreateRequest(
+                entity_type="memory",
+                entity_id="broad-tag-memory",
+                tags=["qa-context"],
+                category="orchestration_context",
+                description="Broad tag should not match all tags.",
+                owner_agent="system",
+            )
+        )
+    finally:
+        session.close()
+
+    matching = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Consume scoped QA memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[
+                _task(
+                    "qa-matching",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    shared_memory_tags=["smoke"],
+                )
+            ],
+        )
+    )
+    broad_only = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Consume broad QA memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-broad", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    matching_context = "\n".join(
+        get_agent(_task_by_id(matching, "qa-matching").agent_id or "").context
+    )
+    broad_context = "\n".join(get_agent(_task_by_id(broad_only, "qa-broad").agent_id or "").context)
+
+    assert completed.id in matching_context
+    assert "Shared memory" in matching_context
+    assert "Spoofed orchestration memory" not in matching_context
+    assert "Broad tag should not match all tags" not in matching_context
+    assert completed.id not in broad_context
+
+
+def test_orchestration_shared_memory_owner_scope_blocks_cross_actor_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    alpha = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Alpha produces memory.",
+            shared_memory_tags=["qa-context"],
+            requested_by="alpha-owner",
+            tasks=[_task("qa-alpha", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    service.update_task(
+        alpha.id,
+        "qa-alpha",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"summary": "Alpha only."}),
+    )
+
+    beta = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Beta tries same tag.",
+            shared_memory_tags=["qa-context"],
+            requested_by="beta-owner",
+            tasks=[_task("qa-beta", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    alpha_consumer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Alpha consumes same tag.",
+            shared_memory_tags=["qa-context"],
+            requested_by="alpha-owner",
+            tasks=[_task("qa-alpha-consumer", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    beta_context = "\n".join(get_agent(_task_by_id(beta, "qa-beta").agent_id or "").context)
+    alpha_context = "\n".join(
+        get_agent(_task_by_id(alpha_consumer, "qa-alpha-consumer").agent_id or "").context
+    )
+
+    assert "Alpha only" not in beta_context
+    assert f"orchestration:{alpha.id}:qa-alpha" not in beta_context
+    assert "Shared memory" in alpha_context
+    assert f"orchestration:{alpha.id}:qa-alpha" in alpha_context
+
+
+def test_orchestration_shared_memory_retrieval_failure_is_fail_soft_and_redacted(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    def fail_session():
+        raise RuntimeError("TOKEN=retrieval-secret")
+
+    monkeypatch.setattr("dgentic.orchestration.get_db_session", fail_session)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Retrieve memory with failing SQL.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    agent = get_agent(task.agent_id or "")
+    event = next(
+        event
+        for event in reversed(event_log.list(LogEventType.memory))
+        if event.subject_id == run.id
+        and event.message == "Failed to retrieve orchestration shared memory."
+    )
+    serialized_event = json.dumps(event.model_dump(), default=str)
+
+    assert task.status == StepStatus.running
+    assert agent is not None
+    assert agent.context == ["Retrieve memory with failing SQL."]
+    assert "retrieval-secret" not in serialized_event
+    assert "TOKEN=[REDACTED]" in serialized_event
+
+
+def test_orchestration_shared_memory_publish_failure_is_fail_soft_and_redacted(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Publish memory with failing SQL.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    def fail_session():
+        raise RuntimeError("TOKEN=publish-secret")
+
+    monkeypatch.setattr("dgentic.orchestration.get_db_session", fail_session)
+    updated = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"summary": "Done."}),
+    )
+    event = next(
+        event
+        for event in reversed(event_log.list(LogEventType.memory))
+        if event.subject_id == run.id
+        and event.message == "Failed to publish orchestration shared memory."
+    )
+    serialized_event = json.dumps(event.model_dump(), default=str)
+
+    assert _task_by_id(updated, "qa-validation").status == StepStatus.completed
+    assert "publish-secret" not in serialized_event
+    assert "TOKEN=[REDACTED]" in serialized_event
 
 
 def test_orchestration_cycle_reconciles_completed_agent_and_schedules_dependency(
@@ -2356,6 +2706,7 @@ def _task(
     expected_output: str | None = None,
     title: str | None = None,
     validation: str | None = None,
+    shared_memory_tags: list[str] | None = None,
 ) -> OrchestrationTaskSpec:
     return OrchestrationTaskSpec(
         id=task_id,
@@ -2364,6 +2715,7 @@ def _task(
         role=role,
         dependencies=dependencies or [],
         declared_write_paths=paths or [],
+        shared_memory_tags=shared_memory_tags or [],
         expected_output=expected_output if expected_output is not None else f"{task_id} output",
         validation=validation or f"{task_id} validation",
         retry_limit=retry_limit,

@@ -927,6 +927,77 @@ def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, mo
     get_settings.cache_clear()
 
 
+def test_orchestration_api_operations_summary_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    _configure_production_task_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped operations summary.",
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate operations summary.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_api.py"],
+                "validation": "Owner summary holds.",
+            }
+        ],
+    }
+    alpha_headers = {"Authorization": "Bearer alpha-token"}
+    beta_headers = {"Authorization": "Bearer beta-token"}
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    alpha_create = client.post("/tasks/orchestrations", headers=alpha_headers, json=payload)
+    beta_create = client.post("/tasks/orchestrations", headers=beta_headers, json=payload)
+    alpha_run_id = alpha_create.json()["id"]
+    alpha_start = client.post(
+        f"/tasks/orchestrations/{alpha_run_id}/executions",
+        headers=alpha_headers,
+        json={"max_iterations": 2},
+    )
+    alpha_summary = client.get(
+        "/tasks/orchestrations/operations/summary",
+        headers=alpha_headers,
+    )
+    beta_summary = client.get(
+        "/tasks/orchestrations/operations/summary",
+        headers=beta_headers,
+    )
+    admin_summary = client.get(
+        "/tasks/orchestrations/operations/summary",
+        headers=admin_headers,
+    )
+
+    assert alpha_create.status_code == 201
+    assert beta_create.status_code == 201
+    assert alpha_start.status_code == 202
+    assert alpha_summary.status_code == 200
+    assert beta_summary.status_code == 200
+    assert admin_summary.status_code == 200
+    assert alpha_summary.json()["total_runs"] == 1
+    assert alpha_summary.json()["active_execution_count"] == 1
+    assert alpha_summary.json()["active_execution_ids"] == [alpha_start.json()["id"]]
+    assert beta_summary.json()["total_runs"] == 1
+    assert beta_summary.json()["active_execution_count"] == 0
+    assert beta_summary.json()["active_execution_ids"] == []
+    assert admin_summary.json()["total_runs"] == 2
+    assert admin_summary.json()["active_execution_count"] == 1
+    get_settings.cache_clear()
+
+
 def test_orchestration_api_shared_memory_respects_authenticated_task_owner(
     tmp_path,
     monkeypatch,

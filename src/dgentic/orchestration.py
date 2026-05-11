@@ -3,7 +3,7 @@
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import PurePosixPath
@@ -34,6 +34,7 @@ from dgentic.schemas import (
     OrchestrationFollowUp,
     OrchestrationLoopRequest,
     OrchestrationLoopResult,
+    OrchestrationOperationsSummary,
     OrchestrationRun,
     OrchestrationTask,
     OrchestrationTaskRecoveryRequest,
@@ -190,6 +191,68 @@ class OrchestrationService:
         if actor is None or include_all:
             return runs
         return [run for run in runs if run.requested_by == actor]
+
+    def get_operations_summary(
+        self,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationOperationsSummary:
+        runs = self.list_runs(actor=actor, include_all=include_all)
+        visible_run_ids = {run.id for run in runs}
+        now = datetime.now(UTC)
+        executions = [
+            execution
+            for execution in self._executions.list()
+            if execution.run_id in visible_run_ids
+        ]
+        execution_statuses = [
+            (
+                execution,
+                _operations_execution_status(
+                    execution,
+                    supervisor_id=self.supervisor_id,
+                    now=now,
+                ),
+            )
+            for execution in executions
+        ]
+        active_executions = [
+            execution
+            for execution, status in execution_statuses
+            if status in ACTIVE_EXECUTION_STATUSES
+        ]
+        stale_executions = [
+            execution
+            for execution, status in execution_statuses
+            if status == OrchestrationExecutionStatus.stale
+        ]
+        unresolved_blockers = [
+            blocker for run in runs for blocker in run.blockers if _is_unresolved_blocker(blocker)
+        ]
+        blocked_run_ids = [
+            run.id
+            for run in runs
+            if run.status == PlanStatus.failed
+            or any(_is_unresolved_blocker(blocker) for blocker in run.blockers)
+        ]
+        return OrchestrationOperationsSummary(
+            total_runs=len(runs),
+            run_status_counts=_value_counts(run.status.value for run in runs),
+            task_status_counts=_value_counts(
+                task.status.value for run in runs for task in run.tasks
+            ),
+            execution_status_counts=_value_counts(
+                status.value for _execution, status in execution_statuses
+            ),
+            active_execution_count=len(active_executions),
+            stale_execution_count=len(stale_executions),
+            unresolved_blocker_count=len(unresolved_blockers),
+            open_follow_up_count=sum(len(run.follow_ups) for run in runs),
+            blocked_run_ids=blocked_run_ids,
+            active_execution_ids=[execution.id for execution in active_executions],
+            stale_execution_ids=[execution.id for execution in stale_executions],
+        )
 
     def get_run(
         self,
@@ -1889,6 +1952,24 @@ def _loop_result(
         pending_task_ids=_pending_task_ids(run),
         unresolved_blocker_ids=[blocker.id for blocker in _unresolved_blockers(run.blockers)],
     )
+
+
+def _operations_execution_status(
+    execution: OrchestrationExecution,
+    *,
+    supervisor_id: str,
+    now: datetime,
+) -> OrchestrationExecutionStatus:
+    if _should_mark_background_execution_stale(execution, supervisor_id=supervisor_id, now=now):
+        return OrchestrationExecutionStatus.stale
+    return execution.status
+
+
+def _value_counts(values: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _record_task_update_event(

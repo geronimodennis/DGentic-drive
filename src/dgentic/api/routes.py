@@ -119,6 +119,7 @@ from dgentic.schemas import (
     OrchestrationExecution,
     OrchestrationLoopRequest,
     OrchestrationLoopResult,
+    OrchestrationOperationsSummary,
     OrchestrationRun,
     OrchestrationTaskRecoveryRequest,
     OrchestrationTaskUpdate,
@@ -225,6 +226,17 @@ def create_orchestration_run(
 @router.get("/tasks/orchestrations", response_model=list[OrchestrationRun])
 def get_orchestration_runs(request: Request) -> list[OrchestrationRun]:
     return orchestration_service.list_runs(
+        actor=_orchestration_actor(request),
+        include_all=_orchestration_include_all(request),
+    )
+
+
+@router.get(
+    "/tasks/orchestrations/operations/summary",
+    response_model=OrchestrationOperationsSummary,
+)
+def get_orchestration_operations_summary(request: Request) -> OrchestrationOperationsSummary:
+    return orchestration_service.get_operations_summary(
         actor=_orchestration_actor(request),
         include_all=_orchestration_include_all(request),
     )

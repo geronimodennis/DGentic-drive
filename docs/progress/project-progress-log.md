@@ -4,9 +4,44 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008n Orchestration Operations Summary
+
+Status: completed for the scoped operations summary slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected owner-scoped operations surfacing as the next bounded Sprint 14 slice after detached execution cancellation.
+- Completed: Developer added an `OrchestrationOperationsSummary` contract, service-level summary aggregation, and `GET /tasks/orchestrations/operations/summary`.
+- Completed: Developer kept summary output to counts and ids only, avoiding objective, output, error, resolution, or secret-bearing text.
+- Completed: QA added service/API tests for run/task/execution status counts, active/stale execution ids, blocker/follow-up totals, and owner/admin scoping.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can retrieve visible orchestration run counts, task counts, execution counts, active/stale execution ids, unresolved blocker totals, and open follow-up totals from one endpoint.
+- Implemented in this slice: summary access follows the same owner/admin visibility model as orchestration run listing.
+- Implemented in this slice: the summary route is registered before `{run_id}` lookup to avoid path capture by the dynamic route.
+
+Remaining Sprint 14 work:
+- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
+- Add detached worker restart adoption/resume.
+- Harden production multi-agent scheduling and lease semantics.
+
+Validation:
+- Focused summary service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "operations_summary"` passed with 2 tests.
+- Focused summary API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "operations_summary"` passed with 1 test.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 93 tests.
+- Broader orchestration API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration"` passed with 28 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 814 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 14 with detached worker restart adoption/resume, shared-memory ACL policy refinement, or production scheduling/lease hardening.
+
 ### Sprint 14 BL-008m Detached Orchestration Execution Cancellation
 
-Status: completed for the scoped detached-execution cancellation slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
+Status: completed for the scoped detached-execution cancellation slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -28,7 +63,7 @@ Remaining Sprint 14 work:
 - Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused cancellation service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "background_execution_cancel"` passed with 5 tests.
@@ -39,11 +74,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or operations surfacing for orchestration runs.
+- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or shared-memory ACL policy refinement.
 
 ### Sprint 14 BL-008l Opt-In Orchestration Shared Memory
 
-Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
+Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -68,7 +103,7 @@ Remaining Sprint 14 work:
 - Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused shared-memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 6 tests.
@@ -80,11 +115,11 @@ Validation:
 - Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 803 tests and 2 skipped.
 
 Next:
-- Continue Sprint 14 with production scheduling/lease hardening or operations surfacing for orchestration runs.
+- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or shared-memory ACL policy refinement.
 
 ### Sprint 14 BL-008k Detached Background Orchestration Execution
 
-Status: completed for the scoped detached process-local execution slice; Sprint 14 remains active for durable shared-memory coordination, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
+Status: completed for the scoped detached process-local execution slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for durable shared-memory coordination, detached worker restart adoption/resume, and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -110,7 +145,7 @@ Remaining Sprint 14 work:
 - Add durable shared-memory coordination across runs and agents.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused detached execution gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "background_execution or detached"` passed with 14 tests.
@@ -153,7 +188,7 @@ Remaining Sprint 14 work:
 - Add detached background worker execution beyond synchronous loop calls.
 - Add durable shared-memory coordination across runs and agents.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused generated-doc/reviewer remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "task_update_records_redacted_audit_metadata or generated_document_symlink_failures or generated_documents or create_run_syncs_generated_project_documents"` passed with 7 tests.
@@ -197,7 +232,7 @@ Remaining Sprint 14 work:
 - Add automatic backlog/progress document mutation from orchestration events.
 - Add durable shared memory coordination across runs and agents.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused loop service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "loop or cycle"` passed with 11 tests.
@@ -240,7 +275,7 @@ Remaining Sprint 14 work:
 - Add automatic backlog/progress document mutation from orchestration events.
 - Add durable shared memory coordination across runs and agents.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused context service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_context or dependency_agent or schedules_parallel or cycle"` passed with 8 tests.
@@ -287,7 +322,7 @@ Remaining Sprint 14 work:
 - Add automatic backlog/progress document mutation from orchestration events.
 - Add shared context/memory coordination across running agents.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused blocker service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "resolve or blocker or recovery"` passed with 12 tests after the reviewer follow-ups.
@@ -332,7 +367,7 @@ Remaining Sprint 14 work:
 - Add shared context/memory coordination across running agents.
 - Add manual/security blocker resolution workflow.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused cycle service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "cycle or retry"` passed with 8 tests and 43 deselected.
@@ -380,7 +415,7 @@ Remaining Sprint 14 work:
 - Add shared context/memory coordination across running agents.
 - Add manual/security blocker resolution workflow.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused recovery service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "recover or recovery or retry or close"` passed with 9 tests and 37 deselected.
@@ -426,7 +461,7 @@ Remaining Sprint 14 work:
 - Add shared context/memory coordination across running agents.
 - Add richer blocked-run recovery or reassignment semantics.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused generated-tool binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_tool_runtime.py tests\test_api.py -k "tool or orchestration"` passed with 102 tests and 96 deselected.
@@ -470,7 +505,7 @@ Remaining Sprint 14 work:
 - Add runtime binding for tool actions.
 - Add richer blocked-run recovery or reassignment semantics.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused CLI-binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py -k "orchestration or command_policy or cli or guardrails"` passed with 390 tests, 2 skipped, and 91 deselected.
@@ -513,7 +548,7 @@ Remaining Sprint 14 work:
 - Add runtime binding for CLI and tool actions.
 - Add richer blocked-run recovery or reassignment semantics.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 
 Validation:
 - Focused filesystem-binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "orchestration or orchestration_api or filesystem"` passed with 33 tests and 103 deselected.
@@ -557,7 +592,7 @@ Remaining Sprint 14 work:
 - Add automatic backlog/progress document mutation from orchestration events.
 - Add shared context/memory coordination across running agents.
 - Harden production multi-agent scheduling and lease semantics.
-- Add UI or operations surfacing for orchestration runs.
+- Operations summary surfacing was completed later in BL-008n.
 - Add runtime binding between orchestration role decisions and filesystem, CLI, and tool actions.
 - Add richer blocked-run recovery or reassignment semantics.
 

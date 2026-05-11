@@ -609,6 +609,115 @@ def test_background_execution_lifecycle_persists_and_completes_with_result_polli
     assert service.list_background_executions(run.id) == [completed]
 
 
+def test_orchestration_operations_summary_counts_visible_runtime_state(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    active_run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Summarize active orchestration state.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked_run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Summarize blocked orchestration state.",
+            tasks=[
+                _task(
+                    "qa-source-edit",
+                    role="QA",
+                    paths=["src/dgentic/orchestration.py"],
+                )
+            ],
+        )
+    )
+    now = datetime.now(UTC)
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-active-summary",
+            run_id=active_run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id=service.supervisor_id,
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+    )
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-stale-summary",
+            run_id=blocked_run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="old-supervisor",
+            started_at=now - timedelta(seconds=301),
+            last_heartbeat_at=now - timedelta(seconds=301),
+        )
+    )
+
+    summary = service.get_operations_summary()
+    persisted_stale_candidate = service._executions.get("orchexec-stale-summary")
+
+    assert summary.total_runs == 2
+    assert summary.run_status_counts == {"running": 2}
+    assert summary.task_status_counts["running"] == 1
+    assert summary.task_status_counts["blocked"] == 1
+    assert summary.execution_status_counts["running"] == 1
+    assert summary.execution_status_counts["stale"] == 1
+    assert summary.active_execution_count == 1
+    assert summary.active_execution_ids == ["orchexec-active-summary"]
+    assert summary.stale_execution_count == 1
+    assert summary.stale_execution_ids == ["orchexec-stale-summary"]
+    assert summary.unresolved_blocker_count == 1
+    assert summary.open_follow_up_count == 1
+    assert summary.blocked_run_ids == [blocked_run.id]
+    assert persisted_stale_candidate is not None
+    assert persisted_stale_candidate.status == OrchestrationExecutionStatus.running
+
+
+def test_orchestration_operations_summary_does_not_mutate_hidden_executions(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    alpha_run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Hidden alpha operations state.",
+            requested_by="alpha-owner",
+            tasks=[_task("qa-alpha", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    beta_run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Visible beta operations state.",
+            requested_by="beta-owner",
+            tasks=[_task("qa-beta", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-hidden-alpha",
+            run_id=alpha_run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="old-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    summary = service.get_operations_summary(actor="beta-owner", include_all=False)
+    hidden_execution = service._executions.get("orchexec-hidden-alpha")
+
+    assert summary.total_runs == 1
+    assert summary.active_execution_count == 0
+    assert summary.stale_execution_count == 0
+    assert beta_run.id not in summary.blocked_run_ids
+    assert hidden_execution is not None
+    assert hidden_execution.status == OrchestrationExecutionStatus.running
+    assert hidden_execution.completed_at is None
+
+
 def test_background_execution_rejects_duplicate_active_execution_across_service_instances(
     orchestration_state,
     monkeypatch,

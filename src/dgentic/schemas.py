@@ -444,6 +444,21 @@ class OrchestrationExecution(BaseModel):
     last_heartbeat_at: datetime | None = None
 
 
+class OrchestrationOperationsSummary(BaseModel):
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    total_runs: int = Field(ge=0)
+    run_status_counts: dict[str, int] = Field(default_factory=dict)
+    task_status_counts: dict[str, int] = Field(default_factory=dict)
+    execution_status_counts: dict[str, int] = Field(default_factory=dict)
+    active_execution_count: int = Field(ge=0)
+    stale_execution_count: int = Field(ge=0)
+    unresolved_blocker_count: int = Field(ge=0)
+    open_follow_up_count: int = Field(ge=0)
+    blocked_run_ids: list[str] = Field(default_factory=list)
+    active_execution_ids: list[str] = Field(default_factory=list)
+    stale_execution_ids: list[str] = Field(default_factory=list)
+
+
 class OrchestrationDocumentSyncResult(BaseModel):
     progress_path: str
     backlog_path: str

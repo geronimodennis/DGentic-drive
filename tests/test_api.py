@@ -380,6 +380,61 @@ def test_orchestration_api_recovers_blocked_task_and_persists_state(
     assert "secret-value" not in json.dumps(recovery_event)
 
 
+def test_orchestration_api_cycle_reconciles_agent_completion(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Cycle completed agent work.",
+            "tasks": [
+                {
+                    "id": "developer-implementation",
+                    "title": "Implement cycle source.",
+                    "description": "Produce source changes.",
+                    "role": "Developer",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "Developer work complete.",
+                },
+                {
+                    "id": "qa-validation",
+                    "title": "Validate cycle source.",
+                    "description": "Validate source changes.",
+                    "role": "QA",
+                    "dependencies": ["developer-implementation"],
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "validation": "QA work runs after implementation.",
+                },
+            ],
+        },
+    )
+    body = create_response.json()
+    run_id = body["id"]
+    agent_id = body["tasks"][0]["agent_id"]
+
+    status_response = client.patch(
+        f"/agents/{agent_id}/status",
+        json={"status": "completed", "note": "Source work complete."},
+    )
+    cycle_response = client.post(f"/tasks/orchestrations/{run_id}/cycle")
+    get_response = client.get(f"/tasks/orchestrations/{run_id}")
+
+    assert create_response.status_code == 201
+    assert status_response.status_code == 200
+    assert cycle_response.status_code == 200
+    cycled = cycle_response.json()
+    assert cycled["tasks"][0]["status"] == "completed"
+    assert cycled["tasks"][0]["output"] == {
+        "agent_id": agent_id,
+        "agent_status": "completed",
+    }
+    assert cycled["scheduled_task_ids"] == ["qa-validation"]
+    assert cycled["tasks"][1]["status"] == "running"
+    assert cycled["tasks"][1]["agent_id"]
+    assert get_response.json()["tasks"][1]["status"] == "running"
+
+
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv(
@@ -486,6 +541,54 @@ def test_orchestration_api_recovery_respects_authenticated_task_owner(
     assert beta_recover.status_code == 404
     assert admin_recover.status_code == 200
     assert admin_recover.json()["tasks"][0]["status"] == "running"
+    get_settings.cache_clear()
+
+
+def test_orchestration_api_cycle_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped cycle.",
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate owner filtering.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_orchestration.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = alpha_create.json()["id"]
+    beta_cycle = client.post(
+        f"/tasks/orchestrations/{run_id}/cycle",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    admin_cycle = client.post(
+        f"/tasks/orchestrations/{run_id}/cycle",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert alpha_create.status_code == 201
+    assert beta_cycle.status_code == 404
+    assert admin_cycle.status_code == 200
+    assert admin_cycle.json()["id"] == run_id
     get_settings.cache_clear()
 
 

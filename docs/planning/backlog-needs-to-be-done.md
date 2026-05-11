@@ -370,7 +370,8 @@ Current implementation status:
 - Completed: BL-008c orchestration-bound CLI action checks, including backward-compatible omitted/no-active-match context, fail-closed partial or mismatched active orchestration context, exact running task role/agent/task matching, command policy blocking before execution, and serialized orchestration decisions in command policy/API/run metadata.
 - Completed: BL-008d orchestration-bound generated-tool action checks, including backward-compatible omitted/no-active-match context, fail-closed partial or mismatched active orchestration context, exact running task role/agent/task matching for tool approvals and execution, and serialized orchestration decisions in tool approval/review/result/API/audit metadata.
 - Completed: BL-008e blocked orchestration task recovery for system-generated role-boundary and retry-exhaustion blockers, including explicit recovery endpoint, non-blank resolution notes, optional role and declared write-path correction, role-boundary revalidation, dependency-aware rescheduling, owner/admin scoping through existing orchestration access rules, manual blocker preservation, generic unsafe-recovery denials, and redacted recovery audit metadata.
-- Remaining: real autonomous execution loop beyond scheduling briefs, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, production multi-agent scheduling/lease semantics, manual/security blocker resolution workflow, and UI/operations surfacing for orchestration runs.
+- Completed: BL-008f explicit orchestration execution cycle that reconciles terminal spawned-agent lifecycle states into running task outcomes, preserves terminal agent audit timestamps, applies existing retry/blocker semantics, accumulates all tasks scheduled during a multi-task cycle, rejects closed-run cycles, and respects existing owner/admin orchestration access scoping.
+- Remaining: fully autonomous background execution loop beyond explicit cycles, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, production multi-agent scheduling/lease semantics, manual/security blocker resolution workflow, and UI/operations surfacing for orchestration runs.
 
 ### BL-009: Production Identity, Secret Management, And Network Guardrails
 
@@ -646,9 +647,9 @@ Exit criteria:
 - Sprint closure requires Definition of Done evidence.
 
 Current Sprint 14 status:
-- Active: BL-008a through BL-008e implement the backend orchestration control plane foundation plus filesystem, CLI, generated-tool runtime action binding, and system-blocked task recovery.
-- Completed: task graph creation/list/get/advance/update/close/recover contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks, orchestration-bound generated-tool approval/execution checks for active agent context, recoverable blocker rescheduling, and DoD evidence close gates.
-- Remaining before Sprint 14 can close: autonomous execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.
+- Active: BL-008a through BL-008f implement the backend orchestration control plane foundation plus filesystem, CLI, generated-tool runtime action binding, system-blocked task recovery, and explicit agent lifecycle reconciliation cycles.
+- Completed: task graph creation/list/get/advance/update/cycle/close/recover contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks, orchestration-bound generated-tool approval/execution checks for active agent context, recoverable blocker rescheduling, agent terminal-status reconciliation, and DoD evidence close gates.
+- Remaining before Sprint 14 can close: fully autonomous background execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.
 
 ### Sprint 15: Production Identity, Secrets, And Network Guardrails
 

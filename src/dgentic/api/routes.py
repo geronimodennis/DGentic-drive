@@ -246,6 +246,18 @@ def advance_orchestration_run(run_id: str, request: Request) -> OrchestrationRun
         raise _orchestration_http_error(exc) from exc
 
 
+@router.post("/tasks/orchestrations/{run_id}/cycle", response_model=OrchestrationRun)
+def run_orchestration_cycle(run_id: str, request: Request) -> OrchestrationRun:
+    try:
+        return orchestration_service.run_cycle(
+            run_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
 @router.patch(
     "/tasks/orchestrations/{run_id}/tasks/{task_id}",
     response_model=OrchestrationRun,

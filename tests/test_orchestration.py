@@ -1,7 +1,10 @@
 import pytest
 
+from dgentic.agents import get_agent, update_agent_status
 from dgentic.orchestration import OrchestrationError, OrchestrationService
 from dgentic.schemas import (
+    AgentStatus,
+    AgentStatusUpdate,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationTask,
@@ -73,6 +76,205 @@ def test_orchestration_schedules_parallel_ready_tasks_and_unblocks_dependencies(
     assert run.scheduled_task_ids == ["pm-closeout"]
     assert _task_by_id(run, "pm-closeout").status == StepStatus.running
     assert _task_by_id(run, "pm-closeout").agent_id
+
+
+def test_orchestration_cycle_reconciles_completed_agent_and_schedules_dependency(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reconcile completed agent work.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    dev_task = _task_by_id(run, "dev-implementation")
+    assert dev_task.agent_id
+    update_agent_status(
+        dev_task.agent_id,
+        AgentStatusUpdate(status=AgentStatus.completed, note="Implementation done."),
+    )
+    completed_agent = get_agent(dev_task.agent_id)
+    assert completed_agent is not None
+    completed_at = completed_agent.completed_at
+
+    cycled = service.run_cycle(run.id)
+
+    completed_task = _task_by_id(cycled, "dev-implementation")
+    qa_task = _task_by_id(cycled, "qa-validation")
+    assert completed_task.status == StepStatus.completed
+    assert completed_task.output == {
+        "agent_id": dev_task.agent_id,
+        "agent_status": AgentStatus.completed,
+    }
+    assert cycled.scheduled_task_ids == ["qa-validation"]
+    assert qa_task.status == StepStatus.running
+    assert qa_task.agent_id
+    agent_after_cycle = get_agent(dev_task.agent_id)
+    assert agent_after_cycle is not None
+    assert agent_after_cycle.status == AgentStatus.completed
+    assert agent_after_cycle.completed_at == completed_at
+
+
+def test_orchestration_cycle_reconciles_multiple_completed_agents_before_scheduling(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reconcile parallel completed agent work.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task("qa-validation", role="QA", paths=["tests/test_orchestration.py"]),
+                _task(
+                    "pm-closeout",
+                    role="PM",
+                    dependencies=["dev-implementation", "qa-validation"],
+                    paths=["docs/progress/project-progress-log.md"],
+                ),
+            ],
+        )
+    )
+    for task_id in ["dev-implementation", "qa-validation"]:
+        agent_id = _task_by_id(run, task_id).agent_id
+        assert agent_id
+        update_agent_status(agent_id, AgentStatusUpdate(status=AgentStatus.completed))
+
+    cycled = service.run_cycle(run.id)
+
+    assert _task_by_id(cycled, "dev-implementation").status == StepStatus.completed
+    assert _task_by_id(cycled, "qa-validation").status == StepStatus.completed
+    assert cycled.scheduled_task_ids == ["pm-closeout"]
+    assert _task_by_id(cycled, "pm-closeout").status == StepStatus.running
+
+
+def test_orchestration_cycle_reports_all_independent_tasks_scheduled_in_one_cycle(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Report all downstream schedules from one cycle.",
+            tasks=[
+                _task("root-a", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task("root-b", role="QA", paths=["tests/test_orchestration.py"]),
+                _task(
+                    "after-a",
+                    role="PM",
+                    dependencies=["root-a"],
+                    paths=["docs/progress/project-progress-log.md"],
+                ),
+                _task(
+                    "after-b",
+                    role="PM",
+                    dependencies=["root-b"],
+                    paths=["docs/planning/backlog-needs-to-be-done.md"],
+                ),
+            ],
+        )
+    )
+    for task_id in ["root-a", "root-b"]:
+        agent_id = _task_by_id(run, task_id).agent_id
+        assert agent_id
+        update_agent_status(agent_id, AgentStatusUpdate(status=AgentStatus.completed))
+
+    cycled = service.run_cycle(run.id)
+
+    assert set(cycled.scheduled_task_ids) == {"after-a", "after-b"}
+    assert _task_by_id(cycled, "after-a").status == StepStatus.running
+    assert _task_by_id(cycled, "after-b").status == StepStatus.running
+
+
+def test_orchestration_cycle_retries_then_blocks_failed_agent_work(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Retry failed agent work through cycle.",
+            tasks=[
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    retry_limit=1,
+                )
+            ],
+        )
+    )
+    first_agent_id = _task_by_id(run, "qa-validation").agent_id
+    assert first_agent_id
+    update_agent_status(first_agent_id, AgentStatusUpdate(status=AgentStatus.failed))
+    failed_agent = get_agent(first_agent_id)
+    assert failed_agent is not None
+    failed_at = failed_agent.completed_at
+
+    retried = service.run_cycle(run.id)
+    retried_task = _task_by_id(retried, "qa-validation")
+
+    assert retried_task.status == StepStatus.running
+    assert retried_task.retry_count == 1
+    assert retried_task.agent_id
+    assert retried_task.agent_id != first_agent_id
+    assert retried.blockers == []
+    first_agent_after_cycle = get_agent(first_agent_id)
+    assert first_agent_after_cycle is not None
+    assert first_agent_after_cycle.status == AgentStatus.failed
+    assert first_agent_after_cycle.completed_at == failed_at
+
+    update_agent_status(retried_task.agent_id, AgentStatusUpdate(status=AgentStatus.failed))
+    blocked = service.run_cycle(retried.id)
+    blocked_task = _task_by_id(blocked, "qa-validation")
+
+    assert blocked_task.status == StepStatus.blocked
+    assert blocked_task.retry_count == 2
+    assert "reported failed status" in (blocked_task.error or "")
+    assert [(blocker.task_id, blocker.severity) for blocker in blocked.blockers] == [
+        ("qa-validation", "retry_exhausted")
+    ]
+
+
+def test_orchestration_cycle_blocks_cancelled_agent_without_overwriting_agent_status(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Block cancelled agent work through cycle.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    task = _task_by_id(run, "dev-implementation")
+    assert task.agent_id
+    update_agent_status(task.agent_id, AgentStatusUpdate(status=AgentStatus.cancelled))
+
+    cycled = service.run_cycle(run.id)
+
+    assert _task_by_id(cycled, "dev-implementation").status == StepStatus.blocked
+    assert _task_by_id(cycled, "qa-validation").status == StepStatus.pending
+    assert cycled.scheduled_task_ids == []
+    assert [(blocker.task_id, blocker.severity) for blocker in cycled.blockers] == [
+        ("dev-implementation", "blocked")
+    ]
+    agent = get_agent(task.agent_id)
+    assert agent is not None
+    assert agent.status == AgentStatus.cancelled
 
 
 @pytest.mark.parametrize(
@@ -906,6 +1108,8 @@ def test_orchestration_rejects_updates_after_close(
             "qa-validation",
             OrchestrationTaskRecoveryRequest(resolution="late recovery"),
         )
+    with pytest.raises(OrchestrationError, match="closed orchestration"):
+        service.run_cycle(closed.id)
 
 
 def test_orchestration_rejects_invalid_task_status_transitions(

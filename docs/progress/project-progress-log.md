@@ -4,6 +4,53 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008f Agent Lifecycle Reconciliation Cycle
+
+Status: completed for the scoped explicit-cycle slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected explicit orchestration cycles as the next smallest Sprint 14 autonomous execution-loop slice after blocked task recovery.
+- Completed: Developer updated production source only for `run_cycle`, `/tasks/orchestrations/{run_id}/cycle`, scheduling metadata reset, terminal agent reconciliation, and terminal agent audit preservation.
+- Completed: Developer updated implementation docs for the cycle contract.
+- Completed: QA updated tests only for completed-agent reconciliation, multi-agent dependency scheduling, failed-agent retry and blocker behavior, cancelled-agent blocking, closed-run cycle rejection, API cycle behavior, and owner/admin cycle scoping.
+- Completed: Reviewer/Security found blockers where cycle reconciliation could overwrite terminal agent timestamps and where multi-update cycles could lose earlier scheduled task ids.
+- Completed: Developer remediated by skipping lifecycle rewrites for already-terminal agents and accumulating every task scheduled across one cycle.
+- Completed: QA added regressions for terminal `completed_at` preservation and multiple independent downstream schedules in one cycle.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /tasks/orchestrations/{run_id}/cycle` reconciles terminal spawned-agent statuses back into running orchestration tasks.
+- Implemented in this slice: completed agents mark tasks completed and schedule newly dependency-ready tasks.
+- Implemented in this slice: failed agents use existing retry and retry-exhaustion blocker behavior.
+- Implemented in this slice: cancelled agents block their task without overwriting the agent's cancelled lifecycle state.
+- Implemented in this slice: cycle reconciliation preserves terminal agent audit timestamps instead of rewriting them.
+- Implemented in this slice: multi-task cycles retain all tasks scheduled during the cycle in `scheduled_task_ids`.
+- Implemented in this slice: cycle access follows existing authenticated owner/admin orchestration scoping and rejects closed runs.
+
+Remaining Sprint 14 work:
+- Add a fully autonomous background execution loop beyond explicit cycle calls.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Add manual/security blocker resolution workflow.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused cycle service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "cycle or retry"` passed with 8 tests and 43 deselected.
+- Focused cycle API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration_api_cycle or agent_lifecycle"` passed with 3 tests and 121 deselected.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 175 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed with 4 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 759 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+
+Next:
+- Continue Sprint 14 with automatic project document mutation from orchestration events or shared context/memory coordination, depending on risk and implementation surface.
+
 ### Sprint 14 BL-008e Blocked Orchestration Task Recovery
 
 Status: completed for the scoped recoverable-blocker slice; Sprint 14 remains active for autonomous execution, project-document mutation, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.

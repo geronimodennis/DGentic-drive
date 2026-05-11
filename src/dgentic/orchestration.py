@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from uuid import uuid4
 
-from dgentic.agents import spawn_agent, update_agent_status
+from dgentic.agents import get_agent, spawn_agent, update_agent_status
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import (
@@ -144,6 +144,53 @@ class OrchestrationService:
         updated = self._schedule_ready_tasks(run, actor=actor)
         return self._persist(updated)
 
+    def run_cycle(
+        self,
+        run_id: str,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationRun:
+        run = self._require_run(run_id, actor=actor, include_all=include_all)
+        _ensure_run_open(run)
+        task_updates = [
+            (task.id, update)
+            for task in run.tasks
+            if task.status == StepStatus.running and task.agent_id
+            for update in [_task_update_from_agent_status(task.agent_id)]
+            if update is not None
+        ]
+
+        if not task_updates:
+            updated = self._schedule_ready_tasks(run, actor=actor)
+            return self._persist(updated)
+
+        scheduled_task_ids: list[str] = []
+        for task_id, update in task_updates:
+            run = self.update_task(
+                run.id,
+                task_id,
+                update,
+                actor=actor,
+                include_all=include_all,
+            )
+            scheduled_task_ids.extend(
+                task_id for task_id in run.scheduled_task_ids if task_id not in scheduled_task_ids
+            )
+        if scheduled_task_ids != run.scheduled_task_ids:
+            run = run.model_copy(update={"scheduled_task_ids": scheduled_task_ids})
+        event_log.record(
+            LogEventType.task,
+            "Ran orchestration execution cycle.",
+            actor=actor or "system",
+            subject_id=run.id,
+            metadata={
+                "reconciled_task_ids": [task_id for task_id, _update in task_updates],
+                "scheduled": scheduled_task_ids,
+            },
+        )
+        return run
+
     def update_task(
         self,
         run_id: str,
@@ -193,6 +240,7 @@ class OrchestrationService:
                 "tasks": tasks,
                 "blockers": blockers,
                 "follow_ups": follow_ups,
+                "scheduled_task_ids": [],
                 "updated_at": now,
             }
         )
@@ -720,6 +768,28 @@ def _validate_task_update(
         )
 
 
+def _task_update_from_agent_status(agent_id: str) -> OrchestrationTaskUpdate | None:
+    agent = get_agent(agent_id)
+    if agent is None:
+        return None
+    if agent.status == AgentStatus.completed:
+        return OrchestrationTaskUpdate(
+            status=StepStatus.completed,
+            output={"agent_id": agent_id, "agent_status": agent.status},
+        )
+    if agent.status == AgentStatus.failed:
+        return OrchestrationTaskUpdate(
+            status=StepStatus.failed,
+            error=f"Agent {agent_id} reported failed status.",
+        )
+    if agent.status == AgentStatus.cancelled:
+        return OrchestrationTaskUpdate(
+            status=StepStatus.blocked,
+            error=f"Agent {agent_id} was cancelled.",
+        )
+    return None
+
+
 def _authorize_task_filesystem_action(
     run: OrchestrationRun,
     task: OrchestrationTask,
@@ -1012,6 +1082,13 @@ def _follow_up(task_id: str, assigned_role: str, description: str) -> Orchestrat
 
 
 def _update_agent_for_task(agent_id: str, status: StepStatus, error: str | None) -> None:
+    agent = get_agent(agent_id)
+    if agent is not None and agent.status in {
+        AgentStatus.completed,
+        AgentStatus.failed,
+        AgentStatus.cancelled,
+    }:
+        return
     if status == StepStatus.completed:
         update_agent_status(agent_id, AgentStatusUpdate(status=AgentStatus.completed))
     elif status in {StepStatus.failed, StepStatus.blocked}:

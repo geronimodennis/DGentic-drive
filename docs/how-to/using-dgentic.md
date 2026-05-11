@@ -271,6 +271,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/tools/registry `
   -d '{"tool_name":"example-tool","version":"1.0.0","source_path":"localmcp/example-tool","interface_signature":"sha256:example","permission_level":"approval_required","tags":["example"]}'
 ```
 
+Generated tools created through `/tools/generate` are also registered in the SQLAlchemy-backed registry. Registry duplicate checks run before file creation, and execution fails closed when the SQL registry marks a tool deprecated or disagrees with the local manifest permission mode.
+
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
 
 Local MVP state is written to `.dgentic/` by default. Set `DGENTIC_DATA_DIR` to move state elsewhere.
@@ -355,6 +357,6 @@ DGentic should persist session state so future sessions can resume with context,
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
-- Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
+- Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, executed with registry permission/deprecation checks, and deprecated, but bound tool approval records, stronger sandbox isolation, output redaction, and per-tool dependency isolation are still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

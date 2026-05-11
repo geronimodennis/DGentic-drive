@@ -4,6 +4,58 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005a Tool Registry Integration And Execution Permission Hardening
+
+Status: completed for the scoped registry-integration slice; Sprint 11 remains open for sandbox, dependency isolation, output redaction, and bound tool approvals.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM initiated Sprint 11 after the pushed Sprint 9/10 checkpoint.
+- Completed: Read-only explorer assessed tool generation/runtime/registry gaps and recommended starting with SQL registry integration before sandbox work.
+- Completed: Developer main lane updated generated-tool creation to preflight SQL registry duplicates, compute stable interface signatures, auto-register generated tools in the SQLAlchemy registry, and preserve the one-registry-row-per-tool-name policy.
+- Completed: Dev2 updated production source so tool execution consults the SQL registry when present, blocks deprecated registry rows, fails closed on invalid or conflicting registry permission levels, preserves legacy JSON-only execution when no SQL row exists, and reduces inherited subprocess environment keys.
+- Completed: QA2 updated tests only for generated-tool SQL registry auto-registration, SQL duplicate preflight with no file writes, deprecated registry execution blocking, and permission conflict fail-closed behavior.
+- Completed: Final full regression, lint, format, and diff hygiene gates.
+- Pending: Checkpoint commit and push for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: `/tools/generate` registers generated tools in both local JSON state and the SQLAlchemy-backed tool registry.
+- Implemented in this slice: generated-tool duplicate checks now include SQL registry exact-name and interface-signature preflight before files are written.
+- Implemented in this slice: generated-tool creation keeps a conservative one SQL registry row per generated tool name; richer multi-version registry semantics remain future work.
+- Implemented in this slice: `execute_tool` fails closed if an existing SQL registry row is deprecated, has an invalid permission level, or conflicts with the local manifest permission mode.
+- Implemented in this slice: generated tool subprocesses inherit a smaller environment allowlist while still setting `PYTHONIOENCODING`, `PYTHONDONTWRITEBYTECODE`, and tool-scoped `PYTHONPATH`.
+
+Validation:
+- Focused new tests: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_dynamic_tool_generation_registers_sql_registry_row tests\test_api.py::test_dynamic_tool_generation_sql_duplicate_prevents_file_writes tests\test_tool_runtime.py::test_sql_registry_deprecated_tool_does_not_run tests\test_tool_runtime.py::test_sql_registry_permission_conflict_fails_closed` passed with 4 tests.
+- Focused tool regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_tool_registry.py tests\test_api.py -k "tool"` passed with 35 tests and 34 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\tools\__init__.py src\dgentic\tool_runtime.py tests\test_api.py tests\test_tool_runtime.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\tools\__init__.py src\dgentic\tool_runtime.py tests\test_api.py tests\test_tool_runtime.py` passed.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 461 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Diff hygiene gate: `git diff --check` passed.
+
+Residual risks:
+- Approval-required tool execution still uses the MVP caller-supplied `approved` flag; bound tool approval records and UI review remain future work.
+- Tool execution is still a local Python subprocess, not an OS/process sandbox.
+- Tool output and stderr are not yet redacted through a dedicated tool-run redaction contract.
+- Per-tool dependency isolation is not implemented; tools still run with the application interpreter.
+- SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/tools/__init__.py` and `src/dgentic/tool_runtime.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Run final full quality gates, commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with tool approval binding, output redaction, or dependency isolation.
+
 ### Sprint 10 BL-004a Filesystem Runtime Completion
 
 Status: completed for the scoped MVP backend filesystem runtime; Sprint 10 is closed.

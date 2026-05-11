@@ -2,10 +2,13 @@ from pathlib import Path
 
 import pytest
 
+from dgentic.database import get_db_session, reset_database_state
+from dgentic.memory.schemas import ToolRegistryCreateRequest
 from dgentic.schemas import PermissionMode, ToolManifest, ToolStatus
 from dgentic.settings import get_settings
 from dgentic.tool_runtime import execute_tool
 from dgentic.tools import get_tool, register_tool
+from dgentic.tools.registry_service import ToolRegistryService
 
 
 @pytest.fixture()
@@ -16,7 +19,9 @@ def local_tool_state(tmp_path, monkeypatch) -> tuple[Path, Path]:
     monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
+    reset_database_state()
     yield root_dir, data_dir
+    reset_database_state()
     get_settings.cache_clear()
 
 
@@ -195,6 +200,103 @@ def test_manifest_entrypoint_must_stay_under_named_localmcp_tool_dir(
     stored = get_tool("safe-name")
     assert stored is not None
     assert stored.usage_count == 0
+
+
+def test_sql_registry_deprecated_tool_does_not_run(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    tool_dir = _write_tool(
+        root_dir,
+        "sql-deprecated",
+        tool_source=(
+            "from pathlib import Path\n\n"
+            "def run(payload):\n"
+            "    Path('ran.txt').write_text('ran', encoding='utf-8')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="sql-deprecated",
+            description="Local manifest is active, but SQL registry is deprecated.",
+            entrypoint="localmcp/sql-deprecated/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    _register_sql_registry_tool(
+        "sql-deprecated",
+        permission_level="autopilot_safe",
+        deprecated=True,
+    )
+
+    with pytest.raises(PermissionError):
+        execute_tool("sql-deprecated", {})
+
+    stored = get_tool("sql-deprecated")
+    assert stored is not None
+    assert stored.usage_count == 0
+    assert not (tool_dir / "ran.txt").exists()
+
+
+def test_sql_registry_permission_conflict_fails_closed(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    tool_dir = _write_tool(
+        root_dir,
+        "sql-permission-conflict",
+        tool_source=(
+            "from pathlib import Path\n\n"
+            "def run(payload):\n"
+            "    Path('ran.txt').write_text('ran', encoding='utf-8')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="sql-permission-conflict",
+            description="SQL registry permission conflicts with local manifest.",
+            entrypoint="localmcp/sql-permission-conflict/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    _register_sql_registry_tool(
+        "sql-permission-conflict",
+        permission_level="approval_required",
+    )
+
+    with pytest.raises(PermissionError):
+        execute_tool("sql-permission-conflict", {})
+
+    stored = get_tool("sql-permission-conflict")
+    assert stored is not None
+    assert stored.usage_count == 0
+    assert not (tool_dir / "ran.txt").exists()
+
+
+def _register_sql_registry_tool(
+    name: str,
+    *,
+    permission_level: str,
+    deprecated: bool = False,
+) -> None:
+    session = get_db_session()
+    try:
+        service = ToolRegistryService(session)
+        tool = service.register_tool(
+            ToolRegistryCreateRequest(
+                tool_name=name,
+                version="1.0.0",
+                source_path=f"localmcp/{name}/tool.py",
+                interface_signature=f"sha256:{name}",
+                permission_level=permission_level,
+            )
+        )
+        if deprecated:
+            service.deprecate_tool(tool.id)
+    finally:
+        session.close()
 
 
 def _write_tool(

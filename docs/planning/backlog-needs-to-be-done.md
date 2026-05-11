@@ -22,6 +22,7 @@ This backlog turns the current partially implemented and not-yet-implemented fea
 - Completed: Close Sprint 9 scoped CLI runtime hardening and move production-grade process adoption/leasing to follow-up backlog.
 - Completed: Initiate Sprint 10.
 - Completed: Execute Sprint 10 scoped MVP filesystem runtime completion.
+- Completed: Initiate Sprint 11.
 
 ## Priority Order
 
@@ -229,8 +230,8 @@ Definition of Done:
 - README, usage docs, architecture docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: generated tools can be created, governed, executed, and tracked for reliability through local manifests plus the SQLAlchemy registry APIs.
-- Remaining: generated tool creation does not yet auto-register into the SQLAlchemy registry, execution still uses process-local Python subprocesses rather than a hardened sandbox, the runtime still inherits a broad host environment, and approval-required tool execution still depends on a caller-supplied boolean instead of a reviewed approval record.
+- Completed: BL-005a generated-tool SQL registry integration and execution permission hardening, including generated-tool duplicate preflight against SQL registry rows/interface signatures, generated-tool auto-registration in the SQLAlchemy registry, one registry row per generated tool name, no file writes on SQL duplicate conflicts, execution-time SQL registry deprecation blocking, permission conflict fail-closed behavior, and a reduced inherited subprocess environment.
+- Remaining: bound tool approval records instead of caller-supplied `approved`, stronger OS/process sandbox isolation, output/log redaction for tool execution, per-tool dependency isolation, richer version migration policy beyond one registry row per tool name, and reliability-score policy automation.
 
 ### BL-006: Provider System Productionization
 
@@ -520,6 +521,11 @@ Exit criteria:
 - Generated tools have version/no-overwrite policy.
 - Deprecated or unsafe tools are excluded from normal reuse.
 - Security tests pass for sandbox, environment, filesystem, and permission boundaries.
+
+Current Sprint 11 status:
+- In progress: Sprint 11 started with BL-005a registry integration and execution permission hardening.
+- Completed: generated-tool SQL registry auto-registration, duplicate preflight, no file writes on SQL duplicate conflicts, deprecated registry row blocking, permission conflict fail-closed behavior, and reduced inherited subprocess environment.
+- Remaining: bound tool approval records, stronger OS/process sandbox isolation, output/log redaction, per-tool dependency isolation, and reliability-score policy automation.
 
 ### Sprint 12: Provider Productionization
 

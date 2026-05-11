@@ -1,9 +1,16 @@
 """Tool generation services and SQLAlchemy registry service."""
 
-import json
+from __future__ import annotations
 
+import json
+from hashlib import sha256
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from dgentic.database import get_db_session
 from dgentic.events import event_log
 from dgentic.memory import add_memory
+from dgentic.memory.schemas import DuplicateCheckRequest, ToolRegistryCreateRequest
 from dgentic.schemas import (
     LogEventType,
     MemoryKind,
@@ -49,6 +56,10 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     if request.permission_mode == PermissionMode.blocked:
         raise PermissionError("Generated tools cannot be registered with blocked permission mode.")
 
+    interface = request.interface or {"input": "dict", "output": "dict"}
+    interface_signature = _interface_signature(interface)
+    _ensure_sql_registry_allows_generation(request, interface_signature)
+
     existing = _find_duplicate(request)
     if existing and not request.overwrite:
         raise FileExistsError(f"Tool already exists or duplicates existing tool: {existing.name}")
@@ -78,12 +89,13 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
         entrypoint=str(source_path.relative_to(root_dir)),
         permission_mode=request.permission_mode,
         tags=sorted(set(request.tags + [request.trigger_source.value])),
-        interface=request.interface or {"input": "dict", "output": "dict"},
+        interface=interface,
     )
     manifest_json = json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n"
     manifest_path.write_text(manifest_json, encoding="utf-8")
     readme_path.write_text(_readme(request, manifest), encoding="utf-8")
     register_tool(manifest)
+    _register_sql_tool_manifest(request, manifest, interface_signature)
     add_memory(
         MemoryRecord(
             kind=MemoryKind.artifact,
@@ -148,6 +160,69 @@ def _find_duplicate(request: ToolGenerationRequest) -> ToolManifest | None:
         if request.interface and tool.interface == request.interface:
             return tool
     return None
+
+
+def _interface_signature(interface: dict) -> str:
+    payload = json.dumps(interface, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{sha256(payload.encode('utf-8')).hexdigest()}"
+
+
+def _ensure_sql_registry_allows_generation(
+    request: ToolGenerationRequest,
+    interface_signature: str,
+) -> None:
+    session = get_db_session()
+    try:
+        service = ToolRegistryService(session)
+        existing = service.get_tool_by_name(request.name)
+        if existing is not None:
+            raise FileExistsError(f"Tool already exists in SQL registry: {existing.tool_name}")
+
+        duplicate = service.check_duplicate(
+            DuplicateCheckRequest(
+                tool_name=request.name,
+                interface_signature=interface_signature,
+                tags=request.tags,
+            )
+        )
+        similar_names = {
+            str(item.get("tool_name"))
+            for item in duplicate.get("similar_tools", [])
+            if item.get("tool_name") is not None
+        }
+        different_tool_duplicate = similar_names - {request.name}
+        if duplicate.get("is_duplicate") and (not request.overwrite or different_tool_duplicate):
+            raise FileExistsError(duplicate["recommendation"])
+    finally:
+        session.close()
+
+
+def _register_sql_tool_manifest(
+    request: ToolGenerationRequest,
+    manifest: ToolManifest,
+    interface_signature: str,
+) -> None:
+    session = get_db_session()
+    try:
+        service = ToolRegistryService(session)
+        if service.get_tool_by_name(manifest.name) is not None:
+            return
+        service.register_tool(
+            ToolRegistryCreateRequest(
+                tool_name=manifest.name,
+                version=manifest.version,
+                source_path=manifest.entrypoint,
+                interface_signature=interface_signature,
+                permission_level=manifest.permission_mode.value,
+                tags=manifest.tags,
+                description=manifest.description,
+                created_by_agent=request.trigger_source.value,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise RuntimeError(f"Failed to register generated tool in SQL registry: {exc}") from exc
+    finally:
+        session.close()
 
 
 def _default_source(request: ToolGenerationRequest) -> str:

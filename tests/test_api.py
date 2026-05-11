@@ -9,9 +9,23 @@ from fastapi.testclient import TestClient
 
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
+from dgentic.database import reset_database_state
 from dgentic.main import create_app
 from dgentic.schemas import PermissionMode
 from dgentic.settings import get_settings
+
+
+@pytest.fixture()
+def isolated_tool_api_state(tmp_path, monkeypatch):
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    reset_database_state()
+    yield root_dir
+    reset_database_state()
+    get_settings.cache_clear()
 
 
 def test_health_returns_service_status() -> None:
@@ -1244,6 +1258,92 @@ def test_dynamic_tool_generation_creates_localmcp_files_and_registry(tmp_path, m
     get_settings.cache_clear()
 
 
+def test_dynamic_tool_generation_registers_sql_registry_row(
+    isolated_tool_api_state,
+) -> None:
+    root_dir = isolated_tool_api_state
+    client = TestClient(create_app())
+    interface = {"input": {"text": "str"}, "output": "summary"}
+
+    response = client.post(
+        "/tools/generate",
+        json={
+            "name": "sql-registered-tool",
+            "version": "1.2.3",
+            "description": "Summarize text using a generated local tool.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "tags": ["summary", "qa"],
+            "interface": interface,
+        },
+    )
+    registry_response = client.get("/api/v1/tools/registry?permission_level=autopilot_safe")
+    duplicate_response = client.post(
+        "/api/v1/tools/registry/check-duplicate",
+        json={
+            "tool_name": "other-summary-tool",
+            "interface_signature": _interface_signature(interface),
+        },
+    )
+
+    assert response.status_code == 201
+    assert (root_dir / "localmcp" / "sql-registered-tool" / "tool.py").exists()
+    assert registry_response.status_code == 200
+    registry_items = registry_response.json()["items"]
+    registry_tool = next(
+        item for item in registry_items if item["tool_name"] == "sql-registered-tool"
+    )
+    assert registry_tool["version"] == "1.2.3"
+    assert registry_tool["source_path"].replace("\\", "/") == (
+        "localmcp/sql-registered-tool/tool.py"
+    )
+    assert registry_tool["permission_level"] == "autopilot_safe"
+    assert set(registry_tool["tags"]) >= {"summary", "qa", "main_agent"}
+    assert registry_tool["description"] == "Summarize text using a generated local tool."
+    assert registry_tool["created_by_agent"] == "main_agent"
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["is_duplicate"] is True
+    assert any(
+        item["tool_name"] == "sql-registered-tool"
+        for item in duplicate_response.json()["similar_tools"]
+    )
+
+
+def test_dynamic_tool_generation_sql_duplicate_prevents_file_writes(
+    isolated_tool_api_state,
+) -> None:
+    root_dir = isolated_tool_api_state
+    client = TestClient(create_app())
+    interface = {"input": "dict", "output": {"path": "str"}}
+
+    registry_response = client.post(
+        "/api/v1/tools/registry",
+        json={
+            "tool_name": "existing-sql-tool",
+            "version": "9.9.9",
+            "source_path": "localmcp/existing-sql-tool/tool.py",
+            "interface_signature": _interface_signature(interface),
+            "permission_level": "autopilot_safe",
+            "tags": ["document"],
+        },
+    )
+    response = client.post(
+        "/tools/generate",
+        json={
+            "name": "new-tool-with-existing-interface",
+            "description": "Should be blocked by SQL registry duplicate detection.",
+            "trigger_source": "skill",
+            "permission_mode": "autopilot_safe",
+            "tags": ["document"],
+            "interface": interface,
+        },
+    )
+
+    assert registry_response.status_code == 201
+    assert response.status_code == 409
+    assert not (root_dir / "localmcp" / "new-tool-with-existing-interface").exists()
+
+
 def test_dynamic_tool_generation_blocks_invalid_permission_and_deprecates_tool(
     tmp_path, monkeypatch
 ) -> None:
@@ -1424,3 +1524,8 @@ def test_logs_redact_legacy_approval_reason_metadata(tmp_path, monkeypatch) -> N
     assert "nested-secret" not in serialized
     assert "hunter2" not in serialized
     get_settings.cache_clear()
+
+
+def _interface_signature(interface: dict) -> str:
+    payload = json.dumps(interface, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{sha256(payload.encode('utf-8')).hexdigest()}"

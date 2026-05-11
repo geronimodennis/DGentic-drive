@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from dgentic.database import get_db_session
+from dgentic.memory.models import ToolManifest as RegistryToolManifest
 from dgentic.schemas import PermissionMode, ToolManifest, ToolStatus
 from dgentic.settings import get_settings
 from dgentic.tools import get_tool, save_tool_manifest
@@ -16,6 +18,38 @@ from dgentic.tools import get_tool, save_tool_manifest
 DEFAULT_TOOL_TIMEOUT_SECONDS = 30
 TIMEOUT_EXIT_CODE = -1
 ENTRYPOINT_FILENAMES = ("wrapper.py", "tool.py")
+SUBPROCESS_ENV_KEYS = frozenset(
+    {
+        "APPDATA",
+        "COMSPEC",
+        "CONDA_PREFIX",
+        "CURL_CA_BUNDLE",
+        "DYLD_LIBRARY_PATH",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LD_LIBRARY_PATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PYTHONHOME",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "USERPROFILE",
+        "VIRTUAL_ENV",
+        "WINDIR",
+    }
+)
 
 _RUNNER_SOURCE = r"""
 import contextlib
@@ -85,6 +119,7 @@ def execute_tool(
     if manifest is None:
         raise LookupError(f"Tool not found: {name}")
 
+    _ensure_registry_allows_manifest(manifest)
     _ensure_tool_can_run(manifest, approved=approved)
     root_dir = get_settings().root_dir.resolve()
     tool_dir = _tool_dir_for(manifest.name, root_dir)
@@ -144,6 +179,38 @@ def _ensure_tool_can_run(manifest: ToolManifest, *, approved: bool) -> None:
         raise PermissionError("Tool requires explicit approval before execution.")
 
 
+def _ensure_registry_allows_manifest(manifest: ToolManifest) -> None:
+    session = get_db_session()
+    try:
+        registry_tool = (
+            session.query(RegistryToolManifest)
+            .filter(RegistryToolManifest.tool_name == manifest.name)
+            .first()
+        )
+        if registry_tool is None:
+            return
+
+        if registry_tool.deprecated:
+            raise PermissionError(
+                f"Tool registry row is deprecated and cannot run: {manifest.name}"
+            )
+
+        try:
+            registry_permission = PermissionMode(registry_tool.permission_level)
+        except ValueError as exc:
+            raise PermissionError(
+                f"Tool registry permission_level is invalid and cannot run: {manifest.name}"
+            ) from exc
+
+        if registry_permission != manifest.permission_mode:
+            raise PermissionError(
+                "Tool registry permission_level conflicts with JSON manifest "
+                f"permission_mode for tool: {manifest.name}"
+            )
+    finally:
+        session.close()
+
+
 def _tool_dir_for(name: str, root_dir: Path) -> Path:
     if not name or "/" in name or "\\" in name:
         raise PermissionError("Tool execution must stay inside rootDir/localmcp/[tool_name].")
@@ -182,7 +249,7 @@ def _resolve_entrypoint(tool_dir: Path) -> Path:
 
 
 def _subprocess_env(tool_dir: Path) -> dict[str, str]:
-    env = dict(os.environ)
+    env = {key: value for key, value in os.environ.items() if key.upper() in SUBPROCESS_ENV_KEYS}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPATH"] = str(tool_dir)

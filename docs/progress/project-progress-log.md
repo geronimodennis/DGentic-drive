@@ -4,9 +4,34 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 13 Memory Production Lifecycle Closeout
+
+Status: closed for the scoped backend MVP memory-production contract.
+
+Current story:
+- BL-007: Memory And Retrieval Production Lifecycle.
+
+Checklist:
+- Completed: PM reviewed BL-007a through BL-007d and confirmed the backend MVP now has migration-backed lifecycle metadata, lifecycle preview/apply, vector backend abstraction, baseline retrieval performance smoke coverage, deterministic metadata compression execution, and retrieval attribution/score explanations.
+- Completed: PM reclassified remaining memory work so Sprint 13 can close without pulling in heavier infrastructure dependencies.
+- Completed: pgvector production backend integration remains later production-hardening work because it needs PostgreSQL/pgvector dependency, migration, deployment, and test strategy decisions.
+- Completed: Scheduled lifecycle/compression jobs remain later orchestration/deployment work because no backend scheduler/job framework exists yet.
+- Completed: Full-content or LLM summarization remains future memory/provider work; Sprint 13 deliberately shipped no-LLM deterministic metadata-description compression.
+- Completed: Broader retrieval performance validation, deeper provenance, and configurable scoring policy remain future quality/production-hardening work.
+- Completed: README and backlog were updated to reflect Sprint 13 closeout and Sprint 14 as the next planned sprint.
+
+Validation:
+- Sprint 13 final BL-007d checkpoint `8dd495a` passed `uv --cache-dir .uv-cache run pytest -q` with 668 tests and 2 skipped.
+- Sprint 13 final BL-007d checkpoint passed `uv --cache-dir .uv-cache run ruff check .`.
+- Sprint 13 final BL-007d checkpoint passed `uv --cache-dir .uv-cache run ruff format --check .`.
+- Sprint 13 final BL-007d checkpoint passed `git diff --check` with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Start Sprint 14: Autonomous Agent Orchestration, beginning with backend-managed sprint task graph and role-boundary enforcement assessment.
+
 ### Sprint 13 BL-007d Retrieval Attribution And Score Reasons
 
-Status: completed for the scoped additive retrieval attribution slice; Sprint 13 remains active for pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, deeper provenance, and configurable scoring policy.
+Status: completed for the scoped additive retrieval attribution slice; remaining pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, deeper provenance, and configurable scoring policy were moved to follow-up backlog at Sprint 13 closeout.
 
 Current story:
 - BL-007: Memory And Retrieval Production Lifecycle.
@@ -37,7 +62,7 @@ Next:
 
 ### Sprint 13 BL-007c Deterministic Memory Compression
 
-Status: completed for the scoped deterministic metadata-description compression slice; Sprint 13 remains active for pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, and source-attribution/scoring improvements.
+Status: completed for the scoped deterministic metadata-description compression slice; remaining pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, and source-attribution/scoring improvements were moved to follow-up backlog at Sprint 13 closeout.
 
 Current story:
 - BL-007: Memory And Retrieval Production Lifecycle.
@@ -70,7 +95,7 @@ Next:
 
 ### Sprint 13 BL-007b Vector Backend Abstraction And Retrieval Baseline
 
-Status: completed for the scoped vector-backend abstraction and baseline performance smoke slice; Sprint 13 remains active for pgvector integration, compression execution, scheduled lifecycle jobs, broader performance validation, and source-attribution/scoring improvements.
+Status: completed for the scoped vector-backend abstraction and baseline performance smoke slice; remaining pgvector integration, scheduled lifecycle jobs, broader performance validation, and source-attribution/scoring improvements were moved to follow-up backlog at Sprint 13 closeout.
 
 Current story:
 - BL-007: Memory And Retrieval Production Lifecycle.
@@ -103,7 +128,7 @@ Next:
 
 ### Sprint 13 BL-007a Memory Lifecycle Policy Foundation
 
-Status: completed for the scoped SQL-backed lifecycle policy slice; Sprint 13 remains active for vector backend integration, compression execution, scheduled lifecycle jobs, performance validation, and source-attribution/scoring improvements.
+Status: completed for the scoped SQL-backed lifecycle policy slice; later vector productionization, compression scheduling, lifecycle jobs, performance validation, and source-attribution/scoring improvements were handled by later Sprint 13 slices or moved to follow-up backlog.
 
 Current story:
 - BL-007: Memory And Retrieval Production Lifecycle.

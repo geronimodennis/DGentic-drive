@@ -78,7 +78,7 @@ Current modules:
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
 - `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, usage tracking, reliability scoring, and source-path validation.
-- `tool_runtime.py`: Generated tool subprocess execution, SQL registry permission/deprecation checks, reduced inherited execution environment, and reliability counter updates.
+- `tool_runtime.py`: Generated tool subprocess execution, SQL registry permission/deprecation checks, reduced inherited execution environment, redacted output/audit events, and reliability counter updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
@@ -193,7 +193,7 @@ Current endpoints:
 - `GET /api/v1/memory/retrieve/metadata`: Runs metadata-only retrieval.
 - `POST /tools`: Registers a local tool manifest.
 - `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry.
-- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, uses a reduced inherited environment, and updates reliability counters.
+- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, uses a reduced inherited environment, redacts stdout/stderr/parsed output for common secret patterns, records execution audit metadata, and updates reliability counters.
 - `GET /tools`: Lists registered tool manifests.
 - `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
 - `POST /api/v1/tools/registry`: Registers a SQLAlchemy-backed tool registry entry.

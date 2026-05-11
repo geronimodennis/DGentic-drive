@@ -1,12 +1,15 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from dgentic.database import get_db_session, reset_database_state
+from dgentic.events import event_log
 from dgentic.memory.schemas import ToolRegistryCreateRequest
-from dgentic.schemas import PermissionMode, ToolManifest, ToolStatus
+from dgentic.redaction import REDACTED_SECRET_MARKER
+from dgentic.schemas import LogEventType, PermissionMode, ToolManifest, ToolStatus
 from dgentic.settings import get_settings
-from dgentic.tool_runtime import execute_tool
+from dgentic.tool_runtime import TIMEOUT_EXIT_CODE, execute_tool
 from dgentic.tools import get_tool, register_tool
 from dgentic.tools.registry_service import ToolRegistryService
 
@@ -149,11 +152,25 @@ def test_failed_tool_execution_tracks_failure_and_captured_output(
     local_tool_state: tuple[Path, Path],
 ) -> None:
     root_dir, _data_dir = local_tool_state
+    raw_secrets = [
+        "failure-printed-token-secret",
+        "failure-json-token-secret",
+        "failure-json-password-secret",
+        "failure-auth-header-secret",
+        "failure-exception-secret",
+    ]
     _write_tool(
         root_dir,
         "broken",
         tool_source=(
-            "def run(payload):\n    print('about-to-fail')\n    raise RuntimeError('boom')\n"
+            "import sys\n\n"
+            "def run(payload):\n"
+            "    print('TOKEN=failure-printed-token-secret')\n"
+            "    sys.stderr.write("
+            '\'{"token":"failure-json-token-secret",'
+            '"nested":{"password":"failure-json-password-secret"}}\\n\')\n'
+            "    sys.stderr.write('Authorization: Bearer failure-auth-header-secret\\n')\n"
+            "    raise RuntimeError('SECRET=failure-exception-secret')\n"
         ),
     )
     register_tool(
@@ -165,19 +182,170 @@ def test_failed_tool_execution_tracks_failure_and_captured_output(
         )
     )
 
+    events_before = event_log.list(LogEventType.tool)
+
     result = execute_tool("broken", {"value": 1})
     stored = get_tool("broken")
+    events_after = event_log.list(LogEventType.tool)
 
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.parsed_output is None
-    assert "about-to-fail" in result.stderr
-    assert "RuntimeError: boom" in result.stderr
+    assert "TOKEN=[REDACTED]" in result.stderr
+    assert "Authorization: Bearer [REDACTED]" in result.stderr
+    assert "RuntimeError: SECRET=[REDACTED]" in result.stderr
+    assert result.stderr.count(REDACTED_SECRET_MARKER) >= 5
+    serialized_result = result.model_dump_json()
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_result
     assert stored is not None
     assert stored.usage_count == 1
     assert stored.success_count == 0
     assert stored.failure_count == 1
     assert stored.reliability_score == 0.0
+    new_events = events_after[len(events_before) :]
+    execution_events = [event for event in new_events if event.subject_id == "broken"]
+    assert execution_events
+    assert execution_events[-1].metadata["exit_code"] == 1
+    serialized_event = json.dumps(execution_events[-1].model_dump(mode="json"), sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
+
+
+def test_execute_tool_redacts_secret_outputs_and_records_audit_event(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    raw_secrets = [
+        "printed-token-secret",
+        "stderr-password-secret",
+        "json-stderr-token-secret",
+        "json-stderr-password-secret",
+        "colon-api-secret",
+        "auth-header-secret",
+        "basic-auth-header-secret",
+        "token-auth-header-secret",
+        "proxy-auth-header-secret",
+        "returned-token-secret",
+        "returned-secret",
+        "returned-api-secret",
+        "returned-password-secret",
+    ]
+    _write_tool(
+        root_dir,
+        "redacting-tool",
+        tool_source=(
+            "import sys\n\n"
+            "def run(payload):\n"
+            "    print('TOKEN=printed-token-secret')\n"
+            "    sys.stderr.write('PASSWORD=stderr-password-secret\\n')\n"
+            '    sys.stderr.write(\'{"token":"json-stderr-token-secret",'
+            '"nested":{"password":"json-stderr-password-secret"}}\\n\')\n'
+            "    sys.stderr.write('api_key: colon-api-secret\\n')\n"
+            "    sys.stderr.write('Authorization: Bearer auth-header-secret\\n')\n"
+            "    sys.stderr.write('Authorization: Basic basic-auth-header-secret\\n')\n"
+            "    sys.stderr.write('authorization: token token-auth-header-secret\\n')\n"
+            "    sys.stderr.write('Proxy-Authorization: ApiKey proxy-auth-header-secret\\n')\n"
+            "    return {\n"
+            "        'token': 'returned-token-secret',\n"
+            "        'payload': 'SECRET=returned-secret --api-key returned-api-secret',\n"
+            "        'nested': {'password': 'returned-password-secret'},\n"
+            "        'safe': 'visible',\n"
+            "    }\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="redacting-tool",
+            description="Emits and returns secret-shaped values.",
+            entrypoint="localmcp/redacting-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    events_before = event_log.list(LogEventType.tool)
+
+    result = execute_tool("redacting-tool", {})
+    events_after = event_log.list(LogEventType.tool)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["token"] == REDACTED_SECRET_MARKER
+    assert "TOKEN=[REDACTED]" in result.stderr
+    assert "Authorization: Bearer [REDACTED]" in result.stderr
+    assert "Authorization: Basic [REDACTED]" in result.stderr
+    assert "authorization: token [REDACTED]" in result.stderr
+    assert "Proxy-Authorization: ApiKey [REDACTED]" in result.stderr
+    assert result.stderr.count(REDACTED_SECRET_MARKER) >= 9
+    assert result.parsed_output["token"] == REDACTED_SECRET_MARKER
+    assert result.parsed_output["nested"]["password"] == REDACTED_SECRET_MARKER
+    assert result.parsed_output["safe"] == "visible"
+    assert REDACTED_SECRET_MARKER in result.parsed_output["payload"]
+    serialized_result = result.model_dump_json()
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_result
+
+    new_events = events_after[len(events_before) :]
+    execution_events = [event for event in new_events if event.subject_id == "redacting-tool"]
+    assert execution_events
+    execution_event = execution_events[-1]
+    assert execution_event.event_type == LogEventType.tool
+    assert execution_event.metadata["exit_code"] == 0
+    serialized_event = json.dumps(execution_event.model_dump(mode="json"), sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
+
+
+def test_timed_out_tool_redacts_partial_output_and_records_audit_event(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    raw_secrets = [
+        "timeout-json-token-secret",
+        "timeout-json-password-secret",
+        "timeout-auth-header-secret",
+    ]
+    _write_tool(
+        root_dir,
+        "slow-redacting-tool",
+        tool_source=(
+            "import sys\n"
+            "import time\n\n"
+            "def run(payload):\n"
+            '    sys.stderr.write(\'{"token":"timeout-json-token-secret",'
+            '"nested":{"password":"timeout-json-password-secret"}}\\n\')\n'
+            "    sys.stderr.write('Authorization: Bearer timeout-auth-header-secret\\n')\n"
+            "    sys.stderr.flush()\n"
+            "    time.sleep(5)\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="slow-redacting-tool",
+            description="Times out after emitting secret-shaped logs.",
+            entrypoint="localmcp/slow-redacting-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    events_before = event_log.list(LogEventType.tool)
+
+    result = execute_tool("slow-redacting-tool", {}, timeout_seconds=1)
+    events_after = event_log.list(LogEventType.tool)
+
+    assert result.exit_code == TIMEOUT_EXIT_CODE
+    assert result.parsed_output is None
+    assert "Authorization: Bearer [REDACTED]" in result.stderr
+    assert "Tool timed out after 1 seconds." in result.stderr
+    serialized_result = result.model_dump_json()
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_result
+
+    new_events = events_after[len(events_before) :]
+    execution_events = [event for event in new_events if event.subject_id == "slow-redacting-tool"]
+    assert execution_events
+    assert execution_events[-1].metadata["exit_code"] == TIMEOUT_EXIT_CODE
+    serialized_event = json.dumps(execution_events[-1].model_dump(mode="json"), sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
 
 
 def test_manifest_entrypoint_must_stay_under_named_localmcp_tool_dir(

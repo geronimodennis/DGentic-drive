@@ -231,7 +231,8 @@ Definition of Done:
 
 Current implementation status:
 - Completed: BL-005a generated-tool SQL registry integration and execution permission hardening, including generated-tool duplicate preflight against SQL registry rows/interface signatures, generated-tool auto-registration in the SQLAlchemy registry, one registry row per generated tool name, no file writes on SQL duplicate conflicts, execution-time SQL registry deprecation blocking, permission conflict fail-closed behavior, and a reduced inherited subprocess environment.
-- Remaining: bound tool approval records instead of caller-supplied `approved`, stronger OS/process sandbox isolation, output/log redaction for tool execution, per-tool dependency isolation, richer version migration policy beyond one registry row per tool name, and reliability-score policy automation.
+- Completed: BL-005b tool execution output and audit redaction, including stdout/stderr/parsed-output redaction for common secret-shaped values, safer flag redaction after other secret assignments, and tool execution audit events that avoid raw output and payload content.
+- Remaining: bound tool approval records instead of caller-supplied `approved`, stronger OS/process sandbox isolation, per-tool dependency isolation, richer version migration policy beyond one registry row per tool name, and reliability-score policy automation.
 
 ### BL-006: Provider System Productionization
 
@@ -525,7 +526,8 @@ Exit criteria:
 Current Sprint 11 status:
 - In progress: Sprint 11 started with BL-005a registry integration and execution permission hardening.
 - Completed: generated-tool SQL registry auto-registration, duplicate preflight, no file writes on SQL duplicate conflicts, deprecated registry row blocking, permission conflict fail-closed behavior, and reduced inherited subprocess environment.
-- Remaining: bound tool approval records, stronger OS/process sandbox isolation, output/log redaction, per-tool dependency isolation, and reliability-score policy automation.
+- Completed: tool execution stdout/stderr/parsed-output redaction and execution audit events without raw output or payload content.
+- Remaining: bound tool approval records, stronger OS/process sandbox isolation, per-tool dependency isolation, and reliability-score policy automation.
 
 ### Sprint 12: Provider Productionization
 

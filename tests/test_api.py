@@ -11,6 +11,7 @@ from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
 from dgentic.database import reset_database_state
 from dgentic.main import create_app
+from dgentic.redaction import REDACTED_SECRET_MARKER
 from dgentic.schemas import PermissionMode
 from dgentic.settings import get_settings
 
@@ -1416,6 +1417,227 @@ def test_generated_tool_execute_api_updates_reliability(tmp_path, monkeypatch) -
     assert stored["usage_count"] == 1
     assert stored["success_count"] == 1
     assert stored["reliability_score"] == 1.0
+    get_settings.cache_clear()
+
+
+def test_generated_tool_execute_api_redacts_secret_outputs_and_audits(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    raw_secrets = [
+        "api-printed-token-secret",
+        "api-stderr-password-secret",
+        "api-json-stderr-token-secret",
+        "api-json-stderr-password-secret",
+        "api-colon-key-secret",
+        "api-auth-header-secret",
+        "api-basic-auth-secret",
+        "api-token-auth-secret",
+        "api-proxy-auth-secret",
+        "api-returned-token-secret",
+        "api-returned-secret",
+        "api-returned-key-secret",
+        "api-returned-password-secret",
+    ]
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-redacting-tool",
+            "description": "Return and print secret-shaped values.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": (
+                "import sys\n\n"
+                "def run(payload):\n"
+                "    print('TOKEN=api-printed-token-secret')\n"
+                "    sys.stderr.write('PASSWORD=api-stderr-password-secret\\n')\n"
+                '    sys.stderr.write(\'{"token":"api-json-stderr-token-secret",'
+                '"nested":{"password":"api-json-stderr-password-secret"}}\\n\')\n'
+                "    sys.stderr.write('api_key: api-colon-key-secret\\n')\n"
+                "    sys.stderr.write('Authorization: Bearer api-auth-header-secret\\n')\n"
+                "    sys.stderr.write('Authorization: Basic api-basic-auth-secret\\n')\n"
+                "    sys.stderr.write('authorization: token api-token-auth-secret\\n')\n"
+                "    sys.stderr.write('Proxy-Authorization: ApiKey api-proxy-auth-secret\\n')\n"
+                "    return {\n"
+                "        'token': 'api-returned-token-secret',\n"
+                "        'payload': 'SECRET=api-returned-secret "
+                "--api-key api-returned-key-secret',\n"
+                "        'nested': {'password': 'api-returned-password-secret'},\n"
+                "        'safe': 'visible',\n"
+                "    }\n"
+            ),
+        },
+    )
+    assert generate_response.status_code == 201
+    logs_before_response = client.get("/logs?event_type=tool")
+
+    execute_response = client.post(
+        "/tools/api-redacting-tool/execute",
+        json={"payload": {"value": 42}},
+    )
+    logs_after_response = client.get("/logs?event_type=tool")
+
+    assert logs_before_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert logs_after_response.status_code == 200
+    body = execute_response.json()
+    assert body["exit_code"] == 0
+    assert json.loads(body["stdout"])["token"] == REDACTED_SECRET_MARKER
+    assert "TOKEN=[REDACTED]" in body["stderr"]
+    assert "Authorization: Bearer [REDACTED]" in body["stderr"]
+    assert "Authorization: Basic [REDACTED]" in body["stderr"]
+    assert "authorization: token [REDACTED]" in body["stderr"]
+    assert "Proxy-Authorization: ApiKey [REDACTED]" in body["stderr"]
+    assert body["stderr"].count(REDACTED_SECRET_MARKER) >= 9
+    assert body["parsed_output"]["token"] == REDACTED_SECRET_MARKER
+    assert body["parsed_output"]["nested"]["password"] == REDACTED_SECRET_MARKER
+    assert body["parsed_output"]["safe"] == "visible"
+    assert REDACTED_SECRET_MARKER in body["parsed_output"]["payload"]
+    for raw_secret in raw_secrets:
+        assert raw_secret not in execute_response.text
+
+    logs_before = logs_before_response.json()
+    new_events = logs_after_response.json()[len(logs_before) :]
+    execution_events = [
+        event for event in new_events if event["subject_id"] == "api-redacting-tool"
+    ]
+    assert execution_events
+    execution_event = execution_events[-1]
+    assert execution_event["event_type"] == "tool"
+    assert execution_event["metadata"]["exit_code"] == 0
+    serialized_event = json.dumps(execution_event, sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
+    get_settings.cache_clear()
+
+
+def test_generated_tool_execute_api_redacts_failed_tool_secret_outputs_and_audits(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    raw_secrets = [
+        "api-failure-json-secret",
+        "api-failure-password-secret",
+        "api-failure-auth-secret",
+        "api-failure-exception-secret",
+    ]
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-failing-redacting-tool",
+            "description": "Fail after logging secret-shaped values.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": (
+                "import sys\n\n"
+                "def run(payload):\n"
+                '    sys.stderr.write(\'{"token":"api-failure-json-secret",'
+                '"nested":{"password":"api-failure-password-secret"}}\\n\')\n'
+                "    sys.stderr.write('Authorization: Bearer api-failure-auth-secret\\n')\n"
+                "    raise RuntimeError('PASSWORD=api-failure-exception-secret')\n"
+            ),
+        },
+    )
+    assert generate_response.status_code == 201
+    logs_before_response = client.get("/logs?event_type=tool")
+
+    execute_response = client.post(
+        "/tools/api-failing-redacting-tool/execute",
+        json={"payload": {"value": 42}},
+    )
+    logs_after_response = client.get("/logs?event_type=tool")
+
+    assert logs_before_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert logs_after_response.status_code == 200
+    body = execute_response.json()
+    assert body["exit_code"] == 1
+    assert body["stdout"] == ""
+    assert body["parsed_output"] is None
+    assert "Authorization: Bearer [REDACTED]" in body["stderr"]
+    assert "RuntimeError: PASSWORD=[REDACTED]" in body["stderr"]
+    for raw_secret in raw_secrets:
+        assert raw_secret not in execute_response.text
+
+    logs_before = logs_before_response.json()
+    new_events = logs_after_response.json()[len(logs_before) :]
+    execution_events = [
+        event for event in new_events if event["subject_id"] == "api-failing-redacting-tool"
+    ]
+    assert execution_events
+    execution_event = execution_events[-1]
+    assert execution_event["event_type"] == "tool"
+    assert execution_event["metadata"]["exit_code"] == 1
+    serialized_event = json.dumps(execution_event, sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
+    get_settings.cache_clear()
+
+
+def test_generated_tool_execute_api_redacts_timed_out_tool_outputs_and_audits(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    raw_secrets = [
+        "api-timeout-token-secret",
+        "api-timeout-password-secret",
+        "api-timeout-auth-secret",
+    ]
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-timeout-redacting-tool",
+            "description": "Timeout after logging secret-shaped values.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": (
+                "import sys\n"
+                "import time\n\n"
+                "def run(payload):\n"
+                '    sys.stderr.write(\'{"token":"api-timeout-token-secret",'
+                '"nested":{"password":"api-timeout-password-secret"}}\\n\')\n'
+                "    sys.stderr.write('Authorization: Bearer api-timeout-auth-secret\\n')\n"
+                "    sys.stderr.flush()\n"
+                "    time.sleep(5)\n"
+                "    return {'ok': True}\n"
+            ),
+        },
+    )
+    assert generate_response.status_code == 201
+    logs_before_response = client.get("/logs?event_type=tool")
+
+    execute_response = client.post(
+        "/tools/api-timeout-redacting-tool/execute",
+        json={"payload": {"value": 42}, "timeout_seconds": 1},
+    )
+    logs_after_response = client.get("/logs?event_type=tool")
+
+    assert logs_before_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert logs_after_response.status_code == 200
+    body = execute_response.json()
+    assert body["exit_code"] == -1
+    assert body["parsed_output"] is None
+    assert "Authorization: Bearer [REDACTED]" in body["stderr"]
+    assert "Tool timed out after 1 seconds." in body["stderr"]
+    for raw_secret in raw_secrets:
+        assert raw_secret not in execute_response.text
+
+    logs_before = logs_before_response.json()
+    new_events = logs_after_response.json()[len(logs_before) :]
+    execution_events = [
+        event for event in new_events if event["subject_id"] == "api-timeout-redacting-tool"
+    ]
+    assert execution_events
+    execution_event = execution_events[-1]
+    assert execution_event["event_type"] == "tool"
+    assert execution_event["metadata"]["exit_code"] == -1
+    serialized_event = json.dumps(execution_event, sort_keys=True)
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_event
     get_settings.cache_clear()
 
 

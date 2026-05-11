@@ -368,7 +368,7 @@ Invoke-RestMethod `
   -Body '{"payload":{"title":"Example"},"approved":true}'
 ```
 
-Tool execution also consults the SQL registry when a row exists. Deprecated registry rows, invalid permission levels, or permission conflicts between the SQL registry and local JSON manifest fail closed before the subprocess starts. The subprocess receives a reduced environment plus `PYTHONPATH` scoped to the tool directory.
+Tool execution also consults the SQL registry when a row exists. Deprecated registry rows, invalid permission levels, or permission conflicts between the SQL registry and local JSON manifest fail closed before the subprocess starts. The subprocess receives a reduced environment plus `PYTHONPATH` scoped to the tool directory. Tool stdout, stderr, parsed JSON output, and execution audit metadata are redacted for common secret-shaped values.
 
 Read it back:
 
@@ -448,4 +448,4 @@ uv run ruff format .
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
-- Local tools can be generated, SQL-registered, duplicate-checked, and executed under `localmcp/` with registry permission/deprecation checks and a reduced inherited environment, but bound tool approval records, stronger sandbox isolation, output redaction, and per-tool dependency isolation are still needed.
+- Local tools can be generated, SQL-registered, duplicate-checked, and executed under `localmcp/` with registry permission/deprecation checks, redacted outputs/audit metadata, and a reduced inherited environment, but bound tool approval records, stronger sandbox isolation, and per-tool dependency isolation are still needed.

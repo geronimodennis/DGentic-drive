@@ -10,8 +10,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from dgentic.database import get_db_session
+from dgentic.events import event_log
 from dgentic.memory.models import ToolManifest as RegistryToolManifest
-from dgentic.schemas import PermissionMode, ToolManifest, ToolStatus
+from dgentic.redaction import redact_metadata, redact_sensitive_values
+from dgentic.schemas import LogEventType, PermissionMode, ToolManifest, ToolStatus
 from dgentic.settings import get_settings
 from dgentic.tools import get_tool, save_tool_manifest
 
@@ -152,7 +154,17 @@ def execute_tool(
 
     duration_ms = round((perf_counter() - started_at) * 1000)
     parsed_output = _parse_json_output(stdout)
+    redacted_output = redact_metadata(parsed_output) if parsed_output is not None else None
+    stdout = _redact_stdout(stdout, redacted_output)
+    stderr = redact_sensitive_values(stderr)
     updated_manifest = _record_run(manifest, succeeded=exit_code == 0)
+    _record_execution_event(
+        updated_manifest,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
     return ToolExecutionResult(
         tool_name=manifest.name,
@@ -162,7 +174,7 @@ def execute_tool(
         stdout=stdout,
         stderr=stderr,
         duration_ms=duration_ms,
-        parsed_output=parsed_output,
+        parsed_output=redacted_output,
         manifest=updated_manifest,
     )
 
@@ -265,6 +277,13 @@ def _parse_json_output(stdout: str) -> Any | None:
         return None
 
 
+def _redact_stdout(stdout: str, parsed_output: Any | None) -> str:
+    if parsed_output is not None:
+        suffix = "\n" if stdout.endswith("\n") else ""
+        return json.dumps(parsed_output, ensure_ascii=False) + suffix
+    return redact_sensitive_values(stdout)
+
+
 def _record_run(manifest: ToolManifest, *, succeeded: bool) -> ToolManifest:
     usage_count = manifest.usage_count + 1
     success_count = manifest.success_count + (1 if succeeded else 0)
@@ -281,6 +300,31 @@ def _record_run(manifest: ToolManifest, *, succeeded: bool) -> ToolManifest:
         }
     )
     return save_tool_manifest(updated)
+
+
+def _record_execution_event(
+    manifest: ToolManifest,
+    *,
+    exit_code: int,
+    duration_ms: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    event_log.record(
+        LogEventType.tool,
+        "Executed generated tool.",
+        subject_id=manifest.name,
+        metadata={
+            "tool_name": manifest.name,
+            "permission_mode": manifest.permission_mode,
+            "status": manifest.status,
+            "exit_code": exit_code,
+            "succeeded": exit_code == 0,
+            "duration_ms": duration_ms,
+            "stdout_bytes": len(stdout.encode("utf-8")),
+            "stderr_bytes": len(stderr.encode("utf-8")),
+        },
+    )
 
 
 def _coerce_timeout_output(output: bytes | str | None) -> str:

@@ -4,6 +4,59 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005b Tool Execution Redaction And Audit Events
+
+Status: completed for the scoped tool-output redaction and audit slice; Sprint 11 remains open for bound approvals, sandboxing, dependency isolation, and reliability policy automation.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected the next Sprint 11 slice after the pushed BL-005a checkpoint, prioritizing data-exposure reduction before heavier sandbox/dependency work.
+- Completed: Developer updated production source only for redacting tool stdout, stderr, parsed JSON output, and recording tool execution audit metadata without raw output or payload content.
+- Completed: Developer fixed a shared redaction edge case where a secret-like flag following another secret assignment could leave the flag value visible.
+- Completed: QA3 updated tests only for direct `execute_tool` redaction/audit behavior and `/tools/{name}/execute` API redaction/audit behavior.
+- Completed: Read-only reviewer found JSON, colon-label, and authorization-header shaped stderr leak risks plus missing failure/timeout coverage; Developer and QA resolved those findings before checkpointing.
+- Completed: Final read-only reviewer found a non-Bearer authorization-header tail leak; Developer separated authorization-header redaction from generic label redaction, and QA pinned Bearer, Basic, token, and proxy authorization header cases.
+- Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
+- Pending: Checkpoint commit and push for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: tool stdout and stderr are redacted before being returned through runtime/API responses.
+- Implemented in this slice: stderr redaction covers common assignment, CLI flag, JSON line, JSON field, colon-label, and authorization-header secret shapes, including Bearer, Basic, token, API-key, and proxy authorization schemes.
+- Implemented in this slice: parsed JSON tool output is recursively redacted with the shared metadata redaction helper, including sensitive keys such as token/password and secret-shaped string values.
+- Implemented in this slice: successful and failed tool executions record a tool audit event with status, exit code, duration, and output byte counts rather than raw payload/output content.
+- Implemented in this slice: shared redaction no longer treats the suffix of a prior secret value as a secret-like flag prefix, which fixes cases such as `SECRET=value --api-key key-value`.
+
+Validation:
+- Focused leak regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py::test_failed_tool_execution_tracks_failure_and_captured_output tests\test_tool_runtime.py::test_execute_tool_redacts_secret_outputs_and_records_audit_event tests\test_tool_runtime.py::test_timed_out_tool_redacts_partial_output_and_records_audit_event tests\test_api.py::test_generated_tool_execute_api_redacts_secret_outputs_and_audits tests\test_api.py::test_generated_tool_execute_api_redacts_failed_tool_secret_outputs_and_audits tests\test_api.py::test_generated_tool_execute_api_redacts_timed_out_tool_outputs_and_audits` passed with 6 tests.
+- Focused tool/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "tool or redacts"` passed with 22 tests and 33 deselected.
+- Focused shared redaction regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py -k redacts tests\test_command_policy.py::test_command_policy_event_metadata_redacts_substitution_secret_values` passed with 3 tests and 56 deselected.
+- Focused registry/policy regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_registry.py tests\test_command_policy.py` passed with 284 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\redaction.py src\dgentic\tool_runtime.py tests\test_api.py tests\test_tool_runtime.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\redaction.py src\dgentic\tool_runtime.py tests\test_api.py tests\test_tool_runtime.py` passed.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 466 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Diff hygiene gate: `git diff --check` passed with Windows line-ending warnings only.
+
+Residual risks:
+- Redaction is still heuristic and cannot guarantee removal of arbitrary unlabeled secrets.
+- Approval-required tool execution still uses the MVP caller-supplied `approved` flag; bound tool approval records remain future work.
+- Tool execution is still a local Python subprocess without OS/process sandboxing or per-tool dependency isolation.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/redaction.py` and `src/dgentic/tool_runtime.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with bound tool approvals, dependency isolation, or sandbox hardening.
+
 ### Sprint 11 BL-005a Tool Registry Integration And Execution Permission Hardening
 
 Status: completed for the scoped registry-integration slice; Sprint 11 remains open for sandbox, dependency isolation, output redaction, and bound tool approvals.
@@ -40,7 +93,7 @@ Validation:
 Residual risks:
 - Approval-required tool execution still uses the MVP caller-supplied `approved` flag; bound tool approval records and UI review remain future work.
 - Tool execution is still a local Python subprocess, not an OS/process sandbox.
-- Tool output and stderr are not yet redacted through a dedicated tool-run redaction contract.
+- Tool output and stderr redaction were completed later in BL-005b through the shared redaction helper and tool execution audit events.
 - Per-tool dependency isolation is not implemented; tools still run with the application interpreter.
 - SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
 

@@ -23,6 +23,7 @@ CAPABILITY_CREDENTIALS = "credentials"
 CAPABILITY_FILESYSTEM = "filesystem"
 CAPABILITY_LOGS = "logs"
 CAPABILITY_MEMORY = "memory"
+CAPABILITY_NETWORK = "network"
 CAPABILITY_PROVIDERS = "providers"
 CAPABILITY_SESSIONS = "sessions"
 CAPABILITY_TASKS = "tasks"
@@ -45,6 +46,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/tasks", CAPABILITY_TASKS),
     ("/auth", CAPABILITY_AUTH),
     ("/credentials", CAPABILITY_CREDENTIALS),
+    ("/guardrails/network", CAPABILITY_NETWORK),
     ("/guardrails/filesystem", CAPABILITY_FILESYSTEM),
     ("/filesystem", CAPABILITY_FILESYSTEM),
     ("/guardrails/commands", CAPABILITY_CLI),

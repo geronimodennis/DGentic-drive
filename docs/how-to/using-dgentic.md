@@ -358,6 +358,20 @@ curl -X POST http://127.0.0.1:8000/providers/generate `
 
 Provider calls must target exact allowlisted base URLs. By default, DGentic allows only the configured Ollama and LM Studio endpoints; add trusted extra endpoints with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` when needed. Redirects are blocked, request payloads are bounded, malformed upstream success payloads become generic provider failures, configured URLs with embedded credentials are not displayed, and logs keep provider usage/cost metadata without persisting raw completion content. Generation uses bounded retry/backoff for retryable `429` and upstream `5xx` failures; repeated retry-exhausted generation failures open an in-process per-provider circuit breaker and return fast `503` responses until cooldown expires. Health probes stay single-attempt.
 
+Set `DGENTIC_NETWORK_DOMAIN_POLICY` when exact base URL allowlists need a domain-level decision layer. The policy JSON accepts `default_mode` and ordered `rules` with exact domains or wildcard subdomains such as `*.example.com`. Modes are `allow`, `deny`, `approval_required`, and `audit`; `allow` and `audit` proceed, while `deny` and `approval_required` fail closed for provider calls before transport until a future network-approval workflow exists.
+
+```powershell
+$env:DGENTIC_NETWORK_DOMAIN_POLICY = '{"default_mode":"deny","rules":[{"domain":"provider.example.test","mode":"allow"},{"domain":"*.review.example.test","mode":"approval_required"}]}'
+```
+
+Check a URL without making an outbound request:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/guardrails/network `
+  -H "Content-Type: application/json" `
+  -d '{"url":"https://provider.example.test/v1/chat/completions"}'
+```
+
 The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS`, and either `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV` or `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. The credential setting stores only an external location, such as an environment variable name or a persisted credential-reference id; the actual API key value must be exported separately and is sent only as an outbound Authorization header after pricing, configuration, circuit-breaker, and approval gates allow transport. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`; staging/production requests need a single-use bound `approval_id`.
 
 Set `DGENTIC_PROVIDER_PRICING_CATALOG` when operators want advisory cost estimates for exact provider/model pairs. Token rates use USD per 1,000 prompt/completion tokens, and `request_estimate_usd` is used by routing before usage metadata is available. These estimates are for controls and telemetry only; they are not authoritative billing records, and invalid catalogs fail closed before provider transport.
@@ -509,7 +523,7 @@ Configure strict operating boundaries before running autonomous tasks:
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
 - Controlled CLI environment overrides and command context audit metadata
-- Network policy and domain rules
+- Network policy and domain rules for provider calls, with future expansion to web retrieval, generated-tool network access, and UI approval flows
 - Tool creation and execution permissions
 
 ### 4. Submit A Task
@@ -556,7 +570,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, and persisted external credential-reference APIs, but broader persisted identity profiles, encrypted local credential vaulting, network/domain guardrails, and full audit actor propagation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential-reference APIs, and provider-call network/domain guardrails, but broader persisted identity profiles, encrypted local credential vaulting, non-provider network approval workflows, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential reference or env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while encrypted local credential vaulting, provider billing reconciliation, and provider-specific external adapters remain future work.

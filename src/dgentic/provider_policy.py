@@ -2,6 +2,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from dgentic.network_policy import NetworkDomainPolicyError, evaluate_network_domain_policy
 from dgentic.settings import get_settings
 
 
@@ -33,6 +34,16 @@ def validate_provider_base_url(
 ) -> str:
     active_settings = settings if settings is not None else get_settings()
     normalized = normalize_provider_base_url(base_url)
+    try:
+        network_decision = evaluate_network_domain_policy(normalized, settings=active_settings)
+    except NetworkDomainPolicyError as exc:
+        raise ProviderEgressPolicyError("Network domain policy is invalid.") from exc
+    if network_decision.mode == "deny":
+        raise ProviderEgressPolicyError("Provider domain is denied by network policy.")
+    if network_decision.mode == "approval_required":
+        raise ProviderEgressPolicyError(
+            "Provider domain requires network approval, which is not available yet."
+        )
     allowed = allowed_provider_base_urls_for_provider(provider_id, active_settings)
     if normalized not in allowed:
         raise ProviderEgressPolicyError(

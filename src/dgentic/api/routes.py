@@ -61,6 +61,7 @@ from dgentic.guardrails import (
     write_guarded_text_file,
 )
 from dgentic.memory import add_memory, search_memory
+from dgentic.network_policy import NetworkDomainPolicyError, evaluate_network_domain_policy
 from dgentic.orchestration import OrchestrationError, orchestration_service
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_pricing import ProviderPricingConfigurationError
@@ -131,6 +132,8 @@ from dgentic.schemas import (
     MemoryQuery,
     MemoryRecord,
     MemorySearchResult,
+    NetworkPolicyDecision,
+    NetworkPolicyRequest,
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
@@ -758,6 +761,22 @@ def list_directory(request: FileListRequest) -> FileListResponse:
 @router.post("/guardrails/commands", response_model=CommandPolicyDecision)
 def check_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     return evaluate_command_policy(request)
+
+
+@router.post("/guardrails/network", response_model=NetworkPolicyDecision)
+def check_network_policy(request: NetworkPolicyRequest) -> NetworkPolicyDecision:
+    try:
+        decision = evaluate_network_domain_policy(request.url)
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return NetworkPolicyDecision(
+        allowed=decision.allowed,
+        url=decision.url,
+        host=decision.host,
+        mode=decision.mode,
+        matched_domain=decision.matched_domain,
+        reason=decision.reason,
+    )
 
 
 @router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)

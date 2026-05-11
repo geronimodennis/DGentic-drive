@@ -18,8 +18,7 @@ from dgentic.credentials import credential_env_for_reference, credential_identit
 from dgentic.events import event_log
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
-    allowed_provider_base_urls_for_provider,
-    normalize_provider_base_url,
+    validate_provider_base_url,
 )
 from dgentic.provider_pricing import (
     ProviderPricingConfigurationError,
@@ -1636,12 +1635,11 @@ def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> Non
 
 
 def _validate_base_url_for_provider(*, provider_id: str, base_url: str, settings: Any) -> str:
-    normalized = normalize_provider_base_url(base_url)
-    if normalized not in allowed_provider_base_urls_for_provider(provider_id, settings):
-        raise ProviderEgressPolicyError(
-            f"Provider base_url for {provider_id} is not allowed by egress policy."
-        )
-    return normalized
+    return validate_provider_base_url(
+        provider_id=provider_id,
+        base_url=base_url,
+        settings=settings,
+    )
 
 
 def _provider_request_for_path(

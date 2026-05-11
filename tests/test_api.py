@@ -1786,6 +1786,41 @@ def test_guardrails_classify_filesystem_and_commands() -> None:
     assert command_response.json()["permission_mode"] == "blocked"
 
 
+def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                        "reason": "Blocked by QA policy.",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/guardrails/network",
+        json={"url": "https://blocked.example.test/v1/chat/completions"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "allowed": False,
+        "url": "https://blocked.example.test/v1/chat/completions",
+        "host": "blocked.example.test",
+        "mode": "deny",
+        "matched_domain": "blocked.example.test",
+        "reason": "Blocked by QA policy.",
+    }
+    get_settings.cache_clear()
+
+
 def test_guardrails_classify_powershell_slash_command_wrapper() -> None:
     client = TestClient(create_app())
 

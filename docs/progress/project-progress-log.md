@@ -4,6 +4,44 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009c Network Domain Guardrails
+
+Status: completed for the scoped provider-call network/domain guardrail slice; Sprint 15 remains active for broader identity, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, audit propagation, and cross-surface no-secret-response validation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected network/domain guardrails as the next bounded Sprint 15 slice after external credential references.
+- Completed: Developer added `DGENTIC_NETWORK_DOMAIN_POLICY`, a network policy evaluator, and `POST /guardrails/network`.
+- Completed: Developer wired provider egress through the shared provider validator so runtime generation, provider health/list display, and configured provider base URL validation all honor the network policy before outbound transport.
+- Completed: Developer added a dedicated `network` capability for `/guardrails/network`.
+- Completed: QA added focused tests for default allow behavior, exact/wildcard/default policy decisions, approval-required decisions, malformed config rejection, provider fail-closed behavior before transport, audit-mode transport allowance, guardrail API responses, and auth capability mapping.
+- Completed: PM updated `.env.example`, README, setup/usage docs, repository architecture, backlog status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_NETWORK_DOMAIN_POLICY` accepts JSON with `default_mode` and ordered `rules`.
+- Implemented in this slice: network rules support exact domains and wildcard subdomains such as `*.example.test`.
+- Implemented in this slice: network policy modes are `allow`, `deny`, `approval_required`, and `audit`; `allow` and `audit` proceed, while `deny` and `approval_required` fail closed for provider calls until a future network approval workflow exists.
+- Implemented in this slice: `/guardrails/network` returns safe network policy decisions without making outbound network requests.
+- Implemented in this slice: provider generation fails before transport when network policy denies or requires approval for the configured provider host.
+
+Remaining Sprint 15 work:
+- Broader persisted operator identity records and assignment workflows.
+- Encrypted local credential vaulting or external secret-manager adapters beyond environment-variable references.
+- Network approval records and enforcement expansion to non-provider surfaces such as web retrieval and generated-tool network access.
+- Broader audit actor propagation and cross-surface no-secret-response validation.
+
+Validation:
+- Focused network/provider/auth/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_provider_generation_rejects_network_domain_policy_before_transport tests\test_provider_runtime.py::test_provider_generation_audit_network_domain_policy_allows_transport tests\test_api.py::test_guardrails_network_returns_policy_decision tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes tests\test_network_policy.py` passed with 27 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 865 tests and 2 skipped.
+- Lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed after formatting `tests\test_network_policy.py`.
+- Diff hygiene gate: `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with the highest-risk remaining production-security item: broader identity assignment workflows or encrypted/external secret-manager support beyond env references.
+
 ### Sprint 15 BL-009b External Credential References
 
 Status: completed for the scoped external credential-reference slice; Sprint 15 remains active for broader identity, encrypted local vaulting, secret-manager adapters, audit propagation, and network/domain guardrails.

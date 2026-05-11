@@ -413,9 +413,9 @@ Definition of Done:
 - README, setup docs, architecture docs, usage docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, persisted-token startup bootstrap after env-token removal, operator-id actor binding for persisted-token approval decisions, persisted external credential references, and OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values.
+- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, persisted-token startup bootstrap after env-token removal, operator-id actor binding for persisted-token approval decisions, persisted external credential references, OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values, and provider-call network/domain guardrails with allow, deny, approval-required, and audit decisions.
 - Risk updated after Sprint 9 hardening: built-in read-only CLI path operands now receive cwd-aware rootDir checks, symlink escape checks, shell expansion checks, and Windows/POSIX path-shape regressions; broader host-boundary risks remain for trusted custom policy rules, non-built-in exfiltration commands, and time-of-check/time-of-use workspace changes.
-- Remaining: broader persisted operator identity profiles and assignment workflows, encrypted local credential vaulting, external secret manager adapters beyond env references, broader audit actor propagation beyond the current approval/orchestration surfaces, broader CLI host-boundary enforcement beyond the current built-in read-only command set, and network/domain guardrails.
+- Remaining: broader persisted operator identity profiles and assignment workflows, encrypted local credential vaulting, external secret manager adapters beyond env references, broader audit actor propagation beyond the current approval/orchestration surfaces, broader CLI host-boundary enforcement beyond the current built-in read-only command set, network approval records for approval-required decisions, and non-provider network surfaces such as web retrieval and generated-tool network access.
 
 ### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
 
@@ -673,13 +673,14 @@ Stories:
 Current Sprint 15 status:
 - Completed checkpoint: BL-009a persisted auth-token lifecycle is implemented and validated. This slice covers salted hash storage, create/list/rotate/revoke/expire APIs, one-time raw token return, active persisted-token startup bootstrap, env-token compatibility, safe auth audit events, inactive-token rotation rejection, expiry preservation on rotation, nonblank operator ids, and operator-id actor binding for persisted-token approval requesters and decisions.
 - Completed checkpoint: BL-009b external credential references are implemented and focused-validation clean. This slice covers persisted references to externally managed credential locations, credential-reference capability gates, no raw secret-value storage, OpenAI-compatible provider credential-reference configuration, config-only provider listing/health/routing without secret-value lookup, and transport-time secret resolution.
-- Remaining after BL-009b: broader persisted identity records and assignment workflows, encrypted local credential vaulting or external secret-manager adapters beyond env references, network/domain guardrail policy, broader audit actor propagation, and cross-surface no-secret-response validation.
+- Completed checkpoint: BL-009c network/domain guardrails are implemented and focused-validation clean. This slice covers `DGENTIC_NETWORK_DOMAIN_POLICY`, exact and wildcard domain rules, `allow`, `deny`, `approval_required`, and `audit` modes, `/guardrails/network` decisions, provider egress enforcement before transport, and a dedicated `network` capability.
+- Remaining after BL-009c: broader persisted identity records and assignment workflows, encrypted local credential vaulting or external secret-manager adapters beyond env references, network approval records and non-provider network surfaces, broader audit actor propagation, and cross-surface no-secret-response validation.
 
 Exit criteria:
 - Tokens are hashed at rest and support rotation, expiry, and revocation.
 - Approval decisions and audit events are bound to authenticated actor identities.
 - Provider/runtime credentials use encrypted storage or an external secret manager strategy.
-- Network/domain guardrails can allow, block, or require approval by policy.
+- Network/domain guardrails can allow, block, audit, or fail closed for approval-required decisions by policy.
 - Secret masking and no-secret-response tests pass across auth, approvals, providers, logs, and settings.
 
 ### Sprint 16: Cross-Platform UI And Approval Dashboard
@@ -745,8 +746,8 @@ Exit criteria:
 - Interactive approval UI: BL-010, Sprint 16.
 - Production deployment infrastructure and CI/CD pipeline: BL-012, Sprint 18.
 - Provider-specific external AI adapters beyond the generic OpenAI-compatible adapter: BL-013, Sprint 19.
-- Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15.
-- Network/domain guardrails: BL-009, Sprint 15.
+- Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15. Persisted generated token lifecycle APIs are complete; broader identity and encrypted/secret-manager storage remain.
+- Provider-call network/domain guardrails: completed under BL-009/Sprint 15 BL-009c. Network approval records and non-provider network surfaces remain under BL-009/Sprint 15 follow-up.
 - Runtime monitoring, metrics, alerting, and rollback automation: BL-012, Sprint 18.
 - Full process adoption/resumable output after backend restart: BL-002 follow-up, scheduled after the MVP CLI hardening scope.
 - Production multi-worker CLI process ownership and lease validation: BL-001 and BL-012 follow-up, Sprint 18 deployment gating.

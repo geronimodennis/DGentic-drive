@@ -38,6 +38,7 @@ Default settings:
 - `DGENTIC_OLLAMA_BASE_URL=http://127.0.0.1:11434`
 - `DGENTIC_LM_STUDIO_BASE_URL=http://127.0.0.1:1234`
 - `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` empty by default; add comma-separated exact provider base URLs only when an additional trusted provider endpoint is configured
+- `DGENTIC_NETWORK_DOMAIN_POLICY` empty by default, which means outbound network-domain checks allow by default
 - Provider retry defaults: `DGENTIC_PROVIDER_RETRY_MAX_ATTEMPTS=3`, `DGENTIC_PROVIDER_RETRY_INITIAL_DELAY_SECONDS=0.2`, `DGENTIC_PROVIDER_RETRY_MAX_DELAY_SECONDS=2.0`, and `DGENTIC_PROVIDER_RETRY_BACKOFF_MULTIPLIER=2.0`
 - `DGENTIC_PROVIDER_PRICING_CATALOG` empty by default; optionally set a bounded JSON map of exact provider/model advisory prices for routing and usage estimates
 - OpenAI-compatible external adapter defaults: `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are empty, so the adapter is disabled
@@ -84,7 +85,7 @@ Invoke-RestMethod `
   -Body '{"label":"rotated task automation","capabilities":["tasks"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
 
 ## Configure Database Persistence
 
@@ -363,6 +364,22 @@ Invoke-RestMethod `
 
 Provider generation and health probes only use exact allowlisted base URLs. The default allowlist is the configured Ollama and LM Studio base URLs, plus any trusted URLs in `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`. Provider redirects are blocked, malformed upstream JSON or provider-specific success payloads are returned to API callers as generic provider failures, and provider logs store safe metadata rather than raw completion content. Generation retries only bounded transient failures such as `429` and upstream `5xx`; repeated retry-exhausted generation failures open an in-process per-provider circuit breaker that returns a fast `503` until its cooldown expires. Tune this with `DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD` and `DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS`. Health probes do not retry.
 
+Optionally layer a domain policy on top of exact provider base URL allowlists. `allow` and `audit` permit matching outbound provider requests, while `deny` and `approval_required` fail closed before provider transport until a future network-approval workflow exists:
+
+```powershell
+$env:DGENTIC_NETWORK_DOMAIN_POLICY = '{"default_mode":"deny","rules":[{"domain":"provider.example.test","mode":"allow"},{"domain":"*.review.example.test","mode":"approval_required","reason":"Network review required."}]}'
+```
+
+Check a URL against the configured policy:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/guardrails/network `
+  -ContentType "application/json" `
+  -Body '{"url":"https://provider.example.test/v1/chat/completions"}'
+```
+
 To enable the OpenAI-compatible external adapter, set an API-versioned HTTPS base URL, a comma-separated model allowlist, and either the name of an environment variable that already contains the API key or a persisted credential reference id. The API key value itself is not stored in DGentic settings:
 
 ```powershell
@@ -588,7 +605,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, and persisted external credential references, but broader persisted identity profiles, encrypted local credential storage, network/domain guardrails, and full audit actor propagation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential references, and provider-call network/domain guardrails, but broader persisted identity profiles, encrypted local credential storage, non-provider network approval workflows, and full audit actor propagation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.

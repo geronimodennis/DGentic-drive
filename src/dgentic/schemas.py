@@ -574,6 +574,19 @@ class FileAccessDecision(BaseModel):
     orchestration: OrchestrationActionDecision | None = None
 
 
+class NetworkPolicyRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class NetworkPolicyDecision(BaseModel):
+    allowed: bool
+    url: str
+    host: str
+    mode: Literal["allow", "deny", "approval_required", "audit"]
+    matched_domain: str | None = None
+    reason: str
+
+
 class FileReadRequest(AgentActionContext):
     path: Path
 

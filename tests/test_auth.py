@@ -675,6 +675,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/tasks/plan", "tasks"),
         ("/auth/tokens", "auth"),
         ("/credentials/references", "credentials"),
+        ("/guardrails/network", "network"),
         ("/filesystem/read", "filesystem"),
         ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),

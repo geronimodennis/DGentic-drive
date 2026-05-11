@@ -1265,6 +1265,114 @@ def test_external_generation_rejects_plain_http_base_url_before_transport(monkey
 
 
 @pytest.mark.parametrize(
+    ("mode", "expected_message"),
+    [
+        ("deny", "denied by network policy"),
+        ("approval_required", "requires network approval"),
+    ],
+)
+def test_provider_generation_rejects_network_domain_policy_before_transport(
+    mode,
+    expected_message,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_LM_STUDIO_BASE_URL", "http://provider.example.test:1234")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": mode,
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_post_json(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        headers: dict | None = None,
+    ) -> dict:
+        calls.append(url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    with pytest.raises(provider_runtime.ProviderEgressPolicyError, match=expected_message):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+
+    assert calls == []
+    get_settings.cache_clear()
+
+
+def test_provider_generation_audit_network_domain_policy_allows_transport(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_LM_STUDIO_BASE_URL", "http://provider.example.test:1234")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "audit",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    calls: list[dict] = []
+
+    def fake_post_json(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        headers: dict | None = None,
+    ) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return json.loads(lm_studio_response("Allowed by audit mode.").decode("utf-8"))
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    result = generate_provider_completion(
+        ProviderGenerationRequest(
+            provider_id="lm-studio",
+            model="local-model",
+            messages=[{"role": "user", "content": "Say hello."}],
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "http://provider.example.test:1234/v1/chat/completions",
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "Say hello."}],
+                "stream": False,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert result.content == "Allowed by audit mode."
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
     ("base_url", "api_key_env", "api_key", "models"),
     [
         ("https://provider.example.test/v1", "DGENTIC_TEST_EXTERNAL_API_KEY", "", "gpt-test"),

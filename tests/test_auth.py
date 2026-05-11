@@ -186,6 +186,7 @@ def test_create_app_fails_closed_when_production_auth_has_no_tokens(
         ("/health", None),
         ("/tasks/plan", "tasks"),
         ("/filesystem/read", "filesystem"),
+        ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),
         ("/providers", "providers"),
         ("/agents/agent-1", "agents"),

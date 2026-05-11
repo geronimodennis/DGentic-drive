@@ -12,6 +12,7 @@ from dgentic.agents import (
 )
 from dgentic.cli_runtime import (
     CommandApproval,
+    CommandApprovalReview,
     CommandApprovalStatus,
     CommandRun,
     CommandRunOutput,
@@ -25,9 +26,17 @@ from dgentic.command_policy import (
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import (
+    copy_guarded_path,
+    delete_guarded_path,
     evaluate_command_policy,
     evaluate_file_access,
+    get_guarded_path_metadata,
+    list_guarded_directory,
+    move_guarded_path,
+    read_guarded_binary_file,
     read_guarded_text_file,
+    rename_guarded_path,
+    write_guarded_binary_file,
     write_guarded_text_file,
 )
 from dgentic.memory import add_memory, search_memory
@@ -53,8 +62,23 @@ from dgentic.schemas import (
     CommandPolicyRuleUpdate,
     FileAccessDecision,
     FileAccessRequest,
+    FileBinaryReadRequest,
+    FileBinaryReadResponse,
+    FileBinaryWriteRequest,
+    FileCopyRequest,
+    FileCopyResponse,
+    FileDeleteRequest,
+    FileDeleteResponse,
+    FileListRequest,
+    FileListResponse,
+    FileMetadataRequest,
+    FileMetadataResponse,
+    FileMoveRequest,
+    FileMoveResponse,
     FileReadRequest,
     FileReadResponse,
+    FileRenameRequest,
+    FileRenameResponse,
     FileWriteRequest,
     FileWriteResponse,
     HealthResponse,
@@ -143,6 +167,8 @@ def read_file(request: FileReadRequest) -> FileReadResponse:
         return read_guarded_text_file(request)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except (IsADirectoryError, PermissionError) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -153,6 +179,107 @@ def write_file(request: FileWriteRequest) -> FileWriteResponse:
         return write_guarded_text_file(request)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/read-binary", response_model=FileBinaryReadResponse)
+def read_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
+    try:
+        return read_guarded_binary_file(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except (IsADirectoryError, PermissionError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/write-binary", response_model=FileWriteResponse)
+def write_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
+    try:
+        return write_guarded_binary_file(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        status_code = 413 if "maximum filesystem payload size" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/delete", response_model=FileDeleteResponse)
+def delete_file(request: FileDeleteRequest) -> FileDeleteResponse:
+    try:
+        return delete_guarded_path(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/move", response_model=FileMoveResponse)
+def move_file(request: FileMoveRequest) -> FileMoveResponse:
+    try:
+        return move_guarded_path(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/copy", response_model=FileCopyResponse)
+def copy_file(request: FileCopyRequest) -> FileCopyResponse:
+    try:
+        return copy_guarded_path(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/rename", response_model=FileRenameResponse)
+def rename_file(request: FileRenameRequest) -> FileRenameResponse:
+    try:
+        return rename_guarded_path(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/metadata", response_model=FileMetadataResponse)
+def get_file_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
+    try:
+        return get_guarded_path_metadata(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/list", response_model=FileListResponse)
+def list_directory(request: FileListRequest) -> FileListResponse:
+    try:
+        return list_guarded_directory(request)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -262,6 +389,14 @@ def get_cli_approvals(status: CommandApprovalStatus | None = None) -> list[Comma
     return cli_runtime_service.list_approvals(status)
 
 
+@router.get("/cli/approvals/{approval_id}/review", response_model=CommandApprovalReview)
+def get_cli_approval_review(approval_id: str) -> CommandApprovalReview:
+    try:
+        return cli_runtime_service.get_approval_review(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/cli/approvals/{approval_id}/approve", response_model=CommandApproval)
 def approve_cli_approval(
     approval_id: str,
@@ -272,6 +407,7 @@ def approve_cli_approval(
         return cli_runtime_service.approve_approval(
             approval_id,
             decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

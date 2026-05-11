@@ -2,7 +2,285 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+## 2026-05-11
+
+### Sprint 10 BL-004a Filesystem Runtime Completion
+
+Status: completed for the scoped MVP backend filesystem runtime; Sprint 10 is closed.
+
+Current story:
+- BL-004: Filesystem Runtime Completion.
+
+Checklist:
+- Completed: PM/Architect assessed the current filesystem runtime and kept the work in Full Sprint mode because file delete/move/copy operations are destructive and security-sensitive.
+- Completed: Read-only explorer confirmed existing support was limited to guarded UTF-8 text read/write plus coarse read/write/delete policy checks.
+- Completed: Developer updated production source only for binary read/write, metadata, list, delete, move, copy, rename, source/target rootDir checks, protected state-file checks, symlink escape handling, payload-size limits, no-overwrite defaults, recursive directory safeguards, and filesystem audit events.
+- Completed: QA updated tests only for binary roundtrip, list/metadata, audit evidence, destructive approval gating, unsafe target blocking, symlink escape blocking, large-payload rejection, missing-file responses, and auth capability mapping.
+- Completed: PM updated README, architecture, setup, usage, backlog, and this progress log.
+- Completed: Final full regression, lint, format, and diff hygiene gates after docs.
+
+Feature tracking:
+- Implemented in this slice: `POST /filesystem/read-binary` and `POST /filesystem/write-binary` move binary payloads as base64 with configurable byte limits.
+- Implemented in this slice: `POST /filesystem/list` and `POST /filesystem/metadata` expose safe directory and metadata workflows.
+- Implemented in this slice: `POST /filesystem/delete`, `POST /filesystem/move`, `POST /filesystem/copy`, and `POST /filesystem/rename` require explicit destructive-operation approval, default to no overwrite, and record audit metadata.
+- Implemented in this slice: policy evaluation covers operation names for text, binary, directory, metadata, delete, move, copy, and rename actions, including source and target path checks.
+- Implemented in this slice: rootDir escape attempts, protected `.dgentic` state access, and symlink escapes are blocked before operation execution.
+- Implemented in this slice: filesystem payload size is configurable with `DGENTIC_MAX_FILESYSTEM_BYTES`.
+
+Validation:
+- Focused filesystem API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k filesystem` passed with 6 tests.
+- Focused auth mapping gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py -k filesystem` passed with 2 tests.
+- Focused API/auth regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py tests\test_auth.py` passed with 73 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\guardrails.py src\dgentic\schemas.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_api.py tests\test_auth.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\guardrails.py src\dgentic\schemas.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_api.py tests\test_auth.py` passed.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 457 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Diff hygiene gate: `git diff --check` passed.
+
+Residual risks:
+- Destructive filesystem operations use an explicit MVP `approved` request flag rather than bound filesystem approval records; the interactive approval UI and approval identity binding remain later backlog work.
+- Filesystem policy is operation-specific and root/state-bound, but not yet a persisted configurable file-policy rule system.
+- Locked-file behavior is handled through normal OS exceptions and conflict responses where applicable, but deeper platform-specific locked-file validation remains follow-up work.
+- Guardrails are application-level checks, not an OS-level filesystem sandbox; TOCTOU and same-user filesystem races remain future hardening work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/guardrails.py`, `src/dgentic/schemas.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_auth.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Run final full quality gates, then proceed autonomously to Sprint 11 tool runtime safety and registry integration.
+
+### Sprint 9 BL-002f Conservative Orphan Termination After Restart
+
+Status: completed for the scoped single-worker restart recovery slice; Sprint 9 is closed for the MVP CLI runtime hardening scope.
+
+Current story:
+- BL-002: CLI Streaming And Restart-Resilient Supervision.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because post-restart CLI process handling can terminate host processes and therefore remains security- and operations-sensitive.
+- Completed: Architect/DevOps recommendation kept the implementation conservative: do not attempt true process adoption because persisted records cannot recover `Popen`, pipes, return code, wait handles, or durable stdout/stderr.
+- Completed: Developer updated production source only for persisted process identity metadata, orphan termination status fields, single-worker prior-supervisor termination checks, POSIX process-group termination, Windows `taskkill /T /F` termination, and stale lifecycle recording.
+- Completed: QA updated tests only for missing identity skips, identity mismatch skips, matching orphan termination, POSIX and Windows termination shape, Windows taskkill timeout failure handling, and API termination metadata.
+- Completed: Reviewer, Security, and DevOps gates accepted the single-worker restart-only scope with production multi-worker leases explicitly moved out of Sprint 9.
+- Completed: PM updated README current status, architecture/how-to docs, backlog, and this progress log.
+- Completed: Final post-doc full regression, lint, format, and diff hygiene gates in this resumed closeout.
+
+Feature tracking:
+- Implemented in this slice: async command runs persist process id, process group id where available, process identity, process start metadata, and orphan termination audit metadata.
+- Implemented in this slice: reconciliation and orphan cancellation mark previous-supervisor running records stale after recording a conservative termination attempt.
+- Implemented in this slice: termination is skipped for non-running records, missing supervisor/process metadata, missing process identity, and live process identity mismatches.
+- Implemented in this slice: missing live processes are recorded as `not_found`, successful termination as `terminated`, and termination exceptions or timeouts as `failed` while the run still becomes stale.
+- Implemented in this slice: POSIX termination targets the process group with TERM then KILL after identity recheck; Windows termination uses `taskkill /PID <pid> /T /F`.
+- Still out of scope after this slice: true process adoption, durable/resumable output after backend restart, production multi-worker lease safety, and JSON-store atomic cross-process ownership.
+
+Validation:
+- Focused new termination tests: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py tests\test_api.py -k "orphan or terminate_orphaned_process or taskkill"` passed with 9 tests and 1 skipped.
+- Focused CLI/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py tests\test_api.py` passed with 91 tests and 2 skipped.
+- Pre-doc full gate: `uv --cache-dir .uv-cache run pytest -q` passed with 451 tests and 2 skipped.
+- Final post-doc full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 452 tests and 2 skipped.
+- Final post-doc lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Final post-doc format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Final post-doc diff hygiene gate: `git diff --check` passed.
+
+Review, security, and operations findings handled:
+- Remediated: Windows `taskkill` timeout could escape orphan termination handling; timeout failures now record `termination_status=failed` and still mark the orphaned record stale.
+- Accepted scope decision: true live process adoption was rejected for this slice because persisted JSON run records cannot safely reconstruct the process handle, pipes, output stream, or reliable return-code lifecycle after restart.
+
+Residual risks:
+- Conservative orphan termination is scoped to single-worker restart recovery. A real multi-worker deployment needs DB-backed ownership leases or an explicit single-worker deployment constraint before enabling this behavior at scale.
+- The implementation does not make command output durable across backend restarts; output already persisted before restart remains available, but live stream adoption is still future work.
+- PID and process-group reuse risk is narrowed by process identity checks, but cannot be reduced to zero without stronger OS/job-control integration and durable process ownership.
+- JSON state remains local-file persistence without atomic cross-process leases.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/cli_runtime.py`.
+- QA-owned files: `tests/test_cli_runtime.py` and `tests/test_api.py`.
+- Reviewer, Security, Architect, and DevOps were read-only for this slice.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Start Sprint 10 with filesystem runtime completion, while keeping full process adoption/resumable output and production multi-worker CLI leases in follow-up backlog for persistence/deployment hardening.
+
+### Sprint 9 BL-003c Windows/POSIX Shell Semantics Hardening
+
+Status: completed for the scoped shell-semantics slice; final Reviewer and Security gates approved with residual risks recorded.
+
+Current story:
+- BL-003: CLI Parsing And Approval Review UX Contracts.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because CLI shell parsing, launcher payload inspection, protected state-file checks, and secret redaction are security-sensitive.
+- Completed: Developer updated production source only for shell flag parsing, context-specific escape handling, launcher payload policy evaluation, protected state-file path decoding, PowerShell flow-token scanning, safe-rule downgrade prevention, and PowerShell backtick secret redaction.
+- Completed: QA updated tests only for Windows/POSIX wrapper semantics, command-name escape decoding, `cmd` combined `/c` forms, POSIX `sh`/`bash -c` script boundaries, PowerShell script blocks, Start-Process blocked/approval payloads, escaped `.dgentic` state paths, and backtick-escaped secret values.
+- Completed: Reviewer and Security findings were routed back through explicit Developer and QA lanes until all blocking findings were cleared.
+- Completed: PM updated README current status, backlog, and this progress log.
+- Completed: Final post-doc DevOps full-suite, lint, format, and diff hygiene gates.
+
+Feature tracking:
+- Implemented in this slice: command policy recognizes PowerShell `/Command`, `/C`, inline `-Command:`/`-Command=`, and abbreviated `-Com`/`/Com` forms.
+- Implemented in this slice: command policy recognizes `cmd` combined switch forms such as `/d/s/c`, `/d/s/cdel`, and `/c=del`, including nested launcher cases.
+- Implemented in this slice: POSIX `sh`/`bash -c` inspection treats only the next argument as the shell script, preserving `$0`/positional arguments as data.
+- Implemented in this slice: context-specific escape handling now distinguishes POSIX backslash, Windows cmd caret, and PowerShell backtick semantics, including line continuations and single-quote behavior.
+- Implemented in this slice: shell command-name decoding covers POSIX quote-splitting, ANSI-C `$'...'` hex/octal/unicode escapes, cmd caret escapes, and PowerShell backtick escapes.
+- Implemented in this slice: Start-Process/launcher payloads are evaluated before configured safe-rule fallback, including blocked commands, approval-required opaque payloads, and read-only path rootDir violations.
+- Implemented in this slice: protected DGentic state-file checks decode common shell escape forms before matching `.dgentic` and data-dir paths.
+- Implemented in this slice: approval/log redaction covers PowerShell backtick-escaped unquoted secret values.
+
+Validation:
+- Focused policy gate: `uv --cache-dir .uv-cache run pytest -q tests\test_command_policy.py` passed with 265 tests.
+- Focused API/runtime gate: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py tests\test_api.py` passed with 86 tests and 1 skipped.
+- Combined focused gate: `uv --cache-dir .uv-cache run pytest -q tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed with 351 tests and 1 skipped.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\command_policy.py src\dgentic\redaction.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\command_policy.py src\dgentic\redaction.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed.
+- Full DevOps gate: `uv --cache-dir .uv-cache run pytest -q` passed with 447 tests and 1 skipped.
+- `uv --cache-dir .uv-cache run ruff check .` passed.
+- `uv --cache-dir .uv-cache run ruff format --check .` passed.
+- `git diff --check` passed.
+
+Review and security findings handled:
+- Remediated: Start-Process payload inspection could miss read-only path rootDir violations and allow broad configured safe rules to downgrade them.
+- Remediated: protected DGentic state-file checks did not decode cmd caret or PowerShell backtick escaped path tokens before matching `.dgentic` paths.
+- Remediated: one escaped-control test expectation was Windows-specific and conflicted with POSIX-translated `cmd` wrapper semantics.
+- Remediated: PowerShell script-block constructs such as `try`, `catch`, `finally`, `switch`, and `trap` could hide blocked commands behind approval-required flow tokens.
+- Remediated: configured safe rules could downgrade Start-Process payloads that should remain approval-required, such as opaque PowerShell encoded commands or approval-required executables.
+- Remediated: shared redaction could leave suffixes of PowerShell backtick-escaped secret values visible in approval review or log contexts.
+
+Residual risks:
+- The command policy remains tokenizer-based rather than a complete cmd, PowerShell, or POSIX shell parser; future edge cases should continue to be handled with explicit regressions.
+- CLI execution remains policy/cwd-bound rather than OS-sandboxed; path TOCTOU races and non-built-in command behavior remain future hardening work.
+- Redaction logic is still duplicated between command-policy event metadata and shared redaction helpers; future changes should consolidate this to avoid drift.
+- True post-restart process adoption/resumable output and production multi-worker lease semantics remain future DevOps/persistence hardening work; conservative safe termination was completed later in BL-002f.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/command_policy.py` and `src/dgentic/redaction.py`.
+- QA-owned files: `tests/test_command_policy.py`, `tests/test_cli_runtime.py`, and `tests/test_api.py`.
+- Reviewer and Security were read-only.
+- PM-owned files: `README.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Superseded by BL-002f conservative orphan termination closeout; continue next with Sprint 10 while tracking full process adoption/resumable output and production multi-worker leases as follow-up backlog.
+
 ## 2026-05-10
+
+### Sprint 9 BL-002e JSON State Quarantine And Repair
+
+Status: completed for the scoped storage-hardening slice; final Reviewer, Security, and DevOps gates approved with residual risks recorded.
+
+Current story:
+- BL-002: CLI Streaming And Restart-Resilient Supervision.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because JSON state supports CLI approvals/runs, logs, tasks, agents, memory, tools, and sessions.
+- Completed: Architect/PM scoped the slice to corrupt JSON quarantine and restore helpers instead of broader database migration or multi-worker locking.
+- Completed: Developer updated production source only for malformed/invalid JSON collection quarantine, restore helpers, pre-restore active backups, safe restore path resolution, active symlink quarantine, broken symlink handling, and exclusive temp-file save replacement.
+- Completed: QA updated tests only for malformed JSON, invalid records, upsert repair, restore from quarantine, external restore rejection, symlink quarantine rejection, active symlink list/upsert handling, broken active symlink handling, planted temp symlink handling, and default relative restore paths.
+- Completed: Reviewer and Security findings were routed back through explicit Developer and QA lanes until all in-scope blockers were cleared.
+- Completed: DevOps validation passed focused storage, focused API/CLI, repository lint/format, and full regression gates.
+- Completed: PM updated README, architecture, setup, backlog, and progress docs.
+
+Feature tracking:
+- Implemented in this slice: `JsonCollection` quarantines malformed JSON, non-list JSON, invalid model records, active collection symlinks, and broken active symlinks by moving the original path to a timestamped quarantine and repairing the active collection to an empty array.
+- Implemented in this slice: `list_quarantined_files()` and `restore_quarantine()` support operator/test repair workflows for valid quarantined files, while rejecting external paths and symlinked quarantine files.
+- Implemented in this slice: restoring a quarantine preserves the current active file first as a `pre-restore` quarantine to reduce accidental data loss.
+- Implemented in this slice: normal saves use exclusive temp-file creation and replace the active path, avoiding writes through planted temp symlinks or active symlinks.
+- Still out of scope after this slice: cross-process file locking, full no-follow filesystem primitives, JSON-to-database migration, true process adoption or safe termination after restart, and production multi-worker lease semantics.
+
+Validation:
+- Focused storage gate: `uv --cache-dir .uv-cache run pytest -q tests\test_storage.py -vv` passed with 11 tests.
+- Focused API/CLI gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py tests\test_cli_runtime.py` passed with 84 tests and 1 skipped.
+- Full DevOps gate: `uv --cache-dir .uv-cache run pytest -q` passed with 391 tests and 1 skipped.
+- `uv --cache-dir .uv-cache run ruff check .` passed.
+- `uv --cache-dir .uv-cache run ruff format --check .` passed.
+
+Review and security findings handled:
+- Remediated: default restore path bypassed the explicit path safety checks and could select unsafe symlink candidates.
+- Remediated: explicit restore path handling failed for default relative data-dir paths and absolute paths returned from quarantine listing.
+- Remediated: restore could overwrite current active state without first preserving it.
+- Remediated: active collection symlinks could be followed on normal list/upsert/save flows.
+- Remediated: broken active symlinks remained in place because `exists()` was checked before `is_symlink()`.
+- Remediated: timestamped temp saves could follow a planted temp symlink.
+
+Residual risks:
+- JSON state remains best-effort local file persistence with per-instance locking only; concurrent processes, malicious same-directory writers, or filesystem races can still cause TOCTOU or lost-update issues.
+- Quarantined files preserve raw bytes and may contain historical secrets; operators should protect and clean `.corrupt-*` and `.pre-restore-*` files as local state.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/storage.py`.
+- QA-owned files: `tests/test_storage.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Continue Sprint 9 with broader Windows/POSIX shell semantics validation, or split true restart process recovery and production multi-worker lease semantics into a later persistence/DevOps hardening sprint.
+
+### Sprint 9 BL-003b Approval Review Backend Contract
+
+Status: completed for the scoped backend/API slice; Sprint 9 remains open for remaining CLI hardening items.
+
+Current story:
+- BL-003: CLI Parsing And Approval Review UX Contracts.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because approval review, CLI execution, audit logs, and secret redaction are security-sensitive.
+- Completed: Developer updated production source only for `CommandApprovalReview`, `GET /cli/approvals/{approval_id}/review`, approve/deny decision reason persistence, shared redaction helpers, event-log response redaction, legacy reason sanitization, and direct-execute digest validation.
+- Completed: QA updated tests only for safe review contracts, decision reason auditing, decision reason redaction, legacy persisted approval reason redaction, legacy event-log metadata redaction, structured sensitive key redaction, legacy digest direct-execute blocking, and deterministic launch-failure record selection.
+- Completed: Reviewer and Security findings were routed back through explicit Developer and QA lanes until in-scope blockers were cleared.
+- Completed: DevOps validation passed focused runtime/API, repository lint/format, and full regression gates.
+- Completed: PM updated README, architecture, how-to, backlog, and progress docs.
+
+Feature tracking:
+- Implemented in this slice: approval reviewers can call `GET /cli/approvals/{approval_id}/review` for a safe UI-facing contract containing redacted command text, cwd, timeout, permission mode, policy reason, requester, agent/task context, environment key names, matched policy metadata, HMAC digest identifiers, bound-execution warnings, direct-execute availability, decision actor/reason fields, run id, and timestamps.
+- Implemented in this slice: approve and deny decisions persist a redacted `decision_reason`; deny also preserves redacted `denial_reason`; authenticated API approval continues to prefer the authenticated principal over caller-supplied `decided_by`.
+- Implemented in this slice: shared redaction now covers common secret assignments, secret-like flags, balanced shell-substitution values, structured sensitive metadata keys, and legacy log response fields for `/logs`.
+- Implemented in this slice: direct approval execution no longer advertises or allows execution for legacy/invalid binding digests, while redacted-command and environment-bound approvals steer users to bound `/cli/execute` or `/cli/runs` requests.
+- Still out of scope after this slice: interactive approval UI, broader Windows/POSIX shell semantics validation, true post-restart process adoption or safe termination, production multi-worker lease semantics, and non-heuristic secret detection.
+
+Validation:
+- Focused QA/DevOps gate: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py tests\test_api.py` passed with 84 tests and 1 skipped.
+- Full DevOps gate: `uv --cache-dir .uv-cache run pytest -q` passed with 380 tests and 1 skipped.
+- `uv --cache-dir .uv-cache run ruff check .` passed.
+- `uv --cache-dir .uv-cache run ruff format --check .` passed.
+
+Review and security findings handled:
+- Remediated: decision reasons could persist raw secret-shaped text.
+- Remediated: legacy persisted approval `decision_reason` or `denial_reason` values could leak through approval list/review consumers.
+- Remediated: legacy approval audit-log metadata could leak through `/logs`.
+- Remediated: event-log redaction initially missed balanced shell substitutions, structured sensitive metadata keys, plural/camelCase secret keys, and legacy free-text event fields.
+- Remediated: `direct_execute_available` could overpromise for legacy approvals with invalid binding digests, and direct `/cli/approvals/{approval_id}/execute` could execute them without the same digest check.
+- Remediated: a launch-failure approval regression test selected the first persisted run/approval instead of the records for the approval under test.
+
+Residual risks:
+- Secret redaction is still heuristic; arbitrary unlabeled secrets, private key material, and novel secret field names remain best handled by avoiding raw secret writes and restricting log access.
+- Current auth is route/capability-level, not per-approval separation-of-duties.
+- Interactive approval UI remains scheduled for BL-010/Sprint 16 and should use the safe review contract rather than raw approval records.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/cli_runtime.py`, `src/dgentic/events.py`, and `src/dgentic/redaction.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_cli_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- `main` is up to date with `origin/main` at the start of this slice.
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Continue Sprint 9 with broader Windows/POSIX shell semantics validation, or split true restart process recovery and production multi-worker lease semantics into a later persistence/DevOps hardening sprint.
 
 ### Sprint 9 BL-002d CLI Supervision Metadata And Lifecycle Accuracy
 
@@ -44,7 +322,7 @@ Residual risks:
 - Production multi-worker process ownership needs a real lease/heartbeat strategy before scale-out deployment.
 - CLI execution is still policy/cwd-bound rather than sandboxed, so path TOCTOU races remain possible.
 - Corrupt JSON state can still require manual repair; quarantine/repair tooling remains a production persistence follow-up.
-- Untracked empty file `QA` remains in the workspace and should be intentionally removed or documented before release packaging.
+- Workspace hygiene update: stale earlier note about an untracked empty `QA` file is no longer current; the remaining untracked files are `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
 
 Role boundary:
 - Developer-owned files: `src/dgentic/cli_runtime.py` and `src/dgentic/command_policy.py`.
@@ -161,7 +439,7 @@ Residual risks:
 - A normal filesystem time-of-check/time-of-use race remains possible if workspace paths are swapped between policy evaluation and subprocess start.
 - POSIX `cmd /c` translation is simple wrapper parity, not a full Windows CMD emulator.
 - Formatting is manually/process enforced through Ruff gates; repository-level CI/pre-commit enforcement remains future DevOps work.
-- Untracked empty file `QA` remains in the workspace and should be intentionally removed or documented before release packaging.
+- Workspace hygiene update: stale earlier note about an untracked empty `QA` file is no longer current; the remaining untracked files are `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
 
 Role boundary:
 - Developer-owned files: `src/dgentic/cli_runtime.py`, `src/dgentic/command_policy.py`, and `src/dgentic/schemas.py`.

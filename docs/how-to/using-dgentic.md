@@ -151,16 +151,20 @@ curl -X POST "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
 ```
 
 ```powershell
+curl http://127.0.0.1:8000/cli/approvals/[approval_id]/review
+```
+
+```powershell
 curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/approve `
   -H "Content-Type: application/json" `
-  -d '{"decided_by":"reviewer"}'
+  -d '{"decided_by":"reviewer","reason":"Version check is acceptable."}'
 ```
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/execute
 ```
 
-Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
+The review response is safe for UI consumers: it returns redacted command text, policy context, environment key names without values, command/environment HMAC digest identifiers, warnings for environment-bound, redacted-command, or legacy-digest approvals, and whether direct execution is available. Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/execute `
@@ -178,6 +182,24 @@ curl -X POST http://127.0.0.1:8000/filesystem/write `
 curl -X POST http://127.0.0.1:8000/filesystem/read `
   -H "Content-Type: application/json" `
   -d '{"path":"notes/sprint.txt"}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/filesystem/write-binary `
+  -H "Content-Type: application/json" `
+  -d '{"path":"artifacts/blob.bin","content_base64":"AAEC/w=="}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/filesystem/list `
+  -H "Content-Type: application/json" `
+  -d '{"path":"artifacts"}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/filesystem/copy `
+  -H "Content-Type: application/json" `
+  -d '{"path":"artifacts/blob.bin","target_path":"artifacts/blob-copy.bin","approved":true}'
 ```
 
 ```powershell
@@ -275,7 +297,7 @@ Configure strict operating boundaries before running autonomous tasks:
 
 - Workspace `rootDir`
 - Bearer-token authentication, route capabilities, and startup token validation for production/staging APIs
-- Filesystem read, write, and delete permissions
+- Filesystem text, binary, directory, metadata, delete, move, copy, and rename permissions
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
 - Controlled CLI environment overrides and command context audit metadata
@@ -305,6 +327,8 @@ During execution, inspect:
 - Validation results
 - Approval prompts
 
+Log responses redact common secret assignments, secret-like flags, shell-substitution values, and structured sensitive metadata keys such as token, password, secret, credential, and API key fields.
+
 ### 6. Review Final Output
 
 At task completion, DGentic should provide:
@@ -328,8 +352,8 @@ DGentic should persist session state so future sessions can resume with context,
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have local health/model probes and chat generation calls, but streaming is not implemented yet.
 - External provider adapters are still contract placeholders.
-- Guardrails enforce UTF-8 text file reads and writes inside `rootDir`; binary files, deletes, moves, and broader file workflows still need production handling.
-- CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI or full restart-resilient process supervision.
+- Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
+- CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
 - Tools can be generated, registered, indexed, executed, and deprecated, but stronger sandbox isolation is still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.

@@ -266,14 +266,31 @@ class ToolExecutionRequest(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=300)
 
 
+FileAction = Literal[
+    "read",
+    "write",
+    "binary_read",
+    "binary_write",
+    "delete",
+    "move",
+    "copy",
+    "rename",
+    "list",
+    "metadata",
+]
+
+
 class FileAccessRequest(BaseModel):
     path: Path
-    action: Literal["read", "write", "delete"]
+    action: FileAction
+    target_path: Path | None = None
 
 
 class FileAccessDecision(BaseModel):
     path: Path
     resolved_path: Path
+    target_path: Path | None = None
+    resolved_target_path: Path | None = None
     allowed: bool
     permission_mode: PermissionMode
     reason: str
@@ -298,6 +315,107 @@ class FileWriteRequest(BaseModel):
 class FileWriteResponse(BaseModel):
     path: Path
     bytes_written: int
+
+
+class FileBinaryReadRequest(BaseModel):
+    path: Path
+
+
+class FileBinaryReadResponse(BaseModel):
+    path: Path
+    content_base64: str
+    bytes_read: int
+
+
+class FileBinaryWriteRequest(BaseModel):
+    path: Path
+    content_base64: str
+    create_parent_dirs: bool = True
+
+
+class FileDeleteRequest(BaseModel):
+    path: Path
+    recursive: bool = False
+    approved: bool = False
+
+
+class FileDeleteResponse(BaseModel):
+    path: Path
+    deleted: bool
+
+
+class FileMoveRequest(BaseModel):
+    path: Path
+    target_path: Path
+    overwrite: bool = False
+    approved: bool = False
+
+
+class FileMoveResponse(BaseModel):
+    path: Path
+    target_path: Path
+    moved: bool
+
+
+class FileCopyRequest(BaseModel):
+    path: Path
+    target_path: Path
+    overwrite: bool = False
+    recursive: bool = False
+    approved: bool = False
+
+
+class FileCopyResponse(BaseModel):
+    path: Path
+    target_path: Path
+    copied: bool
+    bytes_copied: int | None = None
+
+
+class FileRenameRequest(BaseModel):
+    path: Path
+    new_name: str
+    overwrite: bool = False
+    approved: bool = False
+
+    @field_validator("new_name")
+    @classmethod
+    def new_name_must_be_single_path_segment(cls, value: str) -> str:
+        candidate = Path(value)
+        if not value.strip() or candidate.name != value or candidate.parent != Path("."):
+            raise ValueError("new_name must be a single path segment.")
+        return value
+
+
+class FileRenameResponse(BaseModel):
+    path: Path
+    target_path: Path
+    renamed: bool
+
+
+class FileMetadataRequest(BaseModel):
+    path: Path
+
+
+class FileMetadataResponse(BaseModel):
+    path: Path
+    type: Literal["file", "directory", "other"]
+    size_bytes: int | None = None
+    modified_at: datetime
+    is_symlink: bool = False
+
+
+class FileListRequest(BaseModel):
+    path: Path = Field(default_factory=lambda: Path("."))
+
+
+class FileListEntry(FileMetadataResponse):
+    name: str
+
+
+class FileListResponse(BaseModel):
+    path: Path
+    entries: list[FileListEntry]
 
 
 class CommandPolicyRequest(BaseModel):

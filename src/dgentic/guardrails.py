@@ -1,3 +1,9 @@
+import base64
+import binascii
+import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+
 from dgentic.command_policy import evaluate_command_policy as evaluate_configured_command_policy
 from dgentic.events import event_log
 from dgentic.schemas import (
@@ -7,8 +13,24 @@ from dgentic.schemas import (
     CommandPolicyRequest,
     FileAccessDecision,
     FileAccessRequest,
+    FileBinaryReadRequest,
+    FileBinaryReadResponse,
+    FileBinaryWriteRequest,
+    FileCopyRequest,
+    FileCopyResponse,
+    FileDeleteRequest,
+    FileDeleteResponse,
+    FileListEntry,
+    FileListRequest,
+    FileListResponse,
+    FileMetadataRequest,
+    FileMetadataResponse,
+    FileMoveRequest,
+    FileMoveResponse,
     FileReadRequest,
     FileReadResponse,
+    FileRenameRequest,
+    FileRenameResponse,
     FileWriteRequest,
     FileWriteResponse,
     LogEventType,
@@ -16,52 +38,99 @@ from dgentic.schemas import (
 )
 from dgentic.settings import get_settings
 
+_APPROVAL_REQUIRED_ACTIONS = frozenset({"delete", "move", "copy", "rename"})
+_TARGET_ACTIONS = frozenset({"move", "copy", "rename"})
 
-def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
+
+def _root_and_data_dirs() -> tuple[Path, Path]:
     settings = get_settings()
     root_dir = settings.root_dir.resolve()
     data_dir = settings.data_dir
     if not data_dir.is_absolute():
         data_dir = root_dir / data_dir
-    protected_data_dir = data_dir.resolve()
-    candidate = request.path
-    if not candidate.is_absolute():
-        candidate = root_dir / candidate
-    resolved = candidate.resolve()
-    allowed = resolved == root_dir or root_dir in resolved.parents
+    return root_dir, data_dir.resolve()
 
-    if not allowed:
-        decision = FileAccessDecision(
-            path=request.path,
-            resolved_path=resolved,
-            allowed=False,
-            permission_mode=PermissionMode.blocked,
-            reason=f"Path resolves outside configured rootDir: {root_dir}",
+
+def _candidate_path(path: Path, root_dir: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return root_dir / path
+
+
+def _resolve_guarded_path(path: Path, root_dir: Path) -> Path:
+    return _candidate_path(path, root_dir).resolve()
+
+
+def _is_inside(path: Path, root_dir: Path) -> bool:
+    return path == root_dir or root_dir in path.parents
+
+
+def _is_protected(path: Path, protected_data_dir: Path) -> bool:
+    return path == protected_data_dir or protected_data_dir in path.parents
+
+
+def _blocked_decision(
+    request: FileAccessRequest,
+    resolved_path: Path,
+    reason: str,
+    *,
+    resolved_target_path: Path | None = None,
+) -> FileAccessDecision:
+    return FileAccessDecision(
+        path=request.path,
+        resolved_path=resolved_path,
+        target_path=request.target_path,
+        resolved_target_path=resolved_target_path,
+        allowed=False,
+        permission_mode=PermissionMode.blocked,
+        reason=reason,
+    )
+
+
+def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
+    root_dir, protected_data_dir = _root_and_data_dirs()
+    resolved = _resolve_guarded_path(request.path, root_dir)
+    target_resolved: Path | None = None
+
+    if not _is_inside(resolved, root_dir):
+        decision = _blocked_decision(
+            request,
+            resolved,
+            f"Path resolves outside configured rootDir: {root_dir}",
         )
-    elif resolved == protected_data_dir or protected_data_dir in resolved.parents:
-        decision = FileAccessDecision(
-            path=request.path,
-            resolved_path=resolved,
-            allowed=False,
-            permission_mode=PermissionMode.blocked,
-            reason="DGentic state files are protected from guarded filesystem access.",
+    elif _is_protected(resolved, protected_data_dir):
+        decision = _blocked_decision(
+            request,
+            resolved,
+            "DGentic state files are protected from guarded filesystem access.",
         )
-    elif request.action == "delete":
-        decision = FileAccessDecision(
-            path=request.path,
-            resolved_path=resolved,
-            allowed=False,
-            permission_mode=PermissionMode.approval_required,
-            reason="Delete operations require explicit approval.",
+    elif request.action in _TARGET_ACTIONS and request.target_path is None:
+        decision = _blocked_decision(
+            request,
+            resolved,
+            f"{request.action} operations require a target_path.",
         )
     else:
-        decision = FileAccessDecision(
-            path=request.path,
-            resolved_path=resolved,
-            allowed=True,
-            permission_mode=PermissionMode.autopilot_safe,
-            reason="Path is inside rootDir and action is allowed.",
-        )
+        if request.target_path is not None:
+            target_resolved = _resolve_guarded_path(request.target_path, root_dir)
+            if not _is_inside(target_resolved, root_dir):
+                decision = _blocked_decision(
+                    request,
+                    resolved,
+                    f"Target path resolves outside configured rootDir: {root_dir}",
+                    resolved_target_path=target_resolved,
+                )
+            elif _is_protected(target_resolved, protected_data_dir):
+                decision = _blocked_decision(
+                    request,
+                    resolved,
+                    "DGentic state files are protected from guarded filesystem access.",
+                    resolved_target_path=target_resolved,
+                )
+            else:
+                decision = _allowed_file_decision(request, resolved, target_resolved)
+        else:
+            decision = _allowed_file_decision(request, resolved, None)
 
     event_log.record(
         LogEventType.filesystem,
@@ -71,14 +140,103 @@ def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
     return decision
 
 
+def _allowed_file_decision(
+    request: FileAccessRequest,
+    resolved: Path,
+    target_resolved: Path | None,
+) -> FileAccessDecision:
+    if request.action in _APPROVAL_REQUIRED_ACTIONS:
+        decision = FileAccessDecision(
+            path=request.path,
+            resolved_path=resolved,
+            target_path=request.target_path,
+            resolved_target_path=target_resolved,
+            allowed=False,
+            permission_mode=PermissionMode.approval_required,
+            reason=f"{request.action.title()} operations require explicit approval.",
+        )
+    else:
+        decision = FileAccessDecision(
+            path=request.path,
+            resolved_path=resolved,
+            target_path=request.target_path,
+            resolved_target_path=target_resolved,
+            allowed=True,
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Path is inside rootDir and action is allowed.",
+        )
+    return decision
+
+
+def _require_file_permission(decision: FileAccessDecision, *, approved: bool = False) -> None:
+    if decision.permission_mode == PermissionMode.blocked:
+        raise PermissionError(decision.reason)
+    if decision.permission_mode == PermissionMode.approval_required and not approved:
+        raise PermissionError(f"{decision.reason} Approval is required before execution.")
+
+
+def _ensure_payload_size(size_bytes: int) -> None:
+    max_bytes = get_settings().max_filesystem_bytes
+    if size_bytes > max_bytes:
+        raise ValueError(
+            f"Filesystem payload exceeds maximum filesystem payload size of {max_bytes} bytes."
+        )
+
+
+def _ensure_parent(path: Path, *, create_parent_dirs: bool) -> None:
+    if create_parent_dirs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.exists():
+        raise FileNotFoundError(str(path.parent))
+
+
+def _file_type(path: Path) -> str:
+    if path.is_file():
+        return "file"
+    if path.is_dir():
+        return "directory"
+    return "other"
+
+
+def _metadata_response(path: Path, logical_path: Path) -> FileMetadataResponse:
+    stat_result = path.stat()
+    return FileMetadataResponse(
+        path=logical_path,
+        type=_file_type(path),
+        size_bytes=stat_result.st_size if path.is_file() else None,
+        modified_at=datetime.fromtimestamp(stat_result.st_mtime, UTC),
+        is_symlink=path.is_symlink(),
+    )
+
+
+def _copy_path(source: Path, target: Path, *, overwrite: bool, recursive: bool) -> int | None:
+    if target.exists():
+        if not overwrite:
+            raise FileExistsError(str(target))
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+
+    if source.is_dir():
+        if not recursive:
+            raise IsADirectoryError(str(source))
+        shutil.copytree(source, target)
+        return None
+
+    _ensure_payload_size(source.stat().st_size)
+    shutil.copy2(source, target)
+    return target.stat().st_size
+
+
 def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
     decision = evaluate_file_access(FileAccessRequest(path=request.path, action="read"))
-    if not decision.allowed:
-        raise PermissionError(decision.reason)
+    _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
     if not decision.resolved_path.is_file():
         raise IsADirectoryError(str(decision.path))
+    _ensure_payload_size(decision.resolved_path.stat().st_size)
 
     content = decision.resolved_path.read_text(encoding="utf-8")
     response = FileReadResponse(
@@ -96,23 +254,214 @@ def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
 
 def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
     decision = evaluate_file_access(FileAccessRequest(path=request.path, action="write"))
-    if not decision.allowed:
-        raise PermissionError(decision.reason)
+    _require_file_permission(decision)
+    content_bytes = request.content.encode("utf-8")
+    _ensure_payload_size(len(content_bytes))
 
-    if request.create_parent_dirs:
-        decision.resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    elif not decision.resolved_path.parent.exists():
-        raise FileNotFoundError(str(decision.resolved_path.parent))
+    _ensure_parent(decision.resolved_path, create_parent_dirs=request.create_parent_dirs)
 
     decision.resolved_path.write_text(request.content, encoding="utf-8")
     response = FileWriteResponse(
         path=decision.path,
-        bytes_written=len(request.content.encode("utf-8")),
+        bytes_written=len(content_bytes),
     )
     event_log.record(
         LogEventType.filesystem,
         "Wrote guarded text file.",
         metadata={"path": str(decision.path), "bytes_written": response.bytes_written},
+    )
+    return response
+
+
+def read_guarded_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="binary_read"))
+    _require_file_permission(decision)
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    if not decision.resolved_path.is_file():
+        raise IsADirectoryError(str(decision.path))
+    _ensure_payload_size(decision.resolved_path.stat().st_size)
+
+    content = decision.resolved_path.read_bytes()
+    response = FileBinaryReadResponse(
+        path=decision.path,
+        content_base64=base64.b64encode(content).decode("ascii"),
+        bytes_read=len(content),
+    )
+    event_log.record(
+        LogEventType.filesystem,
+        "Read guarded binary file.",
+        metadata={"path": str(decision.path), "bytes_read": response.bytes_read},
+    )
+    return response
+
+
+def write_guarded_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="binary_write"))
+    _require_file_permission(decision)
+    try:
+        content = base64.b64decode(request.content_base64.encode("ascii"), validate=True)
+    except (binascii.Error, UnicodeEncodeError) as exc:
+        raise ValueError("content_base64 must be valid base64.") from exc
+    _ensure_payload_size(len(content))
+    _ensure_parent(decision.resolved_path, create_parent_dirs=request.create_parent_dirs)
+
+    decision.resolved_path.write_bytes(content)
+    response = FileWriteResponse(path=decision.path, bytes_written=len(content))
+    event_log.record(
+        LogEventType.filesystem,
+        "Wrote guarded binary file.",
+        metadata={"path": str(decision.path), "bytes_written": response.bytes_written},
+    )
+    return response
+
+
+def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="delete"))
+    _require_file_permission(decision, approved=request.approved)
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    if decision.resolved_path.is_dir():
+        if request.recursive:
+            shutil.rmtree(decision.resolved_path)
+        else:
+            decision.resolved_path.rmdir()
+    else:
+        decision.resolved_path.unlink()
+    response = FileDeleteResponse(path=decision.path, deleted=True)
+    event_log.record(
+        LogEventType.filesystem,
+        "Deleted guarded filesystem path.",
+        metadata={
+            "path": str(decision.path),
+            "recursive": request.recursive,
+            "approved": request.approved,
+        },
+    )
+    return response
+
+
+def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
+    decision = evaluate_file_access(
+        FileAccessRequest(path=request.path, action="move", target_path=request.target_path)
+    )
+    _require_file_permission(decision, approved=request.approved)
+    if decision.resolved_target_path is None:
+        raise PermissionError("Move operation requires a target path.")
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    _ensure_parent(decision.resolved_target_path, create_parent_dirs=True)
+    if decision.resolved_target_path.exists():
+        if not request.overwrite:
+            raise FileExistsError(str(decision.target_path))
+        if decision.resolved_target_path.is_dir():
+            shutil.rmtree(decision.resolved_target_path)
+        else:
+            decision.resolved_target_path.unlink()
+
+    shutil.move(str(decision.resolved_path), str(decision.resolved_target_path))
+    response = FileMoveResponse(path=decision.path, target_path=request.target_path, moved=True)
+    event_log.record(
+        LogEventType.filesystem,
+        "Moved guarded filesystem path.",
+        metadata={
+            "path": str(decision.path),
+            "target_path": str(request.target_path),
+            "overwrite": request.overwrite,
+            "approved": request.approved,
+        },
+    )
+    return response
+
+
+def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
+    decision = evaluate_file_access(
+        FileAccessRequest(path=request.path, action="copy", target_path=request.target_path)
+    )
+    _require_file_permission(decision, approved=request.approved)
+    if decision.resolved_target_path is None:
+        raise PermissionError("Copy operation requires a target path.")
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    _ensure_parent(decision.resolved_target_path, create_parent_dirs=True)
+    bytes_copied = _copy_path(
+        decision.resolved_path,
+        decision.resolved_target_path,
+        overwrite=request.overwrite,
+        recursive=request.recursive,
+    )
+    response = FileCopyResponse(
+        path=decision.path,
+        target_path=request.target_path,
+        copied=True,
+        bytes_copied=bytes_copied,
+    )
+    event_log.record(
+        LogEventType.filesystem,
+        "Copied guarded filesystem path.",
+        metadata={
+            "path": str(decision.path),
+            "target_path": str(request.target_path),
+            "overwrite": request.overwrite,
+            "recursive": request.recursive,
+            "bytes_copied": bytes_copied,
+            "approved": request.approved,
+        },
+    )
+    return response
+
+
+def rename_guarded_path(request: FileRenameRequest) -> FileRenameResponse:
+    target_logical_path = request.path.parent / request.new_name
+    move_request = FileMoveRequest(
+        path=request.path,
+        target_path=target_logical_path,
+        overwrite=request.overwrite,
+        approved=request.approved,
+    )
+    moved = move_guarded_path(move_request)
+    return FileRenameResponse(path=moved.path, target_path=moved.target_path, renamed=moved.moved)
+
+
+def get_guarded_path_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="metadata"))
+    _require_file_permission(decision)
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    response = _metadata_response(decision.resolved_path, decision.path)
+    event_log.record(
+        LogEventType.filesystem,
+        "Read guarded filesystem metadata.",
+        metadata={"path": str(decision.path), "type": response.type},
+    )
+    return response
+
+
+def list_guarded_directory(request: FileListRequest) -> FileListResponse:
+    decision = evaluate_file_access(FileAccessRequest(path=request.path, action="list"))
+    _require_file_permission(decision)
+    if not decision.resolved_path.exists():
+        raise FileNotFoundError(str(decision.path))
+    if not decision.resolved_path.is_dir():
+        raise NotADirectoryError(str(decision.path))
+
+    root_dir, protected_data_dir = _root_and_data_dirs()
+    entries: list[FileListEntry] = []
+    for child in sorted(decision.resolved_path.iterdir(), key=lambda entry: entry.name.lower()):
+        child_resolved = child.resolve()
+        if not _is_inside(child_resolved, root_dir) or _is_protected(
+            child_resolved, protected_data_dir
+        ):
+            continue
+        logical_path = request.path / child.name if request.path != Path(".") else Path(child.name)
+        metadata = _metadata_response(child_resolved, logical_path)
+        entries.append(FileListEntry(name=child.name, **metadata.model_dump()))
+
+    response = FileListResponse(path=decision.path, entries=entries)
+    event_log.record(
+        LogEventType.filesystem,
+        "Listed guarded filesystem directory.",
+        metadata={"path": str(decision.path), "entry_count": len(entries)},
     )
     return response
 

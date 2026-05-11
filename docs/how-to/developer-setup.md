@@ -144,6 +144,42 @@ Invoke-RestMethod `
   -Body '{"path":"notes/sprint.txt","content":"Sprint note."}'
 ```
 
+Read and write binary payloads as base64, inspect metadata, or list a directory:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/write-binary `
+  -ContentType "application/json" `
+  -Body '{"path":"artifacts/blob.bin","content_base64":"AAEC/w=="}'
+```
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/metadata `
+  -ContentType "application/json" `
+  -Body '{"path":"artifacts/blob.bin"}'
+```
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/list `
+  -ContentType "application/json" `
+  -Body '{"path":"artifacts"}'
+```
+
+Destructive filesystem operations are approval-gated at the backend contract level. The current MVP endpoint requires an explicit `approved` flag and records audit metadata:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/copy `
+  -ContentType "application/json" `
+  -Body '{"path":"artifacts/blob.bin","target_path":"artifacts/blob-copy.bin","approved":true}'
+```
+
 ## Use Guarded CLI Execution
 
 Safe commands can run inside `DGENTIC_ROOT_DIR`:
@@ -186,10 +222,14 @@ $approval = Invoke-RestMethod `
   -Body '{"command":"python --version","timeout_seconds":10,"requested_by":"operator"}'
 
 Invoke-RestMethod `
+  -Method Get `
+  -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/review"
+
+Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/cli/approvals/$($approval.id)/approve" `
   -ContentType "application/json" `
-  -Body '{"decided_by":"reviewer"}'
+  -Body '{"decided_by":"reviewer","reason":"Version check is acceptable."}'
 
 $executeBody = @{
   command = "python --version"
@@ -205,7 +245,11 @@ Invoke-RestMethod `
   -Body $executeBody
 ```
 
-Approvals can also be executed through `POST /cli/approvals/{approval_id}/execute` when no environment override is required. Approval requests may include environment overrides for review, but only the environment variable names are persisted; the execution request must include the same environment keys when using `approval_id` directly.
+Approvals can also be reviewed through `GET /cli/approvals/{approval_id}/review` and executed through `POST /cli/approvals/{approval_id}/execute` when no environment override is required. Review responses expose redacted command text, environment key names, policy context, HMAC digest identifiers, warnings, and direct-execute availability without persisting environment values. Approval requests may include environment overrides for review, but only the environment variable names are persisted; the execution request must include the same environment keys when using `approval_id` directly.
+
+`GET /logs` responses redact common secret assignments, secret-like flags, shell-substitution values, and structured sensitive metadata keys such as token, password, secret, credential, and API key fields.
+
+If a local JSON state file is malformed or contains records that no longer validate, DGentic quarantines the original file beside the active collection with a `*.corrupt-*.json` name and repairs the active file to `[]`. Collection owners can inspect quarantined files and restore a valid quarantined file with the storage helper methods `list_quarantined_files()` and `restore_quarantine()`.
 
 Long-running commands can be started asynchronously, polled for status and output chunks, and cancelled. Policy checks and `rootDir` working-directory checks still run before the process starts:
 
@@ -398,8 +442,8 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Filesystem runtime support is limited to guarded UTF-8 text reads and writes inside `DGENTIC_ROOT_DIR`.
-- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, controlled environment overrides, and context audit metadata, but there is no interactive approval UI or full restart-resilient process supervision yet.
+- Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
+- CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated and executed under `localmcp/`, but stronger sandbox isolation is still needed.

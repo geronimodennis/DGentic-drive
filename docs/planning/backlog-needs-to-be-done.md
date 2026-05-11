@@ -18,7 +18,10 @@ This backlog turns the current partially implemented and not-yet-implemented fea
 - Completed: Update this backlog after Sprint 8 closeout.
 - Completed: Initiate Sprint 9.
 - Completed: Map all root README not-yet-implemented items into remaining or newly added sprints.
-- In progress: Execute Sprint 9.
+- Completed: Execute Sprint 9.
+- Completed: Close Sprint 9 scoped CLI runtime hardening and move production-grade process adoption/leasing to follow-up backlog.
+- Completed: Initiate Sprint 10.
+- Completed: Execute Sprint 10 scoped MVP filesystem runtime completion.
 
 ## Priority Order
 
@@ -101,7 +104,7 @@ Definition of Done:
 Current implementation status:
 - Completed: BL-001a migration-managed persistence baseline with `DGENTIC_DATABASE_URL`, default SQLite URL resolution under `rootDir/dataDir`, SQLite parent directory creation, SQLite-safe engine connect args, cached engine reset helper, idempotent `schema_migrations` ledger, baseline id `0001_metadata_tool_registry_baseline`, applied-migration listing helper, and focused database tests for URL behavior, migration table creation, idempotence, and restart persistence.
 - Completed: BL-001b file-backed SQLite backup/restore smoke helpers with tests and operator documentation.
-- Remaining: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, concurrency/indexing hardening, scheduled/remote backup automation, retention cleanup, and failure rollback tests for future migrations.
+- Remaining: production PostgreSQL driver packaging, explicit ordered migrations beyond the baseline, critical JSON-store repository migration, auth/approval/audit persistence, DB-backed process ownership leases for multi-worker CLI supervision, concurrency/indexing hardening, scheduled/remote backup automation, retention cleanup, and failure rollback tests for future migrations.
 
 ### BL-002: CLI Streaming And Restart-Resilient Supervision
 
@@ -136,7 +139,9 @@ Current implementation status:
 - Completed: BL-002b single-use bound approval IDs for approval-required command execution outside development/test mode, including command digest, cwd, timeout, requester, agent/task context, environment-key, policy-metadata, and expiry binding.
 - Completed: BL-002c POSIX host execution parity for policy-approved `cmd /c` and `cmd.exe /c` wrappers by translating inspectable wrappers to `sh -c` after policy evaluation.
 - Completed: BL-002d restart-resilient supervision metadata and lifecycle accuracy, including persisted supervisor and timeout metadata, starting/failed states, timeout/status/stale reasons, launch-intent persistence before `Popen`, failed-launch persistence, async nonzero failed status, same-supervisor cancellation race guards, POSIX cancellation escalation, stale orphan cancellation, and monotonic output chunk cursors after retention trimming.
-- Remaining: true process recovery/adoption or safe termination after backend restart, production multi-worker lifecycle/lease semantics, corrupt JSON quarantine and repair tooling, and deeper Windows/POSIX shell semantics beyond the currently supported wrapper parity slice.
+- Completed: BL-002e JSON state corrupt-file quarantine and restore helpers for local JSON collections.
+- Completed: BL-002f conservative prior-supervisor orphan termination after backend restart, including persisted process identity metadata, skipped/not-found/terminated/failed termination statuses, POSIX process-group termination, Windows `taskkill /T /F` termination, and stale lifecycle recording.
+- Remaining: full process recovery/adoption with resumable output after backend restart and production multi-worker lifecycle/lease semantics backed by durable ownership leases.
 
 ### BL-003: CLI Parsing And Approval Review UX Contracts
 
@@ -163,7 +168,9 @@ Definition of Done:
 Current implementation status:
 - Completed: approval records now expose safe matched policy review metadata through matched rule id/name, existing command/cwd/role/task/environment-key fields, and no persisted environment values.
 - Completed: BL-003a command parsing and boundary hardening slice for cwd-aware policy evaluation, read-only path operand rootDir checks, symlink escape checks, shell-variable and parameter-expansion path checks, tilde path checks, Windows absolute/backslash path checks, Windows slash switch handling, and focused API/runtime/policy regressions.
-- Remaining: broader Windows/POSIX parsing matrix beyond the current hardened cases, additional quoting edge cases, explicit approval review contracts for UI consumers, and richer reviewer decision metadata.
+- Completed: BL-003b safe approval review backend contract with `GET /cli/approvals/{approval_id}/review`, redacted review command, cwd/role/task/policy/environment-key context, HMAC digests, bound-execution warnings, direct-execute availability, explicit approve/deny decision reasons, shared approval/log secret redaction, and decision-reason secret redaction before persistence.
+- Completed: BL-003c broader Windows/POSIX shell semantics validation for supported wrappers, including PowerShell `/Command` and abbreviated command flags, cmd combined `/c` switch forms, POSIX `sh`/`bash -c` script-argument boundaries, POSIX-translated `cmd` wrapper semantics, command-name escape decoding, PowerShell script-block flow scanning, Start-Process/launcher payload downgrade prevention, escaped protected state-file path checks, and PowerShell backtick-secret redaction.
+- Remaining: interactive approval UI implementation scheduled in BL-010/Sprint 16. Full shell emulation and OS sandboxing remain out of scope for BL-003.
 
 ### BL-004: Filesystem Runtime Completion
 
@@ -188,6 +195,10 @@ Acceptance criteria:
 Definition of Done:
 - Tests cover traversal attempts, symlinks, binary payloads, destructive actions, locked/missing files, and audit logging.
 - README, architecture docs, usage docs, and progress log are updated.
+
+Current implementation status:
+- Completed: BL-004a scoped MVP filesystem runtime completion with base64 binary read/write APIs, metadata, directory listing, approval-gated delete/move/copy/rename APIs, operation-specific policy decisions, rootDir and protected state-file checks for source and target paths, symlink escape blocking, payload-size limits via `DGENTIC_MAX_FILESYSTEM_BYTES`, no-overwrite defaults for copy/move/rename, recursive directory safeguards, filesystem audit events, and API/auth tests.
+- Moved to follow-up backlog: bound filesystem approval records/UI, persisted configurable filesystem policy rules, deeper platform-specific locked-file validation, and OS-level filesystem isolation.
 
 ### BL-005: Tool Runtime Safety And Registry Integration
 
@@ -405,6 +416,7 @@ Needs to be done:
 - Add container or service packaging strategy where appropriate.
 - Add runtime metrics for API latency, task/agent state, provider usage, CLI/tool runs, memory health, and errors.
 - Add structured logs, dashboards, alerts, and operational runbooks.
+- Add or validate production-safe CLI process ownership leases before enabling multi-worker deployments, or explicitly constrain deployment to a single worker until BL-001/BL-002 follow-up work lands.
 - Add rollback automation and deployment smoke checks.
 - Add release readiness gates for deployment validation and incident response.
 
@@ -421,7 +433,7 @@ Definition of Done:
 
 Current implementation status:
 - Partially implemented: release distribution artifacts, release notes, package builds, and local wheel smoke checks.
-- Not yet implemented: production deployment infrastructure, CI/CD pipeline, runtime monitoring, metrics, alerting, and rollback automation.
+- Not yet implemented: production deployment infrastructure, CI/CD pipeline, runtime monitoring, metrics, alerting, multi-worker CLI deployment lease validation, and rollback automation.
 
 ## Proposed Sprint Plan
 
@@ -465,14 +477,18 @@ Exit criteria:
 - Windows/POSIX parser tests pass.
 
 Current Sprint 9 status:
-- In progress: Sprint 9 initiated.
+- Closed: Sprint 9 completed the scoped CLI runtime hardening exit criteria for the MVP backend.
 - Completed: BL-002a output chunk polling and stale-running reconciliation.
 - Completed: BL-002b bound approval IDs for approval-required commands outside development/test mode.
 - Completed: BL-002c POSIX execution parity for policy-approved `cmd /c` and `cmd.exe /c` wrappers.
 - Completed: BL-002d restart-resilient supervision metadata and lifecycle accuracy for async CLI runs.
 - Completed: BL-003 approval records expose matched policy review metadata.
 - Completed: BL-003a cwd-aware command policy evaluation and read-only path operand rootDir boundary hardening.
-- Remaining: true post-restart process recovery/adoption or safe termination, production multi-worker lease semantics, broader Windows/POSIX shell semantics validation, and approval review UI contracts.
+- Completed: BL-003b safe approval review backend contract for UI consumers with decision reason auditing and secret redaction.
+- Completed: BL-002e JSON state corrupt-file quarantine and restore helpers for local JSON collections.
+- Completed: BL-003c broader Windows/POSIX shell semantics validation and hardening for supported wrappers, quoting, escaping, launcher payload, and protected state-file cases.
+- Completed: BL-002f conservative post-restart orphan termination for prior-supervisor running records with matching process identity, including termination metadata exposed through run status/cancel contracts.
+- Moved to follow-up backlog: full process adoption/resumable output after backend restart and production multi-worker lifecycle/lease semantics backed by durable ownership leases.
 
 ### Sprint 10: Filesystem Runtime Completion
 
@@ -485,6 +501,11 @@ Stories:
 Exit criteria:
 - Binary, delete, move, copy, and directory workflows exist with fine-grained policy.
 - Filesystem security tests pass for traversal, symlinks, destructive actions, binary files, and audit logging.
+
+Current Sprint 10 status:
+- Closed: Sprint 10 completed the scoped MVP filesystem runtime exit criteria.
+- Completed: BL-004a binary read/write, list, metadata, approval-gated delete/move/copy/rename, source/target rootDir checks, protected state-file blocking, symlink escape checks, payload-size limits, and filesystem audit coverage.
+- Moved to follow-up backlog: bound filesystem approval records/UI, persisted configurable filesystem policy rules, deeper platform-specific locked-file validation, and OS-level filesystem isolation.
 
 ### Sprint 11: Tool Runtime Safety And Registry Integration
 
@@ -595,6 +616,7 @@ Exit criteria:
 - CI runs tests, lint, format, package build, and release artifact checks.
 - Staging deployment can be created and smoke-tested reproducibly.
 - Runtime metrics, structured logs, dashboards, and alerts cover critical surfaces.
+- Multi-worker CLI deployments either have DB-backed process ownership lease validation or are explicitly constrained to a single backend worker.
 - Rollback workflow is documented and smoke-verified.
 
 ## Not-Yet-Implemented Coverage Map
@@ -609,6 +631,8 @@ Exit criteria:
 - Network/domain guardrails: BL-009, Sprint 15.
 - Full autonomous backlog management and sprint execution inside the backend runtime: BL-008, Sprint 14.
 - Runtime monitoring, metrics, alerting, and rollback automation: BL-012, Sprint 18.
+- Full process adoption/resumable output after backend restart: BL-002 follow-up, scheduled after the MVP CLI hardening scope.
+- Production multi-worker CLI process ownership and lease validation: BL-001 and BL-012 follow-up, Sprint 18 deployment gating.
 
 ## Release Readiness Gates
 

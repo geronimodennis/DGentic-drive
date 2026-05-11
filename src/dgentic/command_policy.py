@@ -87,16 +87,19 @@ SHELL_COMMAND_FLAGS = {
     "cmd.exe": {"/c", "/k"},
     "sh": {"-c"},
     "bash": {"-c"},
-    "powershell": {"-command", "-c"},
-    "powershell.exe": {"-command", "-c"},
-    "pwsh": {"-command", "-c"},
-    "pwsh.exe": {"-command", "-c"},
+    "powershell": {"/c", "/command", "-command", "-c"},
+    "powershell.exe": {"/c", "/command", "-command", "-c"},
+    "pwsh": {"/c", "/command", "-command", "-c"},
+    "pwsh.exe": {"/c", "/command", "-command", "-c"},
 }
+CMD_EXECUTABLES = frozenset({"cmd", "cmd.exe"})
+POWERSHELL_EXECUTABLES = frozenset({"powershell", "powershell.exe", "pwsh", "pwsh.exe"})
 SHELL_CONTROL_OPERATORS = frozenset({";", "&", "|", "\n"})
 SHELL_STRUCTURAL_APPROVAL_TOKENS = frozenset({">", "<", "2>", ">>", "<<"})
 SHELL_FLOW_COMMAND_TOKENS = frozenset(
     {
         "case",
+        "catch",
         "do",
         "done",
         "elif",
@@ -107,7 +110,11 @@ SHELL_FLOW_COMMAND_TOKENS = frozenset(
         "foreach",
         "function",
         "if",
+        "finally",
+        "switch",
         "then",
+        "trap",
+        "try",
         "until",
         "while",
     }
@@ -220,17 +227,19 @@ _SHELL_PATH_EXPANSION_RE = re.compile(
     r"\$(?:\{[^}\s]+\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!_-]|['\"])"
 )
 _WINDOWS_PATH_EXPANSION_RE = re.compile(r"%[^%\s]+(?::[^%]*)?%|![^!\s]+(?::[^!]*)?!")
+_ANSI_C_QUOTED_SEGMENT_RE = re.compile(r"\$'((?:\\.|[^'\\])*)'")
+_LOCALIZED_QUOTED_SEGMENT_RE = re.compile(r'\$"((?:\\.|[^"\\])*)"')
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"\b(?P<key>[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
     r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:(?:`[\s\S])|\\.|[^\s;&|'\"\)])+)",
     re.IGNORECASE,
 )
 _SENSITIVE_FLAG_RE = re.compile(
     r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
     r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
     r"(?:\s+|=|:))"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:(?:`[\s\S])|\\.|[^\s;&|'\"\)])+)",
     re.IGNORECASE,
 )
 _SENSITIVE_ASSIGNMENT_PREFIX_RE = re.compile(
@@ -477,7 +486,7 @@ def _default_decision(
     windows_command_context: bool | None = None,
 ) -> CommandPolicyDecision:
     if windows_command_context is None:
-        windows_command_context = os.name == "nt"
+        windows_command_context = _host_is_windows()
     executable = parsed.executable
     blocked_executable = _blocked_command_name(executable)
     inner_command = _parse_inner_shell_command(parsed)
@@ -487,7 +496,8 @@ def _default_decision(
             inner_command,
             request,
             policy_cwd,
-            windows_command_context=os.name == "nt" and parsed.executable in {"cmd", "cmd.exe"},
+            windows_command_context=_host_is_windows() and parsed.executable in CMD_EXECUTABLES,
+            powershell_command_context=parsed.executable in POWERSHELL_EXECUTABLES,
         )
 
     if executable in SHELL_COMMAND_FLAGS:
@@ -510,7 +520,11 @@ def _default_decision(
             agent_id=request.agent_id,
             task_id=request.task_id,
         )
-    if _command_targets_protected_data_dir(command):
+    if _command_targets_protected_data_dir(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=parsed.executable in POWERSHELL_EXECUTABLES,
+    ):
         return CommandPolicyDecision(
             command=command,
             risk=CommandRisk.approval_required,
@@ -572,8 +586,13 @@ def _decision_for_inner_shell_command(
     policy_cwd: Path,
     *,
     windows_command_context: bool = False,
+    powershell_command_context: bool = False,
 ) -> CommandPolicyDecision:
-    if _command_targets_protected_data_dir(inner_command):
+    if _command_targets_protected_data_dir(
+        inner_command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    ):
         return CommandPolicyDecision(
             command=outer_command,
             risk=CommandRisk.approval_required,
@@ -583,9 +602,23 @@ def _decision_for_inner_shell_command(
             agent_id=request.agent_id,
             task_id=request.task_id,
         )
-    segments, has_control_operator = _split_shell_command_segments(inner_command)
-    substitutions = _extract_shell_substitutions(inner_command)
-    script_scan_decision = _decision_from_shell_script_tokens(outer_command, inner_command, request)
+    segments, has_control_operator = _split_shell_command_segments(
+        inner_command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    substitutions = _extract_shell_substitutions(
+        inner_command,
+        powershell_command_context=powershell_command_context,
+    )
+    script_scan_decision = _decision_from_shell_script_tokens(
+        outer_command,
+        inner_command,
+        request,
+        policy_cwd,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
     if script_scan_decision.permission_mode == PermissionMode.blocked:
         return script_scan_decision
     if not segments:
@@ -635,8 +668,12 @@ def _decision_for_inner_shell_command(
                 return configured_decision
             if (
                 configured_decision.permission_mode == PermissionMode.autopilot_safe
-                and script_scan_decision.reason
-                != "Shell script constructs or redirection require approval."
+                and _configured_safe_shell_decision_can_apply(
+                    inner_command,
+                    script_scan_decision,
+                    windows_command_context=windows_command_context,
+                    powershell_command_context=powershell_command_context,
+                )
             ):
                 safe_decision = configured_decision
                 continue
@@ -665,8 +702,18 @@ def _decision_for_inner_shell_command(
         and not substitutions
         and not has_control_operator
         and not _shell_tokens_have_structural_or_source_approval(
-            _shell_script_tokens(inner_command),
-            _shell_command_position_tokens(_shell_script_tokens(inner_command)),
+            _shell_script_tokens(
+                inner_command,
+                windows_command_context=windows_command_context,
+                powershell_command_context=powershell_command_context,
+            ),
+            _shell_command_position_tokens(
+                _shell_script_tokens(
+                    inner_command,
+                    windows_command_context=windows_command_context,
+                    powershell_command_context=powershell_command_context,
+                )
+            ),
         )
     ):
         return safe_decision
@@ -718,6 +765,33 @@ def _decision_for_inner_shell_command(
     )
 
 
+def _configured_safe_shell_decision_can_apply(
+    inner_command: str,
+    script_scan_decision: CommandPolicyDecision,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> bool:
+    if script_scan_decision.permission_mode == PermissionMode.autopilot_safe:
+        return True
+    if script_scan_decision.permission_mode != PermissionMode.approval_required:
+        return False
+    if script_scan_decision.reason.startswith("Launcher payload requires approval"):
+        return False
+    tokens = _shell_script_tokens(
+        inner_command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    command_tokens = _shell_command_position_tokens(tokens)
+    if _shell_tokens_have_structural_or_source_approval(tokens, command_tokens):
+        return False
+    return not any(
+        _normalize_shell_executable(token) in SHELL_COMMAND_APPROVAL_TOKENS
+        for token in command_tokens
+    )
+
+
 def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
     flags = SHELL_COMMAND_FLAGS.get(parsed.executable)
     if flags is None:
@@ -725,6 +799,14 @@ def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
 
     for index, argument in enumerate(parsed.arguments):
         normalized_argument = _strip_matching_quotes(argument.strip()).lower()
+        inline_inner_command = _inline_shell_command_argument(
+            parsed,
+            normalized_argument,
+            index,
+            flags,
+        )
+        if inline_inner_command is not None:
+            return inline_inner_command
         compact_inner_command = _compact_inner_shell_command(
             parsed,
             normalized_argument,
@@ -735,9 +817,12 @@ def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
         if _is_shell_command_flag(
             parsed.executable, normalized_argument, flags
         ) and index + 1 < len(parsed.arguments):
-            inner_command = _raw_shell_argument_tail(parsed, index + 1)
-            if inner_command is None:
-                inner_command = " ".join(parsed.arguments[index + 1 :]).strip()
+            if parsed.executable in {"bash", "sh"}:
+                inner_command = _posix_shell_script_argument(parsed, index + 1)
+            else:
+                inner_command = _raw_shell_argument_tail(parsed, index + 1)
+                if inner_command is None:
+                    inner_command = " ".join(parsed.arguments[index + 1 :]).strip()
             inner_command = _strip_matching_quotes(inner_command.strip())
             if inner_command:
                 if _inner_shell_command_needs_posix_reparse(inner_command):
@@ -748,35 +833,107 @@ def _parse_inner_shell_command(parsed: ParsedCommand) -> str | None:
     return None
 
 
+def _inline_shell_command_argument(
+    parsed: ParsedCommand,
+    normalized_argument: str,
+    index: int,
+    flags: set[str],
+) -> str | None:
+    if parsed.executable in CMD_EXECUTABLES:
+        return None
+    inline_payload = _powershell_inline_command_payload(
+        parsed.executable,
+        normalized_argument,
+        parsed.arguments[index],
+    )
+    if inline_payload is not None:
+        remaining = _raw_shell_argument_tail(parsed, index + 1)
+        if remaining is None:
+            remaining = " ".join(parsed.arguments[index + 1 :]).strip()
+        inner_command = " ".join(part for part in [inline_payload, remaining] if part).strip()
+        return _strip_matching_quotes(inner_command) or None
+    for flag in flags:
+        for separator in (":", "="):
+            prefix = f"{flag}{separator}"
+            if normalized_argument.startswith(prefix):
+                inline_inner = parsed.arguments[index].strip()[len(prefix) :].strip()
+                remaining = _raw_shell_argument_tail(parsed, index + 1)
+                if remaining is None:
+                    remaining = " ".join(parsed.arguments[index + 1 :]).strip()
+                inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
+                return _strip_matching_quotes(inner_command) or None
+    return None
+
+
 def _compact_inner_shell_command(
     parsed: ParsedCommand,
     normalized_argument: str,
     index: int,
 ) -> str | None:
-    if parsed.executable not in {"cmd", "cmd.exe"}:
+    if parsed.executable not in CMD_EXECUTABLES:
         return None
-    for flag in SHELL_COMMAND_FLAGS[parsed.executable]:
-        if normalized_argument.startswith(flag) and normalized_argument != flag:
-            inline_inner = parsed.arguments[index].strip()[len(flag) :].strip()
-            remaining = _raw_shell_argument_tail(parsed, index + 1)
-            if remaining is None:
-                remaining = " ".join(parsed.arguments[index + 1 :]).strip()
-            inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
-            return _strip_matching_quotes(inner_command) or None
+    flag_start = _cmd_command_flag_start(normalized_argument)
+    if flag_start is None:
+        return None
+    inline_start = flag_start + 2
+    inline_inner = parsed.arguments[index].strip()[inline_start:].strip()
+    if inline_inner.startswith((":", "=")):
+        inline_inner = inline_inner[1:].strip()
+    remaining = _raw_shell_argument_tail(parsed, index + 1)
+    if remaining is None:
+        remaining = " ".join(parsed.arguments[index + 1 :]).strip()
+    inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
+    return _strip_matching_quotes(inner_command) or None
     return None
+
+
+def _posix_shell_script_argument(parsed: ParsedCommand, argument_index: int) -> str:
+    reparsed_argument = _posix_shell_reparsed_script_argument(parsed, argument_index)
+    if reparsed_argument is not None:
+        return reparsed_argument
+    return parsed.arguments[argument_index].strip()
 
 
 def _raw_shell_argument_tail(parsed: ParsedCommand, argument_index: int) -> str | None:
     if not parsed.original_command:
         return None
-    try:
-        parts = shlex.split(parsed.original_command, posix=False)
-    except ValueError:
-        return None
-    arguments = parts[1:]
-    if argument_index >= len(arguments):
-        return None
-    return " ".join(arguments[argument_index:]).strip()
+    target_token_index = argument_index + 1
+    token_index = -1
+    index = 0
+    in_token = False
+    quote: str | None = None
+    escaped = False
+    while index < len(parsed.original_command):
+        char = parsed.original_command[index]
+        if not in_token:
+            if char.isspace():
+                index += 1
+                continue
+            token_index += 1
+            if token_index == target_token_index:
+                return parsed.original_command[index:].strip()
+            in_token = True
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char.isspace():
+            in_token = False
+        index += 1
+    return None
 
 
 def _is_shell_command_flag(
@@ -786,9 +943,47 @@ def _is_shell_command_flag(
 ) -> bool:
     if normalized_argument in flags:
         return True
+    if executable in CMD_EXECUTABLES:
+        return _cmd_command_flag_start(normalized_argument) is not None
+    if executable in POWERSHELL_EXECUTABLES:
+        return _is_powershell_command_flag(normalized_argument)
     if executable in {"bash", "sh"}:
         return _is_posix_clustered_command_flag(normalized_argument)
     return False
+
+
+def _cmd_command_flag_start(normalized_argument: str) -> int | None:
+    for index in range(len(normalized_argument) - 1):
+        if normalized_argument[index] != "/":
+            continue
+        if normalized_argument[index + 1] in {"c", "k"}:
+            return index
+    return None
+
+
+def _is_powershell_command_flag(normalized_argument: str) -> bool:
+    if len(normalized_argument) < 2 or normalized_argument[0] not in {"-", "/"}:
+        return False
+    option_name = normalized_argument[1:].split(":", 1)[0].split("=", 1)[0]
+    return option_name == "c" or (len(option_name) >= 3 and "command".startswith(option_name))
+
+
+def _powershell_inline_command_payload(
+    executable: str,
+    normalized_argument: str,
+    original_argument: str,
+) -> str | None:
+    if executable not in POWERSHELL_EXECUTABLES:
+        return None
+    if len(normalized_argument) < 2 or normalized_argument[0] not in {"-", "/"}:
+        return None
+    for separator in (":", "="):
+        if separator not in normalized_argument:
+            continue
+        option_name, _value = normalized_argument[1:].split(separator, 1)
+        if option_name == "c" or (len(option_name) >= 3 and "command".startswith(option_name)):
+            return original_argument.strip().split(separator, 1)[1].strip()
+    return None
 
 
 def _is_posix_clustered_command_flag(normalized_argument: str) -> bool:
@@ -805,6 +1000,15 @@ def _parse_inner_shell_command_with_posix(
     parsed: ParsedCommand,
     flags: set[str],
 ) -> str | None:
+    return _posix_shell_reparsed_script_argument(parsed, 1, flags=flags)
+
+
+def _posix_shell_reparsed_script_argument(
+    parsed: ParsedCommand,
+    fallback_argument_index: int,
+    *,
+    flags: set[str] | None = None,
+) -> str | None:
     if not parsed.original_command:
         return None
     try:
@@ -812,17 +1016,26 @@ def _parse_inner_shell_command_with_posix(
     except ValueError:
         return None
     arguments = [_strip_matching_quotes(part) for part in parts[1:]]
+    if flags is None:
+        if fallback_argument_index < len(arguments):
+            return arguments[fallback_argument_index]
+        return None
     for index, argument in enumerate(arguments):
         if _is_shell_command_flag(
             parsed.executable, argument.strip().lower(), flags
         ) and index + 1 < len(arguments):
-            inner_command = _strip_matching_quotes(" ".join(arguments[index + 1 :]).strip())
+            inner_command = _strip_matching_quotes(arguments[index + 1].strip())
             if inner_command:
                 return inner_command
     return None
 
 
-def _split_shell_command_segments(command: str) -> tuple[list[str], bool]:
+def _split_shell_command_segments(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> tuple[list[str], bool]:
     segments: list[str] = []
     current: list[str] = []
     quote: str | None = None
@@ -837,7 +1050,30 @@ def _split_shell_command_segments(command: str) -> tuple[list[str], bool]:
             escaped = False
             index += 1
             continue
-        if char == "\\":
+        if windows_command_context and char == "^" and index + 1 < len(command):
+            current.append(command[index : index + 2])
+            index += 2
+            continue
+        if powershell_command_context and quote != "'" and char == "`":
+            continuation = _escaped_line_continuation_end(command, index, "`")
+            if continuation is not None:
+                current.append(command[index:continuation])
+                index = continuation
+                continue
+            if index + 1 < len(command):
+                current.append(command[index : index + 2])
+                index += 2
+                continue
+        if (
+            char == "\\"
+            and quote != "'"
+            and not (windows_command_context or powershell_command_context)
+        ):
+            continuation = _escaped_line_continuation_end(command, index, "\\")
+            if continuation is not None:
+                current.append(command[index:continuation])
+                index = continuation
+                continue
             current.append(char)
             escaped = True
             index += 1
@@ -889,6 +1125,16 @@ def _normalize_shell_segment(segment: str) -> str:
     return segment
 
 
+def _escaped_line_continuation_end(command: str, index: int, escape_char: str) -> int | None:
+    if index + 1 >= len(command) or command[index] != escape_char:
+        return None
+    if command[index + 1] == "\n":
+        return index + 2
+    if index + 2 < len(command) and command[index + 1] == "\r" and command[index + 2] == "\n":
+        return index + 3
+    return None
+
+
 def _strip_leading_shell_assignments(segment: str) -> str:
     stripped = segment.strip()
     while True:
@@ -898,7 +1144,11 @@ def _strip_leading_shell_assignments(segment: str) -> str:
         stripped = updated
 
 
-def _extract_shell_substitutions(command: str) -> list[str]:
+def _extract_shell_substitutions(
+    command: str,
+    *,
+    powershell_command_context: bool = False,
+) -> list[str]:
     substitutions: list[str] = []
     index = 0
     while index < len(command):
@@ -906,7 +1156,12 @@ def _extract_shell_substitutions(command: str) -> list[str]:
             substitution, end_index = _extract_balanced_substitution(command, index + 2)
             if substitution:
                 substitutions.append(substitution)
-                substitutions.extend(_extract_shell_substitutions(substitution))
+                substitutions.extend(
+                    _extract_shell_substitutions(
+                        substitution,
+                        powershell_command_context=powershell_command_context,
+                    )
+                )
             index = end_index
             continue
         if command.startswith(("<(", ">("), index):
@@ -917,10 +1172,15 @@ def _extract_shell_substitutions(command: str) -> list[str]:
             )
             if substitution:
                 substitutions.append(substitution)
-                substitutions.extend(_extract_shell_substitutions(substitution))
+                substitutions.extend(
+                    _extract_shell_substitutions(
+                        substitution,
+                        powershell_command_context=powershell_command_context,
+                    )
+                )
             index = end_index
             continue
-        if command[index] == "`":
+        if command[index] == "`" and not powershell_command_context:
             end_index = _find_backtick_substitution_end(command, index + 1)
             if end_index == -1:
                 return substitutions
@@ -965,19 +1225,26 @@ def _decision_from_shell_script_tokens(
     outer_command: str,
     inner_command: str,
     request: CommandPolicyRequest,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
 ) -> CommandPolicyDecision:
-    tokens = _shell_script_tokens(inner_command)
+    tokens = _shell_script_tokens(
+        inner_command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
     command_token_indexes = _shell_command_position_token_indexes(tokens)
     command_tokens = [tokens[index] for index in command_token_indexes]
     for token in command_tokens:
-        normalized = _normalize_executable(token)
-        blocked_command = _blocked_command_name(normalized)
+        blocked_command = _blocked_shell_command_name(token)
         if blocked_command is not None:
             return CommandPolicyDecision(
                 command=outer_command,
                 risk=CommandRisk.blocked,
                 permission_mode=PermissionMode.blocked,
-                reason=f"Inner shell command {normalized} is blocked by the command policy.",
+                reason=f"Inner shell command {blocked_command} is blocked by the command policy.",
                 agent_role=request.agent_role,
                 agent_id=request.agent_id,
                 task_id=request.task_id,
@@ -987,14 +1254,15 @@ def _decision_from_shell_script_tokens(
         for token in command_tokens
     ):
         for token in tokens:
-            normalized = _normalize_executable(token)
-            blocked_command = _blocked_command_name(normalized)
+            blocked_command = _blocked_shell_command_name(token)
             if blocked_command is not None:
                 return CommandPolicyDecision(
                     command=outer_command,
                     risk=CommandRisk.blocked,
                     permission_mode=PermissionMode.blocked,
-                    reason=f"Inner shell command {normalized} is blocked by the command policy.",
+                    reason=(
+                        f"Inner shell command {blocked_command} is blocked by the command policy."
+                    ),
                     agent_role=request.agent_role,
                     agent_id=request.agent_id,
                     task_id=request.task_id,
@@ -1017,24 +1285,16 @@ def _decision_from_shell_script_tokens(
             task_id=request.task_id,
         )
     for token in command_tokens:
-        normalized = _normalize_executable(token)
-        payload_blocked_command = _blocked_command_from_start_process_argument_list(
+        normalized = _normalize_shell_executable(token)
+        payload_decision = _decision_from_start_process_payloads(
+            outer_command,
             normalized,
             tokens,
+            request,
+            policy_cwd,
         )
-        if payload_blocked_command is not None:
-            return CommandPolicyDecision(
-                command=outer_command,
-                risk=CommandRisk.blocked,
-                permission_mode=PermissionMode.blocked,
-                reason=(
-                    f"Inner shell command {payload_blocked_command} is blocked "
-                    "by the command policy."
-                ),
-                agent_role=request.agent_role,
-                agent_id=request.agent_id,
-                task_id=request.task_id,
-            )
+        if payload_decision is not None:
+            return payload_decision
     if _shell_tokens_have_structural_or_source_approval(tokens, command_tokens):
         return CommandPolicyDecision(
             command=outer_command,
@@ -1046,7 +1306,7 @@ def _decision_from_shell_script_tokens(
             task_id=request.task_id,
         )
     for token in command_tokens:
-        normalized = _normalize_executable(token)
+        normalized = _normalize_shell_executable(token)
         if normalized in APPROVAL_COMMANDS:
             return CommandPolicyDecision(
                 command=outer_command,
@@ -1091,7 +1351,12 @@ def _decision_from_shell_script_tokens(
     )
 
 
-def _shell_script_tokens(command: str) -> list[str]:
+def _shell_script_tokens(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> list[str]:
     tokens: list[str] = []
     current: list[str] = []
     quote: str | None = None
@@ -1111,7 +1376,16 @@ def _shell_script_tokens(command: str) -> list[str]:
             escaped = False
             index += 1
             continue
-        if char == "\\":
+        if windows_command_context and char == "^" and index + 1 < len(command):
+            current.append(command[index : index + 2])
+            index += 2
+            continue
+        if char == "\\" and quote != "'":
+            continuation = _escaped_line_continuation_end(command, index, "\\")
+            if continuation is not None:
+                current.append(command[index:continuation])
+                index = continuation
+                continue
             current.append(char)
             escaped = True
             index += 1
@@ -1131,6 +1405,17 @@ def _shell_script_tokens(command: str) -> list[str]:
             _substitution, end_index = _extract_balanced_substitution(command, index + 2)
             current.append(command[index:end_index])
             index = end_index
+            continue
+        if powershell_command_context and quote != "'" and char == "`":
+            continuation = _escaped_line_continuation_end(command, index, "`")
+            if continuation is not None:
+                current.append(command[index:continuation])
+                index = continuation
+                continue
+            if index + 1 < len(command):
+                current.append(command[index : index + 2])
+                index += 2
+                continue
             continue
         if char == "`":
             end_index = _find_backtick_substitution_end(command, index + 1)
@@ -1276,10 +1561,12 @@ def _blocked_command_from_nested_shell_invocation(
     command_token_indexes: list[int],
 ) -> str | None:
     for command_index in command_token_indexes:
-        shell_executable = _normalize_executable(tokens[command_index])
+        shell_executable = _normalize_shell_executable(tokens[command_index])
         flags = SHELL_COMMAND_FLAGS.get(shell_executable)
         if flags is None:
             continue
+        nested_windows_context = _host_is_windows() and shell_executable in CMD_EXECUTABLES
+        nested_powershell_context = shell_executable in POWERSHELL_EXECUTABLES
         for index in range(command_index + 1, len(tokens)):
             normalized_token = _strip_matching_quotes(tokens[index]).lower()
             compact_inner_command = _compact_nested_cmd_shell_command(
@@ -1289,7 +1576,11 @@ def _blocked_command_from_nested_shell_invocation(
                 index,
             )
             if compact_inner_command is not None:
-                compact_tokens = _shell_script_tokens(compact_inner_command)
+                compact_tokens = _shell_script_tokens(
+                    compact_inner_command,
+                    windows_command_context=nested_windows_context,
+                    powershell_command_context=nested_powershell_context,
+                )
                 compact_command_indexes = _shell_command_position_token_indexes(compact_tokens)
                 compact_blocked_command = _blocked_command_from_nested_shell_invocation(
                     compact_tokens,
@@ -1298,17 +1589,22 @@ def _blocked_command_from_nested_shell_invocation(
                 if compact_blocked_command is not None:
                     return compact_blocked_command
                 for compact_command_index in compact_command_indexes:
-                    normalized = _normalize_executable(compact_tokens[compact_command_index])
-                    blocked_command = _blocked_command_name(normalized)
+                    blocked_command = _blocked_shell_command_name(
+                        compact_tokens[compact_command_index]
+                    )
                     if blocked_command is not None:
-                        return normalized
+                        return blocked_command
                 break
             if not _is_shell_command_flag(shell_executable, normalized_token, flags):
                 continue
             tail_tokens = tokens[index + 1 :]
             tail_command = _strip_matching_quotes(" ".join(tail_tokens).strip())
             if tail_command:
-                nested_tokens = _shell_script_tokens(tail_command)
+                nested_tokens = _shell_script_tokens(
+                    tail_command,
+                    windows_command_context=nested_windows_context,
+                    powershell_command_context=nested_powershell_context,
+                )
                 nested_command_indexes = _shell_command_position_token_indexes(nested_tokens)
                 nested_blocked_command = _blocked_command_from_nested_shell_invocation(
                     nested_tokens,
@@ -1317,10 +1613,9 @@ def _blocked_command_from_nested_shell_invocation(
                 if nested_blocked_command is not None:
                     return nested_blocked_command
                 for tail_command_index in nested_command_indexes:
-                    normalized = _normalize_executable(nested_tokens[tail_command_index])
-                    blocked_command = _blocked_command_name(normalized)
+                    blocked_command = _blocked_shell_command_name(nested_tokens[tail_command_index])
                     if blocked_command is not None:
-                        return normalized
+                        return blocked_command
             break
     return None
 
@@ -1331,23 +1626,97 @@ def _compact_nested_cmd_shell_command(
     normalized_token: str,
     index: int,
 ) -> str | None:
-    if shell_executable not in {"cmd", "cmd.exe"}:
+    if shell_executable not in CMD_EXECUTABLES:
         return None
-    for flag in SHELL_COMMAND_FLAGS[shell_executable]:
-        if normalized_token.startswith(flag) and normalized_token != flag:
-            inline_inner = tokens[index].strip()[len(flag) :].strip()
-            remaining = " ".join(tokens[index + 1 :]).strip()
-            inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
-            return _strip_matching_quotes(inner_command) or None
-    return None
+    flag_start = _cmd_command_flag_start(normalized_token)
+    if flag_start is None:
+        return None
+    inline_start = flag_start + 2
+    inline_inner = tokens[index].strip()[inline_start:].strip()
+    if inline_inner.startswith((":", "=")):
+        inline_inner = inline_inner[1:].strip()
+    remaining = " ".join(tokens[index + 1 :]).strip()
+    inner_command = " ".join(part for part in [inline_inner, remaining] if part).strip()
+    return _strip_matching_quotes(inner_command) or None
 
 
 def _blocked_command_from_start_process_argument_list(
     command_name: str,
     tokens: list[str],
 ) -> str | None:
-    if command_name not in START_PROCESS_COMMAND_NAMES:
+    for payload in _start_process_payloads(command_name, tokens):
+        blocked_command = _blocked_command_from_launcher_payload(
+            payload,
+        )
+        if blocked_command is not None:
+            return blocked_command
+    return None
+
+
+def _decision_from_start_process_payloads(
+    outer_command: str,
+    command_name: str,
+    tokens: list[str],
+    request: CommandPolicyRequest,
+    policy_cwd: Path,
+) -> CommandPolicyDecision | None:
+    approval_decision: CommandPolicyDecision | None = None
+    for payload in _start_process_payloads(command_name, tokens):
+        payload_decision = _decision_from_launcher_payload(
+            outer_command,
+            payload,
+            request,
+            policy_cwd,
+        )
+        if payload_decision is None:
+            continue
+        if payload_decision.permission_mode == PermissionMode.blocked:
+            return payload_decision
+        if approval_decision is None:
+            approval_decision = payload_decision
+    return approval_decision
+
+
+def _decision_from_launcher_payload(
+    outer_command: str,
+    payload: str,
+    request: CommandPolicyRequest,
+    policy_cwd: Path,
+) -> CommandPolicyDecision | None:
+    payload_command = _strip_matching_quotes(payload.strip())
+    if not payload_command:
         return None
+    parsed_payload = parse_command(payload_command)
+    payload_decision = _default_decision(
+        payload_command,
+        parsed_payload,
+        request,
+        policy_cwd,
+    )
+    if payload_decision.permission_mode == PermissionMode.autopilot_safe:
+        return None
+    reason_prefix = (
+        "Launcher payload is blocked"
+        if payload_decision.permission_mode == PermissionMode.blocked
+        else "Launcher payload requires approval"
+    )
+    return CommandPolicyDecision(
+        command=outer_command,
+        risk=payload_decision.risk,
+        permission_mode=payload_decision.permission_mode,
+        reason=f"{reason_prefix}: {payload_decision.reason}",
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
+        matched_rule_id=payload_decision.matched_rule_id,
+        matched_rule_name=payload_decision.matched_rule_name,
+    )
+
+
+def _start_process_payloads(command_name: str, tokens: list[str]) -> list[str]:
+    if command_name not in START_PROCESS_COMMAND_NAMES:
+        return []
+    payloads: list[str] = []
     for index, token in enumerate(tokens[:-1]):
         parameter_name, inline_value = _split_powershell_parameter_value(
             token,
@@ -1358,18 +1727,18 @@ def _blocked_command_from_start_process_argument_list(
         payload_tokens = tokens[index + 1 :]
         if inline_value:
             payload_tokens = [inline_value, *payload_tokens]
-        blocked_command = _blocked_command_from_launcher_payload(
-            _start_process_argument_payload(payload_tokens)
-        )
-        if blocked_command is not None:
-            return blocked_command
+        payload = _start_process_argument_payload(payload_tokens)
+        if payload:
+            payloads.append(payload)
 
     launcher_payload = _start_process_launcher_payload(command_name, tokens)
     if launcher_payload:
-        blocked_command = _blocked_command_from_launcher_payload(launcher_payload)
-        if blocked_command is not None:
-            return blocked_command
-    return None
+        payloads.append(launcher_payload)
+    return [
+        payload
+        for index, payload in enumerate(payloads)
+        if payload and payload not in payloads[:index]
+    ]
 
 
 def _split_powershell_parameter_value(
@@ -1480,7 +1849,23 @@ def _blocked_command_from_launcher_payload(payload: str) -> str | None:
     payload_command = _strip_matching_quotes(payload.strip())
     if not payload_command:
         return None
+    parsed_payload = parse_command(payload_command)
+    payload_inner_command = _parse_inner_shell_command(parsed_payload)
+    if payload_inner_command is not None:
+        blocked_inner_command = _blocked_command_from_shell_text(
+            payload_inner_command,
+            windows_command_context=_host_is_windows()
+            and parsed_payload.executable in CMD_EXECUTABLES,
+            powershell_command_context=parsed_payload.executable in POWERSHELL_EXECUTABLES,
+        )
+        if blocked_inner_command is not None:
+            return blocked_inner_command
+
     payload_command = _strip_leading_shell_options(payload_command)
+    blocked_shell_command = _blocked_command_from_shell_text(payload_command)
+    if blocked_shell_command is not None:
+        return blocked_shell_command
+
     tokens = _shell_script_tokens(payload_command)
     command_token_indexes = _shell_command_position_token_indexes(tokens)
     nested_blocked_command = _blocked_command_from_nested_shell_invocation(
@@ -1490,10 +1875,70 @@ def _blocked_command_from_launcher_payload(payload: str) -> str | None:
     if nested_blocked_command is not None:
         return nested_blocked_command
     for command_index in command_token_indexes:
-        normalized = _normalize_executable(tokens[command_index])
-        blocked_command = _blocked_command_name(normalized)
+        blocked_command = _blocked_shell_command_name(tokens[command_index])
         if blocked_command is not None:
-            return normalized
+            return blocked_command
+    return None
+
+
+def _blocked_command_from_shell_text(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> str | None:
+    segments, _has_control_operator = _split_shell_command_segments(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    substitutions = _extract_shell_substitutions(
+        command,
+        powershell_command_context=powershell_command_context,
+    )
+    for segment in [*segments, *substitutions]:
+        blocked_command = _blocked_command_from_shell_segment(
+            _strip_leading_shell_assignments(segment),
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        )
+        if blocked_command is not None:
+            return blocked_command
+    return _blocked_command_from_shell_segment(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+
+
+def _blocked_command_from_shell_segment(
+    segment: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> str | None:
+    tokens = _shell_script_tokens(
+        segment,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    command_token_indexes = _shell_command_position_token_indexes(tokens)
+    nested_blocked_command = _blocked_command_from_nested_shell_invocation(
+        tokens,
+        command_token_indexes,
+    )
+    if nested_blocked_command is not None:
+        return nested_blocked_command
+    for command_index in command_token_indexes:
+        blocked_command = _blocked_shell_command_name(tokens[command_index])
+        if blocked_command is not None:
+            return blocked_command
+        payload_blocked_command = _blocked_command_from_start_process_argument_list(
+            _normalize_shell_executable(tokens[command_index]),
+            tokens,
+        )
+        if payload_blocked_command is not None:
+            return payload_blocked_command
     return None
 
 
@@ -1524,7 +1969,130 @@ def _is_shell_assignment_token(token: str) -> bool:
 
 
 def _is_quoted_token(token: str) -> bool:
-    return len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}
+    stripped = token.strip()
+    return (len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}) or (
+        len(stripped) >= 4 and stripped[:2] == stripped[-2:] and stripped[:2] in {'\\"', "\\'"}
+    )
+
+
+def _normalize_shell_executable(token: str) -> str:
+    variants = _shell_command_token_variants(token)
+    return _normalize_executable(variants[0] if variants else token)
+
+
+def _blocked_shell_command_name(token: str) -> str | None:
+    for candidate in _shell_command_token_variants(token):
+        normalized = _normalize_executable(candidate)
+        if _blocked_command_name(normalized) is not None:
+            return normalized
+    return None
+
+
+def _shell_command_token_variants(token: str) -> list[str]:
+    stripped = _strip_matching_quotes(token.strip())
+    decoded = _decode_shell_command_token(stripped)
+    variants = [decoded]
+    backslash_decoded = _decode_posix_backslash_escapes(decoded)
+    if backslash_decoded != decoded:
+        variants.append(backslash_decoded)
+    if stripped != decoded:
+        variants.append(stripped)
+    return [
+        variant
+        for index, variant in enumerate(variants)
+        if variant and variant not in variants[:index]
+    ]
+
+
+def _decode_shell_command_token(token: str) -> str:
+    decoded = _ANSI_C_QUOTED_SEGMENT_RE.sub(
+        lambda match: _decode_ansi_c_escapes(match.group(1)),
+        token,
+    )
+    decoded = _LOCALIZED_QUOTED_SEGMENT_RE.sub(lambda match: match.group(1), decoded)
+    decoded = _decode_cmd_caret_escapes(decoded)
+    decoded = _decode_powershell_backtick_escapes(decoded)
+    return decoded.replace("'", "").replace('"', "")
+
+
+def _decode_ansi_c_escapes(text: str) -> str:
+    escapes = {
+        "a": "\a",
+        "b": "\b",
+        "e": "\x1b",
+        "E": "\x1b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+        "?": "?",
+    }
+    result: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char != "\\" or index + 1 >= len(text):
+            result.append(char)
+            index += 1
+            continue
+
+        escaped = text[index + 1]
+        if escaped == "u" and index + 5 < len(text):
+            hex_digits = text[index + 2 : index + 6]
+            if all(digit in "0123456789abcdefABCDEF" for digit in hex_digits):
+                result.append(chr(int(hex_digits, 16)))
+                index += 6
+                continue
+        if escaped == "U" and index + 9 < len(text):
+            hex_digits = text[index + 2 : index + 10]
+            if all(digit in "0123456789abcdefABCDEF" for digit in hex_digits):
+                try:
+                    result.append(chr(int(hex_digits, 16)))
+                except ValueError:
+                    result.append(f"\\U{hex_digits}")
+                index += 10
+                continue
+        if escaped in {"x", "X"}:
+            hex_digits = []
+            cursor = index + 2
+            while (
+                cursor < len(text)
+                and len(hex_digits) < 2
+                and text[cursor] in "0123456789abcdefABCDEF"
+            ):
+                hex_digits.append(text[cursor])
+                cursor += 1
+            if hex_digits:
+                result.append(chr(int("".join(hex_digits), 16)))
+                index = cursor
+                continue
+        if escaped in "01234567":
+            octal_digits = [escaped]
+            cursor = index + 2
+            while cursor < len(text) and len(octal_digits) < 3 and text[cursor] in "01234567":
+                octal_digits.append(text[cursor])
+                cursor += 1
+            result.append(chr(int("".join(octal_digits), 8)))
+            index = cursor
+            continue
+
+        result.append(escapes.get(escaped, escaped))
+        index += 2
+    return "".join(result)
+
+
+def _decode_powershell_backtick_escapes(token: str) -> str:
+    continued = re.sub(r"`\r?\n[ \t]*", "", token)
+    return re.sub(r"`([\s\S])", r"\1", continued)
+
+
+def _decode_posix_backslash_escapes(token: str) -> str:
+    continued = re.sub(r"\\\r?\n[ \t]*", "", token)
+    return re.sub(r"\\([\s\S])", r"\1", continued)
 
 
 def _blocked_command_name(executable: str) -> str | None:
@@ -1539,16 +2107,31 @@ def _blocked_command_name(executable: str) -> str | None:
     return None
 
 
-def _command_targets_protected_data_dir(command: str) -> bool:
+def _command_targets_protected_data_dir(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> bool:
     settings = get_settings()
     root_dir = settings.root_dir.resolve()
     data_dir = settings.data_dir
     if not data_dir.is_absolute():
         data_dir = root_dir / data_dir
     protected_data_dir = data_dir.resolve()
-    for token in _shell_script_tokens(command):
+    for token in _shell_script_tokens(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    ):
         candidate_token = _strip_matching_quotes(token)
-        if _token_targets_path(candidate_token, protected_data_dir, root_dir):
+        if _token_targets_path(
+            candidate_token,
+            protected_data_dir,
+            root_dir,
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        ):
             return True
     return False
 
@@ -1562,6 +2145,10 @@ def _resolve_policy_cwd(cwd: Path | None) -> Path | None:
     if resolved != root_dir and root_dir not in resolved.parents:
         return None
     return resolved
+
+
+def _host_is_windows() -> bool:
+    return os.name == "nt"
 
 
 def _read_only_command_targets_outside_root(
@@ -1775,29 +2362,55 @@ def _token_targets_path(
     token: str,
     protected_data_dir: PureWindowsPath,
     root_dir: PureWindowsPath,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
 ) -> bool:
     return any(
         _path_candidate_targets_path(candidate, protected_data_dir, root_dir)
-        for candidate in _path_token_candidates(token)
+        for candidate in _path_token_candidates(
+            token,
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        )
     )
 
 
-def _path_token_candidates(token: str) -> list[str]:
+def _path_token_candidates(
+    token: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> list[str]:
     stripped = _strip_matching_quotes(token.strip())
     if _contains_shell_variable_path(stripped):
         return [stripped]
-    cleaned = stripped.replace('"', "").replace("'", "")
-    if not cleaned:
-        return []
-    candidates = [cleaned]
-    if cleaned.startswith("-"):
-        for separator in (":", "="):
-            if separator in cleaned:
-                _name, value = cleaned.split(separator, 1)
-                if value:
-                    candidates.append(value)
-                break
-    return candidates
+    decoded_variants = [stripped]
+    if windows_command_context:
+        decoded_variants.append(_decode_cmd_caret_escapes(stripped))
+    if powershell_command_context:
+        decoded_variants.append(_decode_powershell_backtick_escapes(stripped))
+    if not windows_command_context and not powershell_command_context:
+        decoded_variants.append(_decode_posix_backslash_escapes(stripped))
+
+    candidates: list[str] = []
+    for variant in decoded_variants:
+        cleaned = variant.replace('"', "").replace("'", "")
+        if not cleaned:
+            continue
+        candidates.append(cleaned)
+        if cleaned.startswith("-"):
+            for separator in (":", "="):
+                if separator in cleaned:
+                    _name, value = cleaned.split(separator, 1)
+                    if value:
+                        candidates.append(value)
+                    break
+    return [
+        candidate
+        for index, candidate in enumerate(candidates)
+        if candidate and candidate not in candidates[:index]
+    ]
 
 
 def _path_candidate_targets_path(

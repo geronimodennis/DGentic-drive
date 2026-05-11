@@ -70,7 +70,7 @@ Current modules:
 - `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, POSIX translation for policy-approved `cmd /c` and `cmd.exe /c` wrappers, chunked output polling, supervision metadata, auditable lifecycle states, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
-- `guardrails.py`: Filesystem policy evaluation plus guarded UTF-8 text file reads, writes, and command execution compatibility wrappers.
+- `guardrails.py`: Filesystem policy evaluation plus guarded text, binary, directory, metadata, delete, move, copy, rename, and command execution compatibility wrappers.
 - `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
 - `provider_runtime.py`: Ollama and LM Studio chat/completion request execution.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
@@ -80,10 +80,10 @@ Current modules:
 - `tools/`: SQLAlchemy-backed tool registry service with duplicate detection, usage tracking, reliability scoring, and source-path validation.
 - `tool_runtime.py`: Generated tool subprocess execution and reliability counter updates.
 - `sessions.py`: Session summary registry.
-- `events.py`: Central event log backed by local JSON state.
+- `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
 - `database.py`: Configurable SQLAlchemy engine/session helper, migration initialization, cached database reset, SQLite path resolution, and file-backed SQLite backup/restore helpers.
-- `storage.py`: JSON collection persistence helper for MVP local state.
+- `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine and restore helpers.
 - `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
 ### `tests/`
@@ -146,7 +146,15 @@ Current endpoints:
 - `GET /tasks/runs`: Lists persisted task execution runs.
 - `POST /guardrails/filesystem`: Evaluates filesystem action policy against `rootDir`.
 - `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
-- `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval.
+- `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval and payload-size validation.
+- `POST /filesystem/read-binary`: Reads a binary file as base64 after root boundary policy approval and payload-size validation.
+- `POST /filesystem/write-binary`: Writes base64 binary content after root boundary policy approval and payload-size validation.
+- `POST /filesystem/list`: Lists safe directory entries after root boundary policy approval.
+- `POST /filesystem/metadata`: Returns file or directory metadata after root boundary policy approval.
+- `POST /filesystem/delete`: Deletes a file or directory after destructive-operation approval.
+- `POST /filesystem/move`: Moves a file or directory after destructive-operation approval.
+- `POST /filesystem/copy`: Copies a file or directory after destructive-operation approval.
+- `POST /filesystem/rename`: Renames a file or directory after destructive-operation approval.
 - `POST /guardrails/commands`: Classifies CLI command risk, optionally using agent role, agent id, and task id context.
 - `POST /cli/policy/rules`: Creates a persisted CLI policy rule, optionally scoped to one or more agent roles.
 - `GET /cli/policy/rules`: Lists persisted CLI policy rules in evaluation order.
@@ -158,8 +166,9 @@ Current endpoints:
 - `POST /cli/runs/{run_id}/cancel`: Requests cancellation for a running command in the current backend process.
 - `POST /cli/approvals`: Creates a pending approval for approval-required commands. Approval records include command digest, cwd, timeout, requester, agent/task context, environment keys without values, matched policy metadata, and expiry.
 - `GET /cli/approvals`: Lists CLI approval records.
-- `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command.
-- `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command.
+- `GET /cli/approvals/{approval_id}/review`: Returns the safe approval review contract for UI consumers, including redacted review command, cwd, timeout, permission mode, policy reason, requester, agent/task context, environment keys without values, matched rule metadata, command/environment HMAC digests, bound-execution warnings, direct-execute availability, decision reasons, run id, and lifecycle timestamps.
+- `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command with an optional redacted decision reason.
+- `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command with an optional redacted decision reason.
 - `POST /cli/approvals/{approval_id}/execute`: Executes an approved CLI command once when no environment override is required.
 - `GET /cli/runs`: Lists persisted CLI command run history.
 - `GET /providers`: Lists configured providers with discovered local model names when reachable.
@@ -195,7 +204,7 @@ Current endpoints:
 - `POST /api/v1/tools/registry/{tool_id}/deprecate`: Marks a tool registry entry as deprecated.
 - `POST /sessions/summary`: Creates a session summary.
 - `GET /sessions/summary`: Lists session summaries.
-- `GET /logs`: Lists recorded events, optionally filtered by event type.
+- `GET /logs`: Lists recorded events, optionally filtered by event type, with common secret patterns and structured sensitive metadata keys redacted on write and response.
 
 ## Engineering Baseline
 
@@ -215,7 +224,7 @@ Quality gates:
 
 ## Local State
 
-DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`. SQLAlchemy-backed metadata and registry services use `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default for the local MVP database and can be pointed at another SQLAlchemy database with `DGENTIC_DATABASE_URL`.
+DGentic stores MVP local state as JSON collections under `.dgentic/` by default. The directory is ignored by Git and can be changed with `DGENTIC_DATA_DIR`. When a JSON collection file is malformed or no longer validates against its model, the storage layer moves the original file to a timestamped `*.corrupt-*.json` quarantine beside the active file and repairs the active collection to an empty valid array. SQLAlchemy-backed metadata and registry services use `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default for the local MVP database and can be pointed at another SQLAlchemy database with `DGENTIC_DATABASE_URL`.
 
 Current collections:
 
@@ -231,9 +240,9 @@ Current collections:
 - `cli-command-runs.json`
 - `dgentic.db`
 
-SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`. File-backed SQLite local databases can be backed up and restored with `backup_sqlite_database()` and `restore_sqlite_database()` for operator smoke workflows; scheduled, remote, and PostgreSQL-native backup automation remains future production work.
+JSON collections expose `list_quarantined_files()` and `restore_quarantine()` helper methods for operator or test repair workflows when a quarantined file is valid enough to restore. SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`. File-backed SQLite local databases can be backed up and restored with `backup_sqlite_database()` and `restore_sqlite_database()` for operator smoke workflows; scheduled, remote, and PostgreSQL-native backup automation remains future production work.
 
-## Sprint 9 BL-003a Parser And Approval Review Contract Scope
+## Sprint 9 BL-003 Parser And Approval Review Contract Scope
 
 Architect status: implementation-ready scope for the next Sprint 9 slice.
 
@@ -252,9 +261,12 @@ Current parser contract:
 
 Current approval-review contract:
 
-- Approval records expose command, cwd, timeout, requested_by, agent_id, agent_role, task_id, permission mode, policy reason, environment keys, matched rule id/name, command digest, expiry, decision actor, denial reason, run id, and lifecycle timestamps.
+- Approval records expose command, cwd, timeout, requested_by, agent_id, agent_role, task_id, permission mode, policy reason, environment keys, matched rule id/name, command digest, expiry, decision actor, decision reason, denial reason, run id, and lifecycle timestamps.
+- `GET /cli/approvals/{approval_id}/review` exposes the UI-facing safe review contract with redacted `review_command`, environment key names only, command/environment HMAC digest identifiers, warnings for redacted-command or environment-bound execution, and `direct_execute_available` only when an approved, unexpired approval can be directly executed without a bound request.
 - Environment values are not persisted in approval records; only environment variable names are stored for review and binding.
+- Approve and deny decision reasons plus approval audit/log metadata are redacted for common secret assignments, secret-like flags, shell substitutions, and structured sensitive metadata keys before persistence or response.
 - Direct execution with a bound approval id validates command, cwd, timeout, requester, agent/task context, environment keys, permission mode, matched policy metadata, and digest before execution.
+- The backend approval review contract is implemented; the interactive approval UI itself remains BL-010/Sprint 16 work.
 
 BL-003a Developer scope:
 
@@ -290,7 +302,7 @@ Architect handoff:
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
 - Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
-- Perform filesystem operations only through guardrail evaluation; current runtime support is intentionally limited to UTF-8 text reads and writes inside `rootDir`.
+- Perform filesystem operations only through guardrail evaluation; current runtime support includes text and base64 binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`, with protected state-file blocking, symlink escape checks, size limits, and audit logging.
 - Execute CLI commands only through configurable command policy evaluation, root-bound and cwd-aware working directories, controlled inherited environments plus explicit non-sensitive overrides, single-use approval records for approval-required commands outside development/test mode, sanitized output capture, persisted run history, and audit logging.
-- Support asynchronous CLI runs through persisted run records, redacted output chunks, supervision metadata, auditable lifecycle states, stale-running reconciliation, timeout handling, and process-local cancellation; production process recovery and multi-worker supervision remain follow-up work.
+- Support asynchronous CLI runs through persisted run records, redacted output chunks, supervision metadata, auditable lifecycle states, stale-running reconciliation, timeout handling, process-local cancellation, and conservative post-restart orphan termination when the persisted process identity still matches the live process. Full process adoption/resumable output after restart and production multi-worker supervision with durable leases remain follow-up work.
 - Keep built-in CLI defaults for blocked and approval-required executables, inspect common shell wrappers such as `cmd /c`, `sh -c`, and PowerShell command invocations for blocked inner commands, block built-in read-only path operands that resolve or shell-expand outside `rootDir`, translate simple policy-approved `cmd /c` and `cmd.exe /c` wrappers to `sh -c` on POSIX hosts, and let persisted rules override or refine defaults by executable, exact command, command substring, argument substring, or agent role.

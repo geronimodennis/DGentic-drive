@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import signal
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,8 @@ from dgentic.cli_runtime import (
     CommandOutputChunk,
     CommandRun,
     CommandRunStatus,
+    OrphanTerminationStatus,
+    ProcessSnapshot,
     _command_args,
     command_approval_digest,
     command_environment_digest,
@@ -138,7 +141,8 @@ def test_create_approval_includes_redacted_review_contract_metadata(runtime) -> 
         " --github_token gh-secret --client_secret client-secret /password:win-secret "
         'PASSWORD="abc \\" tail secret" --secret "flag \\" tail secret" '
         r"--access-key escaped\ value API_KEY=escaped\ assignment "
-        "--token=$(printf SUPER_SECRET; echo ok) SECRET=$(printf ASSIGNMENT_SECRET; echo ok)"
+        "--token=$(printf SUPER_SECRET; echo ok) SECRET=$(printf ASSIGNMENT_SECRET; echo ok) "
+        "API_TOKEN=ps` assignment --refresh-token ps` value"
     )
 
     approval = service.create_approval(
@@ -166,6 +170,8 @@ def test_create_approval_includes_redacted_review_contract_metadata(runtime) -> 
     assert "escaped\\ assignment" not in approval.command
     assert "SUPER_SECRET" not in approval.command
     assert "ASSIGNMENT_SECRET" not in approval.command
+    assert "ps` assignment" not in approval.command
+    assert "ps` value" not in approval.command
     assert "echo ok)" not in approval.command
     assert "TOKEN=[REDACTED]" in approval.review_command
     assert "--token [REDACTED]" in approval.review_command
@@ -179,6 +185,8 @@ def test_create_approval_includes_redacted_review_contract_metadata(runtime) -> 
     assert "API_KEY=[REDACTED]" in approval.review_command
     assert "--token=[REDACTED]" in approval.review_command
     assert "SECRET=[REDACTED]" in approval.review_command
+    assert "API_TOKEN=[REDACTED]" in approval.review_command
+    assert "--refresh-token [REDACTED]" in approval.review_command
     assert approval.environment_keys == ["DGENTIC_TEST_FLAG"]
     assert approval.matched_rule_id == rule.id
     assert approval.matched_rule_name == "Review Python secret command"
@@ -205,10 +213,162 @@ def test_create_approval_includes_redacted_review_contract_metadata(runtime) -> 
     assert "escaped\\ assignment" not in approval_storage
     assert "SUPER_SECRET" not in approval_storage
     assert "ASSIGNMENT_SECRET" not in approval_storage
+    assert "ps` assignment" not in approval_storage
+    assert "ps` value" not in approval_storage
     assert "echo ok)" not in approval_storage
     assert "DGENTIC_TEST_FLAG" in approval_storage
     assert "environment_digest" in approval_storage
     assert "should-not-persist" not in approval_storage
+
+
+def test_approval_review_contract_is_safe_for_ui_consumers(runtime) -> None:
+    service, root_dir, _data_dir = runtime
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Review Python secret command",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="python",
+            permission_mode=PermissionMode.approval_required,
+            reason="Python commands require approval review.",
+            priority=5,
+        )
+    )
+    approval = service.create_approval(
+        CommandExecutionRequest(
+            command="python deploy.py --token super-secret",
+            environment={"DGENTIC_TEST_FLAG": "should-not-persist"},
+            timeout_seconds=12,
+            requested_by="operator",
+            agent_role="developer",
+            agent_id="agent-dev-1",
+            task_id="BL-003b",
+        )
+    )
+
+    review = service.get_approval_review(approval.id)
+
+    assert review.id == approval.id
+    assert review.status == CommandApprovalStatus.pending
+    assert review.review_command == "python deploy.py --token [REDACTED]"
+    assert review.cwd == root_dir.resolve()
+    assert review.timeout_seconds == 12
+    assert review.permission_mode == PermissionMode.approval_required
+    assert review.policy_reason == "Python commands require approval review."
+    assert review.requested_by == "operator"
+    assert review.agent_role == "developer"
+    assert review.agent_id == "agent-dev-1"
+    assert review.task_id == "BL-003b"
+    assert review.environment_keys == ["DGENTIC_TEST_FLAG"]
+    assert review.command_digest.startswith("hmac-sha256:")
+    assert review.environment_digest.startswith("hmac-sha256:")
+    assert review.requires_bound_execution_request is True
+    assert review.direct_execute_available is False
+    assert any("redacted" in warning for warning in review.review_warnings)
+    assert any("environment keys" in warning for warning in review.review_warnings)
+    assert not any(
+        "legacy or invalid binding digests" in warning for warning in review.review_warnings
+    )
+    assert "super-secret" not in review.model_dump_json()
+    assert "should-not-persist" not in review.model_dump_json()
+
+
+def test_approval_review_contract_marks_direct_execution_availability(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+    approval = service.create_approval(CommandExecutionRequest(command="python --version"))
+    review_before = service.get_approval_review(approval.id)
+
+    service.approve_approval(
+        approval.id,
+        decided_by="reviewer",
+        reason="Version check is acceptable.",
+    )
+    review_after = service.get_approval_review(approval.id)
+
+    assert review_before.direct_execute_available is False
+    assert review_after.status == CommandApprovalStatus.approved
+    assert review_after.direct_execute_available is True
+    assert review_after.requires_bound_execution_request is False
+    assert review_after.decided_by == "reviewer"
+    assert review_after.decision_reason == "Version check is acceptable."
+    assert review_after.denial_reason is None
+
+
+def test_approval_review_contract_blocks_direct_execution_for_legacy_digests(
+    runtime,
+) -> None:
+    service, _root_dir, data_dir = runtime
+    approval = service.create_approval(CommandExecutionRequest(command="python --version"))
+    service.approve_approval(approval.id, decided_by="reviewer")
+    storage_path = data_dir / "cli-approvals.json"
+    raw_items = json.loads(storage_path.read_text(encoding="utf-8"))
+    raw_items[0]["command_digest"] = "legacy-sha256:command"
+    raw_items[0]["environment_digest"] = "legacy-sha256:environment"
+    storage_path.write_text(json.dumps(raw_items, indent=2) + "\n", encoding="utf-8")
+
+    review = service.get_approval_review(approval.id)
+
+    assert review.status == CommandApprovalStatus.approved
+    assert review.direct_execute_available is False
+    assert any("legacy or invalid binding digests" in warning for warning in review.review_warnings)
+    with pytest.raises(PermissionError, match="legacy or invalid binding digests"):
+        service.execute_approved_command(approval.id)
+
+
+def test_approval_decision_reasons_are_redacted_before_persistence(runtime) -> None:
+    service, _root_dir, data_dir = runtime
+    approved = service.create_approval(CommandExecutionRequest(command="python --version"))
+    denied = service.create_approval(CommandExecutionRequest(command="python -V"))
+
+    service.approve_approval(
+        approved.id,
+        decided_by="reviewer",
+        reason="Approved with --token super-secret for local version check.",
+    )
+    service.deny_approval(
+        denied.id,
+        decided_by="reviewer",
+        reason="Denied because PASSWORD=super-secret was pasted.",
+    )
+
+    approved_review = service.get_approval_review(approved.id)
+    denied_review = service.get_approval_review(denied.id)
+    approval_storage = (data_dir / "cli-approvals.json").read_text(encoding="utf-8")
+
+    assert approved_review.decision_reason == (
+        "Approved with --token [REDACTED] for local version check."
+    )
+    assert denied_review.decision_reason is not None
+    assert "PASSWORD=[REDACTED]" in denied_review.decision_reason
+    assert denied_review.denial_reason is not None
+    assert "PASSWORD=[REDACTED]" in denied_review.denial_reason
+    assert "super-secret" not in approved_review.model_dump_json()
+    assert "super-secret" not in denied_review.model_dump_json()
+    assert "super-secret" not in approval_storage
+
+
+def test_legacy_persisted_approval_reasons_are_redacted_for_consumers(runtime) -> None:
+    service, _root_dir, data_dir = runtime
+    approval = service.create_approval(CommandExecutionRequest(command="python --version"))
+    service.deny_approval(approval.id, decided_by="reviewer", reason="Not needed.")
+    storage_path = data_dir / "cli-approvals.json"
+    raw_items = json.loads(storage_path.read_text(encoding="utf-8"))
+    raw_items[0]["decision_reason"] = "Approved with --token super-secret."
+    raw_items[0]["denial_reason"] = "Denied because PASSWORD=super-secret was pasted."
+    storage_path.write_text(json.dumps(raw_items, indent=2) + "\n", encoding="utf-8")
+
+    listed = next(item for item in service.list_approvals() if item.id == approval.id)
+    review = service.get_approval_review(approval.id)
+
+    assert listed.decision_reason is not None
+    assert "--token [REDACTED]" in listed.decision_reason
+    assert listed.denial_reason is not None
+    assert "PASSWORD=[REDACTED]" in listed.denial_reason
+    assert review.decision_reason is not None
+    assert "--token [REDACTED]" in review.decision_reason
+    assert review.denial_reason is not None
+    assert "PASSWORD=[REDACTED]" in review.denial_reason
+    assert "super-secret" not in listed.model_dump_json()
+    assert "super-secret" not in review.model_dump_json()
 
 
 def test_approval_binding_digests_are_keyed(runtime) -> None:
@@ -331,7 +491,12 @@ def test_denied_approval_cannot_execute(runtime) -> None:
     )
 
     assert denied.status == CommandApprovalStatus.denied
+    assert denied.decision_reason == "Not needed."
     assert denied.denial_reason == "Not needed."
+    review = service.get_approval_review(approval.id)
+    assert review.status == CommandApprovalStatus.denied
+    assert review.decision_reason == "Not needed."
+    assert review.denial_reason == "Not needed."
     with pytest.raises(PermissionError, match="not executable"):
         service.execute_approved_command(approval.id)
     assert service.list_command_runs() == []
@@ -427,6 +592,7 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
         ("cmd.exe /c echo hello", ["sh", "-c", "echo hello"]),
         ('cmd /c "echo hello world"', ["sh", "-c", "echo hello world"]),
         ("cmd /cecho compact", ["sh", "-c", "echo compact"]),
+        ('cmd /d /s /c "echo hello"', ["sh", "-c", "echo hello"]),
     ],
 )
 def test_command_args_translates_cmd_wrappers_on_posix(command: str, expected: list[str]) -> None:
@@ -898,8 +1064,12 @@ def test_start_command_launch_failure_binds_approval(runtime, monkeypatch) -> No
             )
         )
 
-    failed = service.list_command_runs()[0]
-    stored_approval = service.list_approvals()[0]
+    failed = next(run for run in service.list_command_runs() if run.approval_id == approval.id)
+    stored_approval = next(
+        item
+        for item in service.list_approvals(CommandApprovalStatus.executed)
+        if item.id == approval.id
+    )
     assert failed.status == CommandRunStatus.failed
     assert stored_approval.status == CommandApprovalStatus.executed
     assert stored_approval.run_id == failed.id
@@ -1282,6 +1452,13 @@ def test_cancel_orphaned_running_run_marks_stale(runtime) -> None:
     assert reconciled.stale_reason is not None
     assert "Cancellation requested" in reconciled.stale_reason
     assert "previous backend supervisor" in reconciled.stale_reason
+    assert reconciled.termination_status == OrphanTerminationStatus.skipped
+    assert reconciled.termination_reason == (
+        "Termination skipped because process identity was not persisted."
+    )
+    assert reconciled.termination_attempted_at is not None
+    assert reconciled.termination_completed_at is not None
+    assert reconciled.terminated_by_supervisor_id == service.supervisor_id
 
 
 def test_reconcile_stale_command_runs_marks_orphaned_running_records(runtime) -> None:
@@ -1312,6 +1489,10 @@ def test_reconcile_stale_command_runs_marks_orphaned_running_records(runtime) ->
     assert "marked stale" in stored.stderr
     assert stored.stale_reason is not None
     assert "no persisted supervisor metadata" in stored.stale_reason
+    assert stored.termination_status == OrphanTerminationStatus.skipped
+    assert stored.termination_reason == (
+        "Termination skipped because process identity was not persisted."
+    )
 
 
 def test_reconcile_stale_command_runs_records_launch_interruption_reason(runtime) -> None:
@@ -1338,6 +1519,8 @@ def test_reconcile_stale_command_runs_records_launch_interruption_reason(runtime
     assert stored.status == CommandRunStatus.stale
     assert stored.stale_reason is not None
     assert "launch did not complete" in stored.stale_reason
+    assert stored.termination_status == OrphanTerminationStatus.skipped
+    assert stored.termination_reason == "Termination skipped because the run is not running."
 
 
 def test_reconcile_stale_command_runs_records_previous_supervisor_reason(runtime) -> None:
@@ -1363,6 +1546,210 @@ def test_reconcile_stale_command_runs_records_previous_supervisor_reason(runtime
     assert [run.id for run in reconciled] == [previous_supervisor_run.id]
     assert stored is not None
     assert stored.status == CommandRunStatus.stale
+    assert stored.stale_reason is not None
+    assert "previous backend supervisor" in stored.stale_reason
+    assert stored.termination_status == OrphanTerminationStatus.skipped
+    assert stored.termination_reason == (
+        "Termination skipped because process identity was not persisted."
+    )
+
+
+def test_reconcile_previous_supervisor_skips_termination_on_identity_mismatch(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-mismatch",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_group_id=4242,
+        process_identity="posix-proc-start:old",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        status_reason="Command process started.",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(run)
+    monkeypatch.setattr(
+        "dgentic.cli_runtime._process_snapshot",
+        lambda pid: ProcessSnapshot(pid=pid, identity="posix-proc-start:new"),
+    )
+
+    def fail_termination(_run: CommandRun) -> None:
+        pytest.fail("Mismatched process identity must not be terminated.")
+
+    monkeypatch.setattr(service, "_terminate_orphaned_process", fail_termination)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(run.id)
+
+    assert [item.id for item in reconciled] == [run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.termination_status == OrphanTerminationStatus.skipped
+    assert (
+        stored.termination_reason == "Termination skipped because process identity did not match."
+    )
+
+
+def test_reconcile_previous_supervisor_terminates_matching_orphan_and_marks_stale(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-matching-orphan",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_group_id=4242,
+        process_identity="posix-proc-start:match",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        status_reason="Command process started.",
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(run)
+    terminated: list[str] = []
+    monkeypatch.setattr(
+        "dgentic.cli_runtime._process_snapshot",
+        lambda pid: ProcessSnapshot(pid=pid, identity="posix-proc-start:match"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_terminate_orphaned_process",
+        lambda orphaned_run: terminated.append(orphaned_run.id),
+    )
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(run.id)
+
+    assert [item.id for item in reconciled] == [run.id]
+    assert terminated == [run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.termination_status == OrphanTerminationStatus.terminated
+    assert stored.termination_reason is not None
+    assert "termination was requested" in stored.termination_reason
+    assert stored.terminated_by_supervisor_id == service.supervisor_id
+    assert stored.termination_attempted_at is not None
+    assert stored.termination_completed_at is not None
+
+
+def test_terminate_orphaned_process_uses_posix_process_group(runtime, monkeypatch) -> None:
+    if subprocess.os.name == "nt":
+        pytest.skip("POSIX process groups are not used on Windows.")
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-posix-orphan",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_group_id=4242,
+        process_identity="posix-proc-start:match",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    signals: list[tuple[int, int]] = []
+    snapshots = iter(
+        [
+            ProcessSnapshot(pid=4242, identity="posix-proc-start:match"),
+            None,
+        ]
+    )
+    monkeypatch.setattr(
+        "dgentic.cli_runtime.os.killpg", lambda pgid, sig: signals.append((pgid, sig))
+    )
+    monkeypatch.setattr("dgentic.cli_runtime.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("dgentic.cli_runtime._process_snapshot", lambda _pid: next(snapshots))
+
+    service._terminate_orphaned_process(run)
+
+    assert signals == [(4242, signal.SIGTERM)]
+
+
+def test_terminate_orphaned_process_uses_windows_taskkill(runtime, monkeypatch) -> None:
+    if subprocess.os.name != "nt":
+        pytest.skip("Windows taskkill is not used on POSIX.")
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-windows-orphan",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_identity="windows-created:match",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    service._terminate_orphaned_process(run)
+
+    assert calls == [["taskkill", "/PID", "4242", "/T", "/F"]]
+
+
+def test_reconcile_windows_taskkill_timeout_marks_orphan_stale_with_failure(
+    runtime,
+    monkeypatch,
+) -> None:
+    if subprocess.os.name != "nt":
+        pytest.skip("Windows taskkill is not used on POSIX.")
+    service, root_dir, _data_dir = runtime
+    run = CommandRun(
+        id="cmdrun-windows-timeout",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_identity="windows-created:match",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    service._runs.upsert(run)
+    monkeypatch.setattr(
+        "dgentic.cli_runtime._process_snapshot",
+        lambda pid: ProcessSnapshot(pid=pid, identity="windows-created:match"),
+    )
+
+    def fake_run(args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=5)
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    reconciled = service.reconcile_stale_command_runs()
+    stored = service.get_command_run(run.id)
+
+    assert [item.id for item in reconciled] == [run.id]
+    assert stored is not None
+    assert stored.status == CommandRunStatus.stale
+    assert stored.termination_status == OrphanTerminationStatus.failed
+    assert stored.termination_reason is not None
+    assert stored.termination_reason.startswith("Orphan process termination")
     assert stored.stale_reason is not None
     assert "previous backend supervisor" in stored.stale_reason
 

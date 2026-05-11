@@ -181,6 +181,21 @@ def test_shell_wrapped_blocked_commands_do_not_bypass_policy(policy_state) -> No
             "Inner shell command erase is blocked",
         ),
         (
+            "cmd /d/s/c del important.txt",
+            PermissionMode.blocked,
+            "Inner shell command del is blocked",
+        ),
+        (
+            "cmd /d/s/cdel important.txt",
+            PermissionMode.blocked,
+            "Inner shell command del is blocked",
+        ),
+        (
+            "cmd /c=del important.txt",
+            PermissionMode.blocked,
+            "Inner shell command del is blocked",
+        ),
+        (
             "cmd.exe /c git status",
             PermissionMode.approval_required,
             "Inner shell command git requires approval",
@@ -191,6 +206,16 @@ def test_shell_wrapped_blocked_commands_do_not_bypass_policy(policy_state) -> No
             "powershell.exe -Command python --version",
             PermissionMode.approval_required,
             "Inner shell command python requires approval",
+        ),
+        (
+            "powershell -Com Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell /Com Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
         ),
         (
             "pwsh -Command rm -rf important",
@@ -286,6 +311,8 @@ def test_windows_executable_extensions_do_not_bypass_blocked_commands(
         "cmd /c \"start /b powershell -Command 'Remove-Item important.txt'\"",
         'cmd /c "start /b cmd /cdel important.txt"',
         'cmd /c "start /b cmd.exe /cdel important.txt"',
+        'cmd /c "start \\"title\\" cmd /d/s/cdel important.txt"',
+        'cmd /c "start \\"title\\" cmd /c=del important.txt"',
     ],
 )
 def test_cmd_start_does_not_skip_blocked_launched_commands(
@@ -1122,16 +1149,204 @@ def test_shell_command_prefixes_inspect_wrapped_commands(
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "reason_fragment"),
     [
-        "powershell -Command \"Start-Process cmd '/c del important.txt'\"",
-        'powershell -Command "Start-Process cmd -ArgumentList:/c,del important.txt"',
-        "powershell -Command \"Start-Process -FilePath cmd '/c del important.txt'\"",
+        ("bash -c \"r''m -rf important\"", "Inner shell command rm is blocked"),
+        ('bash -c "r\\"\\"m -rf important"', "Inner shell command rm is blocked"),
+        ("bash -c \"$'rm' -rf important\"", "Inner shell command rm is blocked"),
+        ("bash -c \"$'r\\x6d' -rf important\"", "Inner shell command rm is blocked"),
+        ("bash -c \"$'\\162\\155' -rf important\"", "Inner shell command rm is blocked"),
+        ("bash -c \"$'r\\u006d' -rf important\"", "Inner shell command rm is blocked"),
+        ("bash -c \"$'r\\U0000006d' -rf important\"", "Inner shell command rm is blocked"),
+        ("cmd /c d^el important.txt", "Inner shell command del is blocked"),
+        ('cmd /c d"e"l important.txt', "Inner shell command del is blocked"),
+        ("cmd /c r^d /s /q important", "Inner shell command rd is blocked"),
+        (
+            "powershell -Command Remove-`Item important.txt",
+            "Inner shell command remove-item is blocked",
+        ),
+        ("pwsh -Command r`m -rf important", "Inner shell command rm is blocked"),
+        (
+            "powershell -Command r`m im`portant.txt",
+            "Inner shell command rm is blocked",
+        ),
+        (
+            "powershell -Command Remove-`\nItem important.txt",
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell -Command Remove-`\r\nItem important.txt",
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "pwsh -Command r`\nm -rf important",
+            "Inner shell command rm is blocked",
+        ),
+        (
+            "pwsh -Command r`\r\nm -rf important",
+            "Inner shell command rm is blocked",
+        ),
+        ('bash -c "r\\\nm -rf important"', "Inner shell command rm is blocked"),
+        ('bash -c "r\\\r\nm -rf important"', "Inner shell command rm is blocked"),
+        (
+            "bash -c \"echo 'ok\\'; rm -rf important\"",
+            "Inner shell command rm is blocked",
+        ),
+        (
+            "powershell -Command \"Write-Output 'ok`'; Remove-Item important.txt\"",
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell -Command \"Write-Output 'ok\\'; Remove-Item important.txt\"",
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            'powershell -Command "Write-Output ok\\; Remove-Item important.txt"',
+            "Inner shell command remove-item is blocked",
+        ),
+    ],
+)
+def test_shell_command_name_escapes_do_not_hide_blocked_commands(
+    policy_state,
+    command: str,
+    reason_fragment: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert reason_fragment in decision.reason
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_mode", "reason_fragment"),
+    [
+        (
+            'bash -c "echo ok" "rm -rf important"',
+            PermissionMode.autopilot_safe,
+            "low risk",
+        ),
+        (
+            'sh -ec "echo ok" "rm -rf important"',
+            PermissionMode.autopilot_safe,
+            "low risk",
+        ),
+        (
+            'bash -c "rm -rf important" echo',
+            PermissionMode.blocked,
+            "Inner shell command rm is blocked",
+        ),
+        (
+            "cmd /d /s /c del important.txt",
+            PermissionMode.blocked,
+            "Inner shell command del is blocked",
+        ),
+        ("cmd /d /s /c echo hello", PermissionMode.autopilot_safe, "low risk"),
+        (
+            'cmd /c "echo ok ^& del important.txt"',
+            PermissionMode.autopilot_safe if os.name == "nt" else PermissionMode.blocked,
+            "low risk" if os.name == "nt" else "Inner shell command del is blocked",
+        ),
+        (
+            'cmd /c "echo ok\\& del important.txt"',
+            PermissionMode.blocked if os.name == "nt" else PermissionMode.autopilot_safe,
+            "Inner shell command del is blocked" if os.name == "nt" else "low risk",
+        ),
+        (
+            'cmd /c "echo ok & del important.txt"',
+            PermissionMode.blocked,
+            "Inner shell command del is blocked",
+        ),
+        (
+            "powershell /Command Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "pwsh -Command:Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell -Command=Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell -EncodedCommand AAAA",
+            PermissionMode.approval_required,
+            "no inspectable inner command",
+        ),
+        (
+            "powershell -File ./script.ps1",
+            PermissionMode.approval_required,
+            "no inspectable inner command",
+        ),
+    ],
+)
+def test_broader_windows_posix_shell_invocation_semantics(
+    policy_state,
+    command: str,
+    expected_mode: PermissionMode,
+    reason_fragment: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == expected_mode
+    assert reason_fragment in decision.reason
+
+
+def test_posix_translated_cmd_wrappers_use_posix_inner_semantics(
+    policy_state,
+    monkeypatch,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    monkeypatch.setattr("dgentic.command_policy._host_is_windows", lambda: False)
+
+    escaped_control = evaluate_command_policy(
+        CommandPolicyRequest(command='cmd /c "echo ok ^& rm -rf important"')
+    )
+    slash_path = evaluate_command_policy(CommandPolicyRequest(command="cmd /c dir /b"))
+
+    assert escaped_control.permission_mode == PermissionMode.blocked
+    assert "Inner shell command rm is blocked" in escaped_control.reason
+    assert slash_path.permission_mode == PermissionMode.blocked
+    assert "outside configured rootDir" in slash_path.reason
+
+
+@pytest.mark.parametrize(
+    ("command", "reason_fragment"),
+    [
+        (
+            "powershell -Command \"Start-Process cmd '/c del important.txt'\"",
+            "Inner shell command del is blocked",
+        ),
+        (
+            'powershell -Command "Start-Process cmd -ArgumentList:/c,del important.txt"',
+            "Inner shell command del is blocked",
+        ),
+        (
+            "powershell -Command \"Start-Process -FilePath cmd '/c del important.txt'\"",
+            "Inner shell command del is blocked",
+        ),
+        (
+            'powershell -Command "Start-Process powershell -ArgumentList '
+            "'-Command','Write-Output ok; Remove-Item important.txt'\"",
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "powershell -Command \"Start-Process cmd -ArgumentList '/c','type ..\\secret.txt'\"",
+            "outside configured rootDir",
+        ),
     ],
 )
 def test_configured_safe_rules_do_not_downgrade_start_process_payload_blocks(
     policy_state,
     command: str,
+    reason_fragment: str,
 ) -> None:
     _root_dir, _data_dir = policy_state
     create_command_policy_rule(
@@ -1148,7 +1363,86 @@ def test_configured_safe_rules_do_not_downgrade_start_process_payload_blocks(
     decision = evaluate_command_policy(CommandPolicyRequest(command=command))
 
     assert decision.permission_mode == PermissionMode.blocked
-    assert "Inner shell command del is blocked" in decision.reason
+    assert reason_fragment in decision.reason
+
+
+@pytest.mark.parametrize(
+    ("command", "reason_fragment"),
+    [
+        (
+            'powershell -Command "Start-Process powershell -ArgumentList '
+            "'-EncodedCommand','AAAA'\"",
+            "Launcher payload requires approval",
+        ),
+        (
+            'powershell -Command "Start-Process python"',
+            "Launcher payload requires approval",
+        ),
+    ],
+)
+def test_configured_safe_rules_do_not_downgrade_start_process_approval_payloads(
+    policy_state,
+    command: str,
+    reason_fragment: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow Start-Process text",
+            match_type=CommandPolicyMatchType.contains,
+            pattern="Start-Process",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Start-Process is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.approval_required
+    assert reason_fragment in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'powershell -Command "try { Remove-Item important.txt } catch {}"',
+        'powershell -Command "try { Write-Output ok } finally { Remove-Item important.txt }"',
+        'powershell -Command "switch ($value) { default { Remove-Item important.txt } }"',
+        'powershell -Command "trap { Remove-Item important.txt }"',
+    ],
+)
+def test_powershell_script_block_flow_tokens_do_not_hide_blocked_commands(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "Inner shell command remove-item is blocked" in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cmd /c "type .d^gentic\\cli-approval-digest.key"',
+        'powershell -Command "Get-ChildItem .d`gentic\\cli-approval-digest.key"',
+    ],
+)
+def test_protected_state_file_detection_decodes_shell_escaped_paths(
+    policy_state,
+    monkeypatch,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    monkeypatch.setattr("dgentic.command_policy._host_is_windows", lambda: True)
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.approval_required
+    assert "DGentic state files" in decision.reason
 
 
 @pytest.mark.parametrize(
@@ -1186,7 +1480,8 @@ def test_command_policy_event_metadata_redacts_substitution_secret_values(policy
         CommandPolicyRequest(
             command=(
                 "python deploy.py --token=$(printf SUPER_SECRET; echo ok) "
-                "SECRET=$(printf ASSIGNMENT_SECRET; echo ok)"
+                "SECRET=$(printf ASSIGNMENT_SECRET; echo ok) "
+                "API_TOKEN=ps` assignment --refresh-token ps` value"
             )
         )
     )
@@ -1198,6 +1493,10 @@ def test_command_policy_event_metadata_redacts_substitution_secret_values(policy
     assert "SUPER_SECRET" not in redacted_command
     assert "ASSIGNMENT_SECRET" not in redacted_command
     assert "echo ok)" not in redacted_command
+    assert "API_TOKEN=[REDACTED]" in redacted_command
+    assert "--refresh-token [REDACTED]" in redacted_command
+    assert "ps` assignment" not in redacted_command
+    assert "ps` value" not in redacted_command
 
 
 @pytest.mark.parametrize(

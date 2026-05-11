@@ -1,11 +1,14 @@
+import base64
+import json
 import time
 from datetime import UTC, datetime
 from hashlib import sha256
 
+import pytest
 from fastapi.testclient import TestClient
 
 from dgentic.api.routes import cli_runtime_service
-from dgentic.cli_runtime import CommandRun, CommandRunStatus
+from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
 from dgentic.main import create_app
 from dgentic.schemas import PermissionMode
 from dgentic.settings import get_settings
@@ -102,6 +105,19 @@ def test_guardrails_classify_filesystem_and_commands() -> None:
     assert command_response.json()["permission_mode"] == "blocked"
 
 
+def test_guardrails_classify_powershell_slash_command_wrapper() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/guardrails/commands",
+        json={"command": "powershell /Command Remove-Item important.txt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["permission_mode"] == "blocked"
+    assert "remove-item" in response.json()["reason"]
+
+
 def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
@@ -148,6 +164,186 @@ def test_guarded_filesystem_read_write_enforces_root_dir(tmp_path, monkeypatch) 
     assert state_read_response.status_code == 403
     assert state_write_response.status_code == 403
     assert state_delete_policy_response.json()["permission_mode"] == "blocked"
+    get_settings.cache_clear()
+
+
+def test_guarded_filesystem_binary_list_metadata_and_audit(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", ".dgentic")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = bytes([0, 1, 2, 255])
+    encoded = base64.b64encode(payload).decode("ascii")
+
+    write_response = client.post(
+        "/filesystem/write-binary",
+        json={"path": "bin/blob.dat", "content_base64": encoded},
+    )
+    read_response = client.post(
+        "/filesystem/read-binary",
+        json={"path": "bin/blob.dat"},
+    )
+    metadata_response = client.post(
+        "/filesystem/metadata",
+        json={"path": "bin/blob.dat"},
+    )
+    list_response = client.post(
+        "/filesystem/list",
+        json={"path": "bin"},
+    )
+    logs_response = client.get("/logs?event_type=filesystem")
+
+    assert write_response.status_code == 200
+    assert write_response.json()["bytes_written"] == len(payload)
+    assert read_response.status_code == 200
+    assert base64.b64decode(read_response.json()["content_base64"]) == payload
+    assert read_response.json()["bytes_read"] == len(payload)
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["type"] == "file"
+    assert metadata_response.json()["size_bytes"] == len(payload)
+    assert list_response.status_code == 200
+    assert [entry["name"] for entry in list_response.json()["entries"]] == ["blob.dat"]
+    assert logs_response.status_code == 200
+    assert any(event["message"] == "Read guarded binary file." for event in logs_response.json())
+    get_settings.cache_clear()
+
+
+def test_guarded_filesystem_destructive_operations_require_approval(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", ".dgentic")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    delete_target = root_dir / "delete-me.txt"
+    delete_target.write_text("remove", encoding="utf-8")
+    copy_source = root_dir / "copy-source.txt"
+    copy_source.write_text("copy", encoding="utf-8")
+    move_source = root_dir / "move-source.txt"
+    move_source.write_text("move", encoding="utf-8")
+    rename_source = root_dir / "rename-source.txt"
+    rename_source.write_text("rename", encoding="utf-8")
+
+    delete_policy_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": "delete-me.txt", "action": "delete"},
+    )
+    delete_without_approval = client.post(
+        "/filesystem/delete",
+        json={"path": "delete-me.txt"},
+    )
+    delete_with_approval = client.post(
+        "/filesystem/delete",
+        json={"path": "delete-me.txt", "approved": True},
+    )
+    copy_without_approval = client.post(
+        "/filesystem/copy",
+        json={"path": "copy-source.txt", "target_path": "copy-target.txt"},
+    )
+    copy_with_approval = client.post(
+        "/filesystem/copy",
+        json={"path": "copy-source.txt", "target_path": "copy-target.txt", "approved": True},
+    )
+    move_with_approval = client.post(
+        "/filesystem/move",
+        json={"path": "move-source.txt", "target_path": "moved.txt", "approved": True},
+    )
+    rename_with_approval = client.post(
+        "/filesystem/rename",
+        json={"path": "rename-source.txt", "new_name": "renamed.txt", "approved": True},
+    )
+
+    assert delete_policy_response.status_code == 200
+    assert delete_policy_response.json()["permission_mode"] == "approval_required"
+    assert delete_without_approval.status_code == 403
+    assert delete_with_approval.status_code == 200
+    assert not delete_target.exists()
+    assert copy_without_approval.status_code == 403
+    assert copy_with_approval.status_code == 200
+    assert (root_dir / "copy-target.txt").read_text(encoding="utf-8") == "copy"
+    assert move_with_approval.status_code == 200
+    assert not move_source.exists()
+    assert (root_dir / "moved.txt").read_text(encoding="utf-8") == "move"
+    assert rename_with_approval.status_code == 200
+    assert not rename_source.exists()
+    assert (root_dir / "renamed.txt").read_text(encoding="utf-8") == "rename"
+    get_settings.cache_clear()
+
+
+def test_guarded_filesystem_blocks_unsafe_targets_and_symlink_escapes(
+    tmp_path, monkeypatch
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", ".dgentic")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    (root_dir / "source.txt").write_text("inside", encoding="utf-8")
+    symlink = root_dir / "outside-link.txt"
+    try:
+        symlink.symlink_to(outside_file)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is unavailable on this platform: {exc}")
+
+    unsafe_target_response = client.post(
+        "/guardrails/filesystem",
+        json={
+            "path": "source.txt",
+            "target_path": str(tmp_path / "outside-target.txt"),
+            "action": "copy",
+        },
+    )
+    symlink_read_response = client.post(
+        "/filesystem/read",
+        json={"path": "outside-link.txt"},
+    )
+    list_response = client.post(
+        "/filesystem/list",
+        json={"path": "."},
+    )
+
+    assert unsafe_target_response.status_code == 200
+    assert unsafe_target_response.json()["permission_mode"] == "blocked"
+    assert (
+        "Target path resolves outside configured rootDir" in unsafe_target_response.json()["reason"]
+    )
+    assert symlink_read_response.status_code == 403
+    assert [entry["name"] for entry in list_response.json()["entries"]] == ["source.txt"]
+    get_settings.cache_clear()
+
+
+def test_guarded_filesystem_rejects_large_payloads_and_missing_files(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", ".dgentic")
+    monkeypatch.setenv("DGENTIC_MAX_FILESYSTEM_BYTES", "3")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    (root_dir / "large.txt").write_text("four", encoding="utf-8")
+
+    large_write_response = client.post(
+        "/filesystem/write",
+        json={"path": "new-large.txt", "content": "four"},
+    )
+    large_read_response = client.post(
+        "/filesystem/read",
+        json={"path": "large.txt"},
+    )
+    missing_metadata_response = client.post(
+        "/filesystem/metadata",
+        json={"path": "missing.txt"},
+    )
+
+    assert large_write_response.status_code == 413
+    assert large_read_response.status_code == 413
+    assert missing_metadata_response.status_code == 404
     get_settings.cache_clear()
 
 
@@ -208,10 +404,12 @@ def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monke
     )
     approval_id = create_response.json()["id"]
     list_response = client.get("/cli/approvals?status=pending")
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
     approve_response = client.post(
         f"/cli/approvals/{approval_id}/approve",
-        json={"decided_by": "reviewer"},
+        json={"decided_by": "reviewer", "reason": "Safe version check."},
     )
+    approved_review_response = client.get(f"/cli/approvals/{approval_id}/review")
     execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
     runs_response = client.get("/cli/runs")
 
@@ -219,8 +417,16 @@ def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monke
     assert create_response.json()["requested_by"] == "tester"
     assert list_response.status_code == 200
     assert any(item["id"] == approval_id for item in list_response.json())
+    assert review_response.status_code == 200
+    assert review_response.json()["review_command"] == "python --version"
+    assert review_response.json()["policy_reason"]
+    assert review_response.json()["direct_execute_available"] is False
     assert approve_response.status_code == 200
     assert approve_response.json()["status"] == "approved"
+    assert approve_response.json()["decision_reason"] == "Safe version check."
+    assert approved_review_response.status_code == 200
+    assert approved_review_response.json()["direct_execute_available"] is True
+    assert approved_review_response.json()["decision_reason"] == "Safe version check."
     assert execute_response.status_code == 200
     assert execute_response.json()["exit_code"] == 0
     assert runs_response.status_code == 200
@@ -258,6 +464,88 @@ def test_cli_approval_api_uses_authenticated_principal_as_reviewer(
     assert create_response.status_code == 201
     assert approve_response.status_code == 200
     assert approve_response.json()["decided_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
+    get_settings.cache_clear()
+
+
+def test_cli_approval_review_api_returns_safe_bound_execution_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={
+            "command": "python deploy.py --token super-secret",
+            "environment": {"DGENTIC_TEST_FLAG": "should-not-persist"},
+            "timeout_seconds": 10,
+            "agent_role": "developer",
+            "agent_id": "agent-dev-1",
+            "task_id": "BL-003b",
+        },
+    )
+    approval_id = create_response.json()["id"]
+
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
+
+    assert create_response.status_code == 201
+    assert review_response.status_code == 200
+    body = review_response.json()
+    assert body["review_command"] == "python deploy.py --token [REDACTED]"
+    assert body["environment_keys"] == ["DGENTIC_TEST_FLAG"]
+    assert body["agent_role"] == "developer"
+    assert body["agent_id"] == "agent-dev-1"
+    assert body["task_id"] == "BL-003b"
+    assert body["requires_bound_execution_request"] is True
+    assert body["direct_execute_available"] is False
+    assert body["command_digest"].startswith("hmac-sha256:")
+    assert body["environment_digest"].startswith("hmac-sha256:")
+    assert any("redacted" in warning for warning in body["review_warnings"])
+    assert any("environment keys" in warning for warning in body["review_warnings"])
+    serialized = review_response.text
+    assert "super-secret" not in serialized
+    assert "should-not-persist" not in serialized
+    get_settings.cache_clear()
+
+
+def test_cli_approval_api_redacts_decision_reason_secrets(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+    )
+    approval_id = create_response.json()["id"]
+
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={
+            "decided_by": "reviewer",
+            "reason": "Approved after checking --token super-secret.",
+        },
+    )
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert "--token [REDACTED]" in approve_response.json()["decision_reason"]
+    assert review_response.status_code == 200
+    assert "--token [REDACTED]" in review_response.json()["decision_reason"]
+    assert "super-secret" not in approve_response.text
+    assert "super-secret" not in review_response.text
     get_settings.cache_clear()
 
 
@@ -476,6 +764,57 @@ def test_cli_cancel_orphaned_run_after_restart_returns_stale(tmp_path, monkeypat
     assert body["status"] == "stale"
     assert body["stale_reason"] is not None
     assert "Cancellation requested" in body["stale_reason"]
+    assert body["termination_status"] == "skipped"
+    assert "process identity was not persisted" in body["termination_reason"]
+    get_settings.cache_clear()
+
+
+def test_cli_cancel_matching_orphaned_run_returns_termination_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    run = CommandRun(
+        id="cmdrun-api-matching-orphan",
+        command="python --version",
+        cwd=root_dir.resolve(),
+        status=CommandRunStatus.running,
+        process_id=4242,
+        process_group_id=4242,
+        process_identity="posix-proc-start:match",
+        permission_mode=PermissionMode.approval_required,
+        duration_ms=0,
+        supervisor_id="cli-supervisor-previous",
+        supervisor_pid=12345,
+        started_at=datetime.now(UTC),
+    )
+    cli_runtime_service._runs.upsert(run)
+    terminated: list[str] = []
+    monkeypatch.setattr(
+        "dgentic.cli_runtime._process_snapshot",
+        lambda pid: ProcessSnapshot(pid=pid, identity="posix-proc-start:match"),
+    )
+    monkeypatch.setattr(
+        cli_runtime_service,
+        "_terminate_orphaned_process",
+        lambda orphaned_run: terminated.append(orphaned_run.id),
+    )
+
+    cancel_response = client.post(f"/cli/runs/{run.id}/cancel")
+
+    assert cancel_response.status_code == 200
+    body = cancel_response.json()
+    assert terminated == [run.id]
+    assert body["status"] == "stale"
+    assert body["termination_status"] == "terminated"
+    assert body["termination_attempted_at"] is not None
+    assert body["termination_completed_at"] is not None
+    assert body["terminated_by_supervisor_id"] == cli_runtime_service.supervisor_id
     get_settings.cache_clear()
 
 
@@ -1004,3 +1343,84 @@ def test_logs_capture_new_backend_activity() -> None:
     assert response.status_code == 200
     assert response.json()
     assert response.json()[-1]["event_type"] == "cli"
+
+
+def test_logs_redact_legacy_approval_reason_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    events_path = tmp_path / "state" / "events.json"
+    events_path.parent.mkdir(parents=True)
+    events_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "event-legacy-approval-denial",
+                    "event_type": "approval",
+                    "message": "Denied CLI command request with --token ps` value.",
+                    "actor": "reviewer TOKEN=super-secret",
+                    "subject_id": "approval-legacy PASSWORD=super-secret",
+                    "metadata": {
+                        "reason": "Denied because PASSWORD=super-secret was pasted.",
+                        "accessToken": "camel-secret",
+                        "tokens": "plural-token-secret",
+                        "refreshToken": "refresh-secret",
+                        "clientSecret": "client-secret",
+                        "api_keys": "plural-api-key-secret",
+                        "passwordHash": "hash-secret",
+                        "passwords": "plural-password-secret",
+                        "secrets": "plural-secret-secret",
+                        "access_keys": "plural-access-key-secret",
+                        "secretValue": "value-secret",
+                        "nested": {
+                            "note": "Checked --token ps` nested first.",
+                            "token": "nested-secret",
+                            "credentials": {"password": "hunter2"},
+                        },
+                    },
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/logs?event_type=approval")
+
+    assert response.status_code == 200
+    serialized = response.text
+    body = response.json()[0]
+    assert "--token [REDACTED]" in body["message"]
+    assert "TOKEN=[REDACTED]" in body["actor"]
+    assert "PASSWORD=[REDACTED]" in body["subject_id"]
+    assert "PASSWORD=[REDACTED]" in body["metadata"]["reason"]
+    assert body["metadata"]["accessToken"] == "[REDACTED]"
+    assert body["metadata"]["tokens"] == "[REDACTED]"
+    assert body["metadata"]["refreshToken"] == "[REDACTED]"
+    assert body["metadata"]["clientSecret"] == "[REDACTED]"
+    assert body["metadata"]["api_keys"] == "[REDACTED]"
+    assert body["metadata"]["passwordHash"] == "[REDACTED]"
+    assert body["metadata"]["passwords"] == "[REDACTED]"
+    assert body["metadata"]["secrets"] == "[REDACTED]"
+    assert body["metadata"]["access_keys"] == "[REDACTED]"
+    assert body["metadata"]["secretValue"] == "[REDACTED]"
+    assert "--token [REDACTED]" in body["metadata"]["nested"]["note"]
+    assert body["metadata"]["nested"]["token"] == "[REDACTED]"
+    assert body["metadata"]["nested"]["credentials"] == "[REDACTED]"
+    assert "super-secret" not in serialized
+    assert "ps` value" not in serialized
+    assert "ps` nested" not in serialized
+    assert "camel-secret" not in serialized
+    assert "plural-token-secret" not in serialized
+    assert "refresh-secret" not in serialized
+    assert "client-secret" not in serialized
+    assert "plural-api-key-secret" not in serialized
+    assert "hash-secret" not in serialized
+    assert "plural-password-secret" not in serialized
+    assert "plural-secret-secret" not in serialized
+    assert "plural-access-key-secret" not in serialized
+    assert "value-secret" not in serialized
+    assert "nested-secret" not in serialized
+    assert "hunter2" not in serialized
+    get_settings.cache_clear()

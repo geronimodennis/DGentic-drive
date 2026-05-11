@@ -7,6 +7,8 @@ import secrets
 import shlex
 import signal
 import subprocess
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -19,6 +21,7 @@ from pydantic import BaseModel, Field
 from dgentic.command_policy import parse_command, parse_inner_shell_command
 from dgentic.events import event_log
 from dgentic.guardrails import evaluate_command_policy
+from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandExecutionResult,
@@ -34,35 +37,10 @@ DEFAULT_MAX_OUTPUT_CHARS = 10_000
 DEFAULT_MAX_OUTPUT_CHUNKS = 200
 DEFAULT_APPROVAL_TTL_MINUTES = 30
 TRUNCATION_MARKER = "\n[output truncated]"
-REDACTED_SECRET_MARKER = "[REDACTED]"
 APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
 REDACTED_LEGACY_DIGEST_MARKER = "[LEGACY_DIGEST_REDACTED]"
 _APPROVAL_DIGEST_KEY_FILE = "cli-approval-digest.key"
 _DIGEST_KEY_LOCK = Lock()
-_SENSITIVE_ASSIGNMENT_RE = re.compile(
-    r"\b(?P<key>[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
-    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
-    re.IGNORECASE,
-)
-_SENSITIVE_FLAG_RE = re.compile(
-    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
-    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
-    r"(?:\s+|=|:))"
-    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\$\([^;&|]*?\)|`(?:\\.|[^`\\])*`|(?:\\.|[^\s;&|'\"\)])+)",
-    re.IGNORECASE,
-)
-_SENSITIVE_ASSIGNMENT_PREFIX_RE = re.compile(
-    r"\b(?:[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)"
-    r"|TOKEN|PASSWORD|SECRET|API_KEY|ACCESS_KEY)\s*=\s*",
-    re.IGNORECASE,
-)
-_SENSITIVE_FLAG_PREFIX_RE = re.compile(
-    r"(?P<prefix>(?:--?|/)[A-Za-z0-9_-]*"
-    r"(?:api[-_]?key|access[-_]?key|token|password|secret)[A-Za-z0-9_-]*"
-    r"(?:\s+|=|:))",
-    re.IGNORECASE,
-)
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BLOCKED_ENV_OVERRIDES = {
     "COMSPEC",
@@ -103,6 +81,19 @@ class CommandRunStatus(StrEnum):
     stale = "stale"
 
 
+class OrphanTerminationStatus(StrEnum):
+    skipped = "skipped"
+    terminated = "terminated"
+    not_found = "not_found"
+    failed = "failed"
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    pid: int
+    identity: str
+
+
 class CommandOutputChunk(BaseModel):
     sequence: int
     stream: Literal["stdout", "stderr"]
@@ -130,6 +121,7 @@ class CommandApproval(BaseModel):
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
     decided_by: str | None = None
+    decision_reason: str | None = None
     denial_reason: str | None = None
     run_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -144,8 +136,41 @@ class CommandApproval(BaseModel):
         redacted_command = redact_sensitive_values(self.command)
         self.command = redacted_command
         self.review_command = redact_sensitive_values(self.review_command or redacted_command)
+        self.decision_reason = _redact_optional_sensitive_text(self.decision_reason)
+        self.denial_reason = _redact_optional_sensitive_text(self.denial_reason)
         self.command_digest = _sanitize_approval_digest(self.command_digest)
         self.environment_digest = _sanitize_approval_digest(self.environment_digest)
+
+
+class CommandApprovalReview(BaseModel):
+    id: str
+    status: CommandApprovalStatus
+    review_command: str
+    cwd: Path
+    timeout_seconds: int
+    permission_mode: PermissionMode
+    policy_reason: str
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    environment_keys: list[str] = Field(default_factory=list)
+    matched_rule_id: str | None = None
+    matched_rule_name: str | None = None
+    command_digest: str = ""
+    environment_digest: str = ""
+    requires_bound_execution_request: bool = False
+    direct_execute_available: bool = False
+    review_warnings: list[str] = Field(default_factory=list)
+    decided_by: str | None = None
+    decision_reason: str | None = None
+    denial_reason: str | None = None
+    run_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None = None
+    executed_at: datetime | None = None
 
 
 class CommandRun(BaseModel):
@@ -171,9 +196,17 @@ class CommandRun(BaseModel):
     environment_keys: list[str] = Field(default_factory=list)
     supervisor_id: str | None = None
     supervisor_pid: int | None = None
+    process_group_id: int | None = None
+    process_identity: str | None = None
+    process_started_at: datetime | None = None
     timeout_at: datetime | None = None
     status_reason: str | None = None
     stale_reason: str | None = None
+    termination_attempted_at: datetime | None = None
+    termination_completed_at: datetime | None = None
+    termination_status: OrphanTerminationStatus | None = None
+    termination_reason: str | None = None
+    terminated_by_supervisor_id: str | None = None
     started_at: datetime
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
@@ -190,83 +223,10 @@ class CommandRunOutput(BaseModel):
     next_sequence: int
 
 
-def redact_sensitive_values(text: str) -> str:
-    """Redact basic KEY=value secret assignments from command output."""
-
-    return _SENSITIVE_ASSIGNMENT_RE.sub(
-        lambda match: f"{match.group('key')}={REDACTED_SECRET_MARKER}",
-        _SENSITIVE_FLAG_RE.sub(
-            lambda match: f"{match.group('prefix')}{REDACTED_SECRET_MARKER}",
-            _redact_substitution_secret_values(text),
-        ),
-    )
-
-
-def _redact_substitution_secret_values(text: str) -> str:
-    result = text
-    for match in list(_SENSITIVE_ASSIGNMENT_PREFIX_RE.finditer(result))[::-1]:
-        result = _redact_balanced_substitution_value(result, match.end(), "")
-    for match in list(_SENSITIVE_FLAG_PREFIX_RE.finditer(result))[::-1]:
-        result = _redact_balanced_substitution_value(result, match.end(), match.group("prefix"))
-    return result
-
-
-def _redact_balanced_substitution_value(text: str, value_start: int, prefix: str) -> str:
-    if not text.startswith("$(", value_start):
-        return text
-    end_index = _find_balanced_substitution_end(text, value_start + 2)
-    if end_index == -1:
-        return text
-    redacted = f"{prefix}{REDACTED_SECRET_MARKER}"
-    return text[: value_start - len(prefix)] + redacted + text[end_index:]
-
-
-def _find_balanced_substitution_end(text: str, start_index: int) -> int:
-    depth = 1
-    quote: str | None = None
-    escaped = False
-    index = start_index
-    while index < len(text):
-        char = text[index]
-        if escaped:
-            escaped = False
-            index += 1
-            continue
-        if char == "\\":
-            escaped = True
-            index += 1
-            continue
-        if quote is not None:
-            if char == quote:
-                quote = None
-            index += 1
-            continue
-        if char in {"'", '"'}:
-            quote = char
-            index += 1
-            continue
-        if text.startswith("$(", index):
-            depth += 1
-            index += 2
-            continue
-        if char == ")":
-            depth -= 1
-            index += 1
-            if depth == 0:
-                return index
-            continue
-        index += 1
-    return -1
-
-
-def _regex_redact_sensitive_values(text: str) -> str:
-    return _SENSITIVE_ASSIGNMENT_RE.sub(
-        lambda match: f"{match.group('key')}={REDACTED_SECRET_MARKER}",
-        _SENSITIVE_FLAG_RE.sub(
-            lambda match: f"{match.group('prefix')}{REDACTED_SECRET_MARKER}",
-            text,
-        ),
-    )
+def _redact_optional_sensitive_text(text: str | None) -> str | None:
+    if text is None:
+        return None
+    return redact_sensitive_values(text)
 
 
 def truncate_output(text: str, max_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> tuple[str, bool]:
@@ -513,6 +473,64 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
         process.kill()
 
 
+def _process_snapshot(pid: int | None) -> ProcessSnapshot | None:
+    if pid is None or pid <= 0:
+        return None
+    if os.name == "nt":
+        return _windows_process_snapshot(pid)
+    return _posix_process_snapshot(pid)
+
+
+def _posix_process_snapshot(pid: int) -> ProcessSnapshot | None:
+    stat_path = Path("/proc") / str(pid) / "stat"
+    try:
+        stat_text = stat_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        _prefix, fields_text = stat_text.rsplit(") ", 1)
+        fields = fields_text.split()
+        start_ticks = fields[19]
+    except (IndexError, ValueError):
+        return None
+    return ProcessSnapshot(pid=pid, identity=f"posix-proc-start:{start_ticks}")
+
+
+def _windows_process_snapshot(pid: int) -> ProcessSnapshot | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except (ImportError, AttributeError):
+        return None
+
+    process_query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        process_query_limited_information,
+        False,
+        pid,
+    )
+    if not handle:
+        return None
+    try:
+        creation_time = wintypes.FILETIME()
+        exit_time = wintypes.FILETIME()
+        kernel_time = wintypes.FILETIME()
+        user_time = wintypes.FILETIME()
+        ok = ctypes.windll.kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation_time),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel_time),
+            ctypes.byref(user_time),
+        )
+        if not ok:
+            return None
+        created_at = (creation_time.dwHighDateTime << 32) + creation_time.dwLowDateTime
+        return ProcessSnapshot(pid=pid, identity=f"windows-created:{created_at}")
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
 def _text_output(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -632,6 +650,7 @@ class CliRuntimeService:
         approval_id: str,
         *,
         decided_by: str | None = None,
+        reason: str | None = None,
     ) -> CommandApproval:
         approval = self._get_approval_or_raise(approval_id)
         if approval.status != CommandApprovalStatus.pending:
@@ -641,9 +660,11 @@ class CliRuntimeService:
         if self._approval_is_expired(approval):
             raise ValueError(f"Approval {approval_id} has expired and cannot be approved.")
 
+        redacted_reason = _redact_optional_sensitive_text(reason)
         now = datetime.now(UTC)
         approval.status = CommandApprovalStatus.approved
         approval.decided_by = decided_by
+        approval.decision_reason = redacted_reason
         approval.decided_at = now
         approval.updated_at = now
         self._approvals.upsert(approval)
@@ -652,6 +673,7 @@ class CliRuntimeService:
             "Approved CLI command request.",
             subject_id=approval.id,
             actor=decided_by or "system",
+            metadata={"reason": redacted_reason} if redacted_reason else {},
         )
         return approval
 
@@ -668,10 +690,12 @@ class CliRuntimeService:
                 f"Only pending approvals can be denied; current status is {approval.status}."
             )
 
+        redacted_reason = _redact_optional_sensitive_text(reason)
         now = datetime.now(UTC)
         approval.status = CommandApprovalStatus.denied
         approval.decided_by = decided_by
-        approval.denial_reason = reason
+        approval.decision_reason = redacted_reason
+        approval.denial_reason = redacted_reason
         approval.decided_at = now
         approval.updated_at = now
         self._approvals.upsert(approval)
@@ -680,9 +704,98 @@ class CliRuntimeService:
             "Denied CLI command request.",
             subject_id=approval.id,
             actor=decided_by or "system",
-            metadata={"reason": reason} if reason else {},
+            metadata={"reason": redacted_reason} if redacted_reason else {},
         )
         return approval
+
+    def get_approval_review(self, approval_id: str) -> CommandApprovalReview:
+        approval = self._get_approval_or_raise(approval_id)
+        warnings: list[str] = []
+        requires_bound_execution_request = False
+        if REDACTED_SECRET_MARKER in approval.command:
+            requires_bound_execution_request = True
+            warnings.append(
+                "Approval command is redacted; execute with a bound request that resubmits "
+                "the original command."
+            )
+        if approval.environment_keys:
+            requires_bound_execution_request = True
+            warnings.append(
+                "Approval has environment keys; execute with a bound request that supplies "
+                "the same environment keys."
+            )
+        has_current_binding_digests = True
+        if not requires_bound_execution_request:
+            has_current_binding_digests = self._approval_has_current_binding_digests(approval)
+        if not has_current_binding_digests:
+            warnings.append(
+                "Approval has legacy or invalid binding digests; direct execution is unavailable."
+            )
+        direct_execute_available = (
+            approval.status == CommandApprovalStatus.approved
+            and not requires_bound_execution_request
+            and has_current_binding_digests
+            and not self._approval_is_expired(approval)
+        )
+        if self._approval_is_expired(approval):
+            warnings.append("Approval is expired.")
+        return CommandApprovalReview(
+            id=approval.id,
+            status=approval.status,
+            review_command=approval.review_command,
+            cwd=approval.cwd,
+            timeout_seconds=approval.timeout_seconds,
+            permission_mode=approval.permission_mode,
+            policy_reason=approval.policy_reason,
+            requested_by=approval.requested_by,
+            agent_id=approval.agent_id,
+            agent_role=approval.agent_role,
+            task_id=approval.task_id,
+            environment_keys=approval.environment_keys,
+            matched_rule_id=approval.matched_rule_id,
+            matched_rule_name=approval.matched_rule_name,
+            command_digest=approval.command_digest,
+            environment_digest=approval.environment_digest,
+            requires_bound_execution_request=requires_bound_execution_request,
+            direct_execute_available=direct_execute_available,
+            review_warnings=warnings,
+            decided_by=approval.decided_by,
+            decision_reason=_redact_optional_sensitive_text(approval.decision_reason),
+            denial_reason=_redact_optional_sensitive_text(approval.denial_reason),
+            run_id=approval.run_id,
+            created_at=approval.created_at,
+            updated_at=approval.updated_at,
+            expires_at=approval.expires_at,
+            decided_at=approval.decided_at,
+            executed_at=approval.executed_at,
+        )
+
+    def _approval_has_current_binding_digests(self, approval: CommandApproval) -> bool:
+        if not approval.command_digest.startswith(APPROVAL_DIGEST_PREFIX):
+            return False
+        if not approval.environment_digest.startswith(APPROVAL_DIGEST_PREFIX):
+            return False
+        expected_environment_digest = command_environment_digest({})
+        if (
+            not approval.environment_keys
+            and approval.environment_digest != expected_environment_digest
+        ):
+            return False
+        expected_command_digest = command_approval_digest(
+            command=approval.command,
+            cwd=approval.cwd,
+            timeout_seconds=approval.timeout_seconds,
+            requested_by=approval.requested_by,
+            agent_id=approval.agent_id,
+            agent_role=approval.agent_role,
+            task_id=approval.task_id,
+            environment_keys=approval.environment_keys,
+            environment_digest=approval.environment_digest,
+            permission_mode=approval.permission_mode,
+            matched_rule_id=approval.matched_rule_id,
+            matched_rule_name=approval.matched_rule_name,
+        )
+        return approval.command_digest == expected_command_digest
 
     def execute_approved_command(self, approval_id: str) -> CommandExecutionResult:
         approval = self._get_approval_or_raise(approval_id)
@@ -701,6 +814,11 @@ class CliRuntimeService:
             raise PermissionError(
                 "Approval includes environment keys; execute with approval_id and matching "
                 "environment keys through /cli/execute or /cli/runs."
+            )
+        if not self._approval_has_current_binding_digests(approval):
+            raise PermissionError(
+                f"Approval {approval_id} has legacy or invalid binding digests and cannot "
+                "be directly executed."
             )
 
         request = CommandExecutionRequest(
@@ -773,7 +891,7 @@ class CliRuntimeService:
                 env=env,
                 **_popen_kwargs(cwd),
             )
-        except OSError as exc:
+        except (OSError, subprocess.SubprocessError) as exc:
             self._mark_run_failed(run, reason=f"Command launch failed: {exc}")
             raise
 
@@ -791,8 +909,14 @@ class CliRuntimeService:
                 )
 
             now = datetime.now(UTC)
+            process_snapshot = _process_snapshot(process.pid)
             current_run.status = CommandRunStatus.running
             current_run.process_id = process.pid
+            current_run.process_group_id = process.pid if os.name != "nt" else None
+            current_run.process_identity = (
+                process_snapshot.identity if process_snapshot is not None else None
+            )
+            current_run.process_started_at = now
             current_run.status_reason = "Command process started."
             current_run.last_heartbeat_at = now
             self._runs.upsert(current_run)
@@ -806,6 +930,11 @@ class CliRuntimeService:
                 "command": redact_sensitive_values(run.command),
                 "cwd": str(run.cwd),
                 "process_id": run.process_id,
+                "process_group_id": run.process_group_id,
+                "process_identity": run.process_identity,
+                "process_started_at": (
+                    run.process_started_at.isoformat() if run.process_started_at else None
+                ),
                 "supervisor_id": run.supervisor_id,
                 "supervisor_pid": run.supervisor_pid,
                 "timeout_at": run.timeout_at.isoformat() if run.timeout_at else None,
@@ -880,7 +1009,7 @@ class CliRuntimeService:
                     "Command run is not currently cancellable in this backend process; "
                     "it may be starting or finalizing."
                 )
-            return self._mark_run_stale(
+            return self._reconcile_orphaned_run(
                 run,
                 reason=f"Cancellation requested, but {self._orphaned_run_reason(run)}",
             )
@@ -935,7 +1064,7 @@ class CliRuntimeService:
                 continue
 
             reconciled.append(
-                self._mark_run_stale(
+                self._reconcile_orphaned_run(
                     run,
                     reason=f"Command run was marked stale because {self._orphaned_run_reason(run)}",
                 )
@@ -948,8 +1077,98 @@ class CliRuntimeService:
         if not run.supervisor_id:
             return "it has no persisted supervisor metadata from an older backend version."
         if run.supervisor_id != self.supervisor_id:
-            return "it belongs to a previous backend supervisor and cannot be adopted."
+            return (
+                "it belongs to a previous backend supervisor and cannot be adopted by the "
+                "current process."
+            )
         return "no active process is registered in this backend process."
+
+    def _reconcile_orphaned_run(self, run: CommandRun, *, reason: str) -> CommandRun:
+        self._record_orphan_termination_attempt(run)
+        return self._mark_run_stale(run, reason=reason)
+
+    def _record_orphan_termination_attempt(self, run: CommandRun) -> None:
+        now = datetime.now(UTC)
+        run.termination_attempted_at = now
+        run.terminated_by_supervisor_id = self.supervisor_id
+
+        if run.status != CommandRunStatus.running:
+            run.termination_status = OrphanTerminationStatus.skipped
+            run.termination_reason = "Termination skipped because the run is not running."
+            run.termination_completed_at = datetime.now(UTC)
+            return
+        if run.process_id is None:
+            run.termination_status = OrphanTerminationStatus.skipped
+            run.termination_reason = "Termination skipped because no process id was persisted."
+            run.termination_completed_at = datetime.now(UTC)
+            return
+        if not run.process_identity:
+            run.termination_status = OrphanTerminationStatus.skipped
+            run.termination_reason = (
+                "Termination skipped because process identity was not persisted."
+            )
+            run.termination_completed_at = datetime.now(UTC)
+            return
+
+        snapshot = _process_snapshot(run.process_id)
+        if snapshot is None:
+            run.termination_status = OrphanTerminationStatus.not_found
+            run.termination_reason = (
+                "Orphan process was not found or process identity could not be inspected."
+            )
+            run.termination_completed_at = datetime.now(UTC)
+            return
+        if snapshot.identity != run.process_identity:
+            run.termination_status = OrphanTerminationStatus.skipped
+            run.termination_reason = "Termination skipped because process identity did not match."
+            run.termination_completed_at = datetime.now(UTC)
+            return
+
+        try:
+            self._terminate_orphaned_process(run)
+        except (OSError, subprocess.SubprocessError) as exc:
+            sanitized_reason, _truncated = sanitize_output(
+                f"Orphan process termination failed: {exc}",
+                max_chars=self.max_output_chars,
+            )
+            run.termination_status = OrphanTerminationStatus.failed
+            run.termination_reason = sanitized_reason
+        else:
+            run.termination_status = OrphanTerminationStatus.terminated
+            run.termination_reason = (
+                "Matching orphan process termination was requested before marking stale."
+            )
+        run.termination_completed_at = datetime.now(UTC)
+
+    def _terminate_orphaned_process(self, run: CommandRun) -> None:
+        if run.process_id is None:
+            return
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(run.process_id), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if completed.returncode != 0:
+                message = completed.stderr.strip() or completed.stdout.strip()
+                raise OSError(message or f"taskkill failed with exit code {completed.returncode}.")
+            return
+
+        process_group_id = run.process_group_id or run.process_id
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        time.sleep(0.2)
+        snapshot = _process_snapshot(run.process_id)
+        if snapshot is None or snapshot.identity != run.process_identity:
+            return
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            return
 
     def _mark_run_stale(self, run: CommandRun, *, reason: str) -> CommandRun:
         now = datetime.now(UTC)
@@ -981,6 +1200,19 @@ class CliRuntimeService:
                 "status": run.status,
                 "status_reason": run.status_reason,
                 "stale_reason": run.stale_reason,
+                "termination_status": run.termination_status,
+                "termination_reason": run.termination_reason,
+                "termination_attempted_at": (
+                    run.termination_attempted_at.isoformat()
+                    if run.termination_attempted_at
+                    else None
+                ),
+                "termination_completed_at": (
+                    run.termination_completed_at.isoformat()
+                    if run.termination_completed_at
+                    else None
+                ),
+                "terminated_by_supervisor_id": run.terminated_by_supervisor_id,
                 "requested_by": run.requested_by,
                 "agent_id": run.agent_id,
                 "agent_role": run.agent_role,

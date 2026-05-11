@@ -4,6 +4,51 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008i Bounded Autonomous Orchestration Loop
+
+Status: completed for the scoped synchronous loop slice; Sprint 14 remains active for detached background execution, project-document mutation, durable shared memory coordination, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected a bounded synchronous loop as the next Sprint 14 slice because it advances autonomous execution without claiming a detached worker/lease system exists yet.
+- Completed: Developer updated production source only for the loop request/result schemas, orchestration loop service, `/tasks/orchestrations/{run_id}/loop`, loop audit metadata, and implementation docs.
+- Completed: QA updated tests only for waiting-agent stop behavior, max-iteration behavior, blocker stop behavior, and API loop behavior.
+- Completed: Reviewer found a blocker where pre-existing blockers could still allow another cycle to schedule work before stopping, plus an optional-body ergonomics issue.
+- Completed: Developer remediated by checking loop stop conditions before the first cycle, accepting omitted API bodies through schema defaults, and ensuring ready pending work still schedules when no blocker is present.
+- Completed: QA added regressions for pre-existing blockers preventing scheduling, optional body defaults, and ready pending task scheduling.
+- Completed: Security/DevOps re-review found no blockers.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /tasks/orchestrations/{run_id}/loop` repeatedly runs orchestration cycles within `max_iterations`.
+- Implemented in this slice: loop results include the final run, iteration count, progress flag, stop reason, running task ids, pending task ids, and unresolved blocker ids.
+- Implemented in this slice: loop execution stops on waiting agents, unresolved blockers when configured, all-complete state, quiescence, or max-iteration exhaustion.
+- Implemented in this slice: pre-existing blockers stop the loop before any additional scheduling when `stop_on_blocked` is enabled.
+- Implemented in this slice: loop access uses existing authenticated owner/admin orchestration scoping and closed-run mutation rejection.
+- Implemented in this slice: loop bounds are explicit and default to a small synchronous API workload rather than a detached background worker.
+
+Remaining Sprint 14 work:
+- Add detached background worker execution beyond synchronous loop calls.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add durable shared memory coordination across runs and agents.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused loop service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "loop or cycle"` passed with 11 tests.
+- Focused loop API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration_api_loop or orchestration_api_cycle"` passed with 3 tests.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 188 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\schemas.py src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\schemas.py src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 774 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+
+Next:
+- Continue Sprint 14 with project document mutation or detached-worker production hardening.
+
 ### Sprint 14 BL-008h Shared Dependency Context Handoff
 
 Status: completed for the scoped dependency context handoff slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, durable shared memory coordination, and production scheduling hardening.

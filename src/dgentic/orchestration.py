@@ -20,6 +20,8 @@ from dgentic.schemas import (
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationFollowUp,
+    OrchestrationLoopRequest,
+    OrchestrationLoopResult,
     OrchestrationRun,
     OrchestrationTask,
     OrchestrationTaskRecoveryRequest,
@@ -198,6 +200,59 @@ class OrchestrationService:
             },
         )
         return run
+
+    def run_loop(
+        self,
+        run_id: str,
+        request: OrchestrationLoopRequest,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationLoopResult:
+        run = self._require_run(run_id, actor=actor, include_all=include_all)
+        _ensure_run_open(run)
+        iterations = 0
+        made_progress = False
+        stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
+
+        while stopped_reason is None and iterations < request.max_iterations:
+            before = _progress_signature(run)
+            run = self.run_cycle(run.id, actor=actor, include_all=include_all)
+            iterations += 1
+            progressed = _progress_signature(run) != before
+            made_progress = made_progress or progressed
+            stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
+            if stopped_reason is not None:
+                break
+            if not progressed:
+                stopped_reason = "waiting_for_agents" if _running_task_ids(run) else "quiescent"
+                break
+
+        if stopped_reason is None:
+            stopped_reason = "max_iterations"
+
+        event_log.record(
+            LogEventType.task,
+            "Ran orchestration autonomous loop.",
+            actor=actor or "system",
+            subject_id=run.id,
+            metadata={
+                "iterations": iterations,
+                "made_progress": made_progress,
+                "stopped_reason": stopped_reason,
+                "running_task_ids": _running_task_ids(run),
+                "pending_task_ids": _pending_task_ids(run),
+                "unresolved_blocker_ids": [
+                    blocker.id for blocker in _unresolved_blockers(run.blockers)
+                ],
+            },
+        )
+        return _loop_result(
+            run,
+            iterations=iterations,
+            made_progress=made_progress,
+            stopped_reason=stopped_reason,
+        )
 
     def update_task(
         self,
@@ -923,6 +978,86 @@ def _redacted_context_text(
 def _ensure_run_open(run: OrchestrationRun) -> None:
     if run.status in TERMINAL_RUN_STATUSES:
         raise OrchestrationError(f"Cannot modify closed orchestration: {run.id}")
+
+
+def _progress_signature(run: OrchestrationRun) -> str:
+    return json.dumps(
+        {
+            "tasks": [
+                {
+                    "id": task.id,
+                    "status": task.status,
+                    "agent_id": task.agent_id,
+                    "retry_count": task.retry_count,
+                    "output": task.output,
+                    "error": task.error,
+                    "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                }
+                for task in run.tasks
+            ],
+            "blockers": [
+                {
+                    "id": blocker.id,
+                    "task_id": blocker.task_id,
+                    "severity": blocker.severity,
+                    "status": blocker.status,
+                }
+                for blocker in run.blockers
+            ],
+            "follow_ups": [
+                {
+                    "id": follow_up.id,
+                    "task_id": follow_up.task_id,
+                    "assigned_role": follow_up.assigned_role,
+                }
+                for follow_up in run.follow_ups
+            ],
+        },
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _loop_stop_reason(
+    run: OrchestrationRun,
+    *,
+    stop_on_blocked: bool,
+) -> str | None:
+    if stop_on_blocked and _unresolved_blockers(run.blockers):
+        return "blocked"
+    if all(task.status == StepStatus.completed for task in run.tasks):
+        return "all_tasks_completed"
+    if _pending_task_ids(run):
+        return None
+    if _running_task_ids(run):
+        return None
+    return "quiescent"
+
+
+def _loop_result(
+    run: OrchestrationRun,
+    *,
+    iterations: int,
+    made_progress: bool,
+    stopped_reason: str,
+) -> OrchestrationLoopResult:
+    return OrchestrationLoopResult(
+        run=run,
+        iterations=iterations,
+        made_progress=made_progress,
+        stopped_reason=stopped_reason,
+        running_task_ids=_running_task_ids(run),
+        pending_task_ids=_pending_task_ids(run),
+        unresolved_blocker_ids=[blocker.id for blocker in _unresolved_blockers(run.blockers)],
+    )
+
+
+def _running_task_ids(run: OrchestrationRun) -> list[str]:
+    return [task.id for task in run.tasks if task.status == StepStatus.running]
+
+
+def _pending_task_ids(run: OrchestrationRun) -> list[str]:
+    return [task.id for task in run.tasks if task.status == StepStatus.pending]
 
 
 def _validate_task_update(

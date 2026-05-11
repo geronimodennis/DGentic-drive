@@ -116,6 +116,8 @@ from dgentic.schemas import (
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
+    OrchestrationLoopRequest,
+    OrchestrationLoopResult,
     OrchestrationRun,
     OrchestrationTaskRecoveryRequest,
     OrchestrationTaskUpdate,
@@ -252,6 +254,24 @@ def run_orchestration_cycle(run_id: str, request: Request) -> OrchestrationRun:
     try:
         return orchestration_service.run_cycle(
             run_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.post("/tasks/orchestrations/{run_id}/loop", response_model=OrchestrationLoopResult)
+def run_orchestration_loop(
+    run_id: str,
+    request: Request,
+    payload: OrchestrationLoopRequest | None = None,
+) -> OrchestrationLoopResult:
+    loop_request = payload or OrchestrationLoopRequest()
+    try:
+        return orchestration_service.run_loop(
+            run_id,
+            loop_request,
             actor=_orchestration_actor(request),
             include_all=_orchestration_include_all(request),
         )

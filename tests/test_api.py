@@ -435,6 +435,63 @@ def test_orchestration_api_cycle_reconciles_agent_completion(
     assert get_response.json()["tasks"][1]["status"] == "running"
 
 
+def test_orchestration_api_loop_reconciles_until_waiting_agents(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Loop completed agent work.",
+            "tasks": [
+                {
+                    "id": "developer-implementation",
+                    "title": "Implement loop source.",
+                    "description": "Produce source changes.",
+                    "role": "Developer",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "Developer work complete.",
+                },
+                {
+                    "id": "qa-validation",
+                    "title": "Validate loop source.",
+                    "description": "Validate source changes.",
+                    "role": "QA",
+                    "dependencies": ["developer-implementation"],
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "validation": "QA work runs after implementation.",
+                },
+            ],
+        },
+    )
+    body = create_response.json()
+    run_id = body["id"]
+    agent_id = body["tasks"][0]["agent_id"]
+    status_response = client.patch(
+        f"/agents/{agent_id}/status",
+        json={"status": "completed", "note": "Source work complete."},
+    )
+    loop_response = client.post(
+        f"/tasks/orchestrations/{run_id}/loop",
+        json={"max_iterations": 5},
+    )
+    default_loop_response = client.post(f"/tasks/orchestrations/{run_id}/loop")
+
+    assert create_response.status_code == 201
+    assert status_response.status_code == 200
+    assert loop_response.status_code == 200
+    loop = loop_response.json()
+    assert loop["iterations"] == 2
+    assert loop["made_progress"] is True
+    assert loop["stopped_reason"] == "waiting_for_agents"
+    assert loop["running_task_ids"] == ["qa-validation"]
+    assert loop["unresolved_blocker_ids"] == []
+    assert loop["run"]["tasks"][0]["status"] == "completed"
+    assert loop["run"]["tasks"][1]["status"] == "running"
+    assert default_loop_response.status_code == 200
+    assert default_loop_response.json()["stopped_reason"] == "waiting_for_agents"
+
+
 def test_orchestration_api_exposes_dependency_context_on_spawned_agent(
     isolated_tool_api_state,
 ) -> None:

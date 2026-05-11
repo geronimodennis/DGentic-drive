@@ -11,6 +11,7 @@ from dgentic.schemas import (
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
+    OrchestrationLoopRequest,
     OrchestrationTask,
     OrchestrationTaskRecoveryRequest,
     OrchestrationTaskSpec,
@@ -187,6 +188,169 @@ def test_orchestration_cycle_reconciles_completed_agent_and_schedules_dependency
     assert agent_after_cycle is not None
     assert agent_after_cycle.status == AgentStatus.completed
     assert agent_after_cycle.completed_at == completed_at
+
+
+def test_orchestration_loop_reconciles_until_waiting_for_agents(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Loop completed agent work.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    dev_task = _task_by_id(run, "dev-implementation")
+    assert dev_task.agent_id
+    update_agent_status(dev_task.agent_id, AgentStatusUpdate(status=AgentStatus.completed))
+
+    result = service.run_loop(run.id, OrchestrationLoopRequest(max_iterations=5))
+
+    assert result.iterations == 2
+    assert result.made_progress is True
+    assert result.stopped_reason == "waiting_for_agents"
+    assert result.running_task_ids == ["qa-validation"]
+    assert result.pending_task_ids == []
+    assert result.unresolved_blocker_ids == []
+    assert _task_by_id(result.run, "dev-implementation").status == StepStatus.completed
+    assert _task_by_id(result.run, "qa-validation").status == StepStatus.running
+
+
+def test_orchestration_loop_honors_max_iterations_after_progress(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Bound autonomous loop iterations.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    dev_task = _task_by_id(run, "dev-implementation")
+    assert dev_task.agent_id
+    update_agent_status(dev_task.agent_id, AgentStatusUpdate(status=AgentStatus.completed))
+
+    result = service.run_loop(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    assert result.iterations == 1
+    assert result.made_progress is True
+    assert result.stopped_reason == "max_iterations"
+    assert result.running_task_ids == ["qa-validation"]
+
+
+def test_orchestration_loop_stops_on_unresolved_blocker(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Stop loop on blocker.",
+            tasks=[
+                _task("qa-validation", role="QA", paths=["tests/test_orchestration.py"]),
+            ],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    assert task.agent_id
+    update_agent_status(task.agent_id, AgentStatusUpdate(status=AgentStatus.failed))
+
+    result = service.run_loop(run.id, OrchestrationLoopRequest(max_iterations=5))
+
+    assert result.iterations == 1
+    assert result.made_progress is True
+    assert result.stopped_reason == "blocked"
+    assert result.running_task_ids == []
+    assert result.pending_task_ids == []
+    assert len(result.unresolved_blocker_ids) == 1
+    assert _task_by_id(result.run, "qa-validation").status == StepStatus.blocked
+
+
+def test_orchestration_loop_stops_before_scheduling_when_blockers_already_exist(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Do not schedule while already blocked.",
+            tasks=[
+                _task("blocked-qa", role="QA", paths=["tests/test_orchestration.py"]),
+                _task("ready-dev", role="Developer", paths=["src/dgentic/orchestration.py"]),
+            ],
+        )
+    )
+    blocked_task = _task_by_id(run, "blocked-qa")
+    ready_task = _task_by_id(run, "ready-dev")
+    assert blocked_task.agent_id
+    assert ready_task.agent_id
+    blocked = service.update_task(
+        run.id,
+        "blocked-qa",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Manual review needed."),
+    )
+    ready_pending = ready_task.model_copy(update={"status": StepStatus.pending, "agent_id": None})
+    blocked = blocked.model_copy(
+        update={
+            "tasks": [ready_pending if task.id == "ready-dev" else task for task in blocked.tasks],
+            "scheduled_task_ids": [],
+        }
+    )
+    service._runs.upsert(blocked)
+
+    result = service.run_loop(blocked.id, OrchestrationLoopRequest(max_iterations=5))
+
+    assert result.iterations == 0
+    assert result.made_progress is False
+    assert result.stopped_reason == "blocked"
+    assert result.pending_task_ids == ["ready-dev"]
+    assert _task_by_id(result.run, "ready-dev").status == StepStatus.pending
+    assert _task_by_id(result.run, "ready-dev").agent_id is None
+
+
+def test_orchestration_loop_schedules_ready_pending_task(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Schedule pending recovered work.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Needs review."),
+    )
+    resolved = service.resolve_blocker(
+        blocked.id,
+        blocked.blockers[0].id,
+        OrchestrationBlockerResolutionRequest(resolution="Reviewed without immediate schedule."),
+    )
+
+    result = service.run_loop(resolved.id, OrchestrationLoopRequest(max_iterations=5))
+
+    assert result.iterations == 2
+    assert result.made_progress is True
+    assert result.stopped_reason == "waiting_for_agents"
+    assert result.running_task_ids == ["qa-validation"]
+    assert result.pending_task_ids == []
+    assert _task_by_id(result.run, "qa-validation").status == StepStatus.running
 
 
 def test_orchestration_cycle_reconciles_multiple_completed_agents_before_scheduling(

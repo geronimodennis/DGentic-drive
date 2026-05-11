@@ -391,6 +391,29 @@ class OrchestrationRun(BaseModel):
     completed_at: datetime | None = None
 
 
+class OrchestrationLoopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_iterations: int = Field(default=10, ge=1, le=50)
+    stop_on_blocked: bool = True
+
+
+class OrchestrationLoopResult(BaseModel):
+    run: OrchestrationRun
+    iterations: int = Field(ge=0)
+    made_progress: bool
+    stopped_reason: Literal[
+        "waiting_for_agents",
+        "blocked",
+        "all_tasks_completed",
+        "quiescent",
+        "max_iterations",
+    ]
+    running_task_ids: list[str] = Field(default_factory=list)
+    pending_task_ids: list[str] = Field(default_factory=list)
+    unresolved_blocker_ids: list[str] = Field(default_factory=list)
+
+
 class ToolManifest(BaseModel):
     name: str
     version: str = "0.2.6"

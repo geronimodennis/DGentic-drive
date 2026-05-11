@@ -115,7 +115,13 @@ from dgentic.tool_runtime import (
     get_tool_approval_review,
     list_tool_approvals,
 )
-from dgentic.tools import generate_tool, list_tools, register_tool, update_tool_governance
+from dgentic.tools import (
+    ToolVersionConflictError,
+    generate_tool,
+    list_tools,
+    register_tool,
+    update_tool_governance,
+)
 
 router = APIRouter()
 
@@ -541,7 +547,7 @@ def create_tool(manifest: ToolManifest) -> ToolManifest:
 def generate_local_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     try:
         return generate_tool(request)
-    except FileExistsError as exc:
+    except (FileExistsError, ToolVersionConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

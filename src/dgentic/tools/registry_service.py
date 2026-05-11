@@ -1,5 +1,6 @@
 """Service for SQLAlchemy-backed tool registry and duplicate detection."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -40,6 +41,34 @@ class ToolRegistryService:
 
     def get_tool_by_id(self, tool_id: UUID | str) -> ToolManifest | None:
         return self.session.query(ToolManifest).filter(ToolManifest.id == str(tool_id)).first()
+
+    def update_tool_registration(
+        self,
+        tool_id: UUID | str,
+        request: ToolRegistryCreateRequest,
+    ) -> ToolManifest | None:
+        tool = self.get_tool_by_id(tool_id)
+        if not tool:
+            return None
+
+        tool.version = request.version
+        tool.source_path = request.source_path
+        tool.interface_signature = request.interface_signature
+        tool.permission_level = request.permission_level
+        tool.tags = request.tags
+        tool.description = request.description
+        tool.created_by_agent = request.created_by_agent
+        tool.usage_count = 0
+        tool.success_count = 0
+        tool.failure_count = 0
+        tool.last_used_at = None
+        tool.reliability_score = 1.0
+        tool.deprecated = False
+        tool.updated_at = datetime.now(UTC)
+        self.session.commit()
+        self.session.refresh(tool)
+        self.session.expunge(tool)
+        return tool
 
     def list_tools(
         self,

@@ -77,7 +77,7 @@ Current modules:
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
-- `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, usage tracking, reliability scoring, and source-path validation.
+- `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, monotonic same-name version migration, usage tracking, reliability scoring, and source-path validation.
 - `tool_runtime.py`: Generated tool approval records, bound approval validation, process-group subprocess execution and timeout cleanup, SQL registry permission/deprecation checks, local-only dependency import isolation, reduced inherited execution environment, redacted output/audit events, SQL reliability counter sync, and runtime reliability policy automation.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
@@ -192,7 +192,7 @@ Current endpoints:
 - `POST /api/v1/memory/retrieve/vector`: Runs the vector retrieval contract. Semantic embedding generation currently requires an optional embedding dependency.
 - `GET /api/v1/memory/retrieve/metadata`: Runs metadata-only retrieval.
 - `POST /tools`: Registers a local tool manifest.
-- `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, README files, and optional validated local dependency path metadata after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry.
+- `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, README files, and optional validated local dependency path metadata after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry. Same-name regeneration is treated as a version migration and requires `overwrite=true` plus a strictly newer version; accepted migrations update the single SQL row in place and reset reliability counters for the new generated artifact version.
 - `POST /tools/{name}/approvals`: Creates a pending approval for approval-required generated tools under the `tools` capability. Approval records include redacted payload preview, payload/artifact/approval HMAC digests, tool version/status, entrypoint, timeout, requester, agent/task context, and expiry.
 - `GET /tools/approvals`: Lists generated tool approval records.
 - `GET /tools/approvals/{approval_id}/review`: Returns the safe generated-tool approval review contract for UI consumers with redacted payload preview, digest identifiers, lifecycle timestamps, and bound-execution warnings.

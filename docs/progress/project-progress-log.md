@@ -4,6 +4,55 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005g Generated-Tool Version Migration Policy
+
+Status: completed for the scoped no-migration version policy slice; Sprint 11 remains open for full OS/filesystem/network sandbox isolation and production package/dependency lifecycle management.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected bounded same-name version migration as the next Sprint 11 slice after the pushed BL-005f checkpoint.
+- Completed: Architect read-only explorer recommended a no-schema-migration slice because the current SQL registry intentionally has one unique row per tool name and runtime selection is name-based.
+- Completed: QA read-only explorer recommended deterministic version-policy tests for same-version conflicts, newer-version overwrite requirements, successful migration, and SQL lifecycle reset.
+- Completed: Developer updated production source only for monotonic generated-tool version policy, in-place SQL registry update/reset behavior, and precise API conflict handling.
+- Completed: QA updated tests only for generated-tool version migration conflicts, accepted newer-version migration, no file rewrites on conflict, JSON/SQL manifest consistency, and registry lifecycle reset.
+- Completed: Focused and full regression, lint, and format gates for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: same-name generated-tool regeneration requires `overwrite=true` and a strictly newer version than both the local JSON manifest and SQL registry row.
+- Implemented in this slice: same-version, older-version, or missing-overwrite regeneration conflicts are rejected before generated files are rewritten.
+- Implemented in this slice: different tool names with duplicate SQL interface signatures are still blocked before file writes.
+- Implemented in this slice: accepted same-name migrations update `tool.py`, `manifest.json`, README, local JSON state, and the existing SQL registry row.
+- Implemented in this slice: the SQL registry row id remains stable during bounded migration, while version, interface signature, permission, tags, description, and created-by-agent metadata update.
+- Implemented in this slice: SQL usage counters, reliability score, last-used timestamp, and deprecation flag reset for the new generated artifact version.
+
+Validation:
+- Focused version gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_dynamic_tool_generation_requires_newer_overwrite_for_version_migration tests\test_tool_registry.py::TestToolRegistry::test_update_tool_registration_resets_version_runtime_state` passed with 2 tests.
+- Focused tool/API/registry gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py tests\test_tool_registry.py tests\test_tool_runtime.py -k "tool or registry or version or duplicate or reliability"` passed with 60 tests and 34 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\tools\__init__.py src\dgentic\tools\registry_service.py src\dgentic\api\routes.py tests\test_api.py tests\test_tool_registry.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\tools\__init__.py src\dgentic\tools\registry_service.py src\dgentic\api\routes.py tests\test_api.py tests\test_tool_registry.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 487 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+
+Residual risks:
+- This slice keeps one SQL registry row per generated tool name; true parallel multi-version rows would require a dedicated migration, `(tool_name, version)` uniqueness, active/latest selection semantics, runtime version selection, and likely versioned artifact paths.
+- Version comparison is intentionally lightweight for DGentic-generated version strings; strict packaging-version validation remains future hardening if external publishing semantics become necessary.
+- Full OS/filesystem/network sandbox isolation remains open.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/tools/__init__.py`, and `src/dgentic/tools/registry_service.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_tool_registry.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- No untracked files are present.
+
+Next:
+- Continue with explicit sandbox design or move to the next backlog sprint if PM accepts the remaining sandbox/package lifecycle items as future production-hardening work after this stable checkpoint is pushed.
+
 ### Sprint 11 BL-005f Generated-Tool Process Cleanup Hardening
 
 Status: completed for the scoped generated-tool process cleanup slice; Sprint 11 remains open for full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management, and richer version migration policy.
@@ -50,7 +99,7 @@ Workspace hygiene:
 - No untracked files are present after the BL-005e checkpoint; previous backup files are no longer in the working tree.
 
 Next:
-- Continue Sprint 11 with richer version migration policy or explicit full sandbox design after this stable checkpoint is pushed.
+- Completed checkpoint commit and push for this Sprint 11 slice as `1c69e19`; continue Sprint 11 with richer version migration policy or explicit full sandbox design.
 
 ### Sprint 11 BL-005e Per-Tool Local Dependency Import Isolation
 

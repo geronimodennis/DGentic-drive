@@ -1351,6 +1351,119 @@ def test_dynamic_tool_generation_sql_duplicate_prevents_file_writes(
     assert not (root_dir / "localmcp" / "new-tool-with-existing-interface").exists()
 
 
+def test_dynamic_tool_generation_requires_newer_overwrite_for_version_migration(
+    isolated_tool_api_state,
+) -> None:
+    root_dir = isolated_tool_api_state
+    client = TestClient(create_app())
+
+    first_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "versioned-tool",
+            "version": "1.0.0",
+            "description": "Version one.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": "def run(payload):\n    return {'version': 'v1'}\n",
+            "interface": {"input": "dict", "output": "v1"},
+        },
+    )
+    stale_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "versioned-tool",
+            "version": "1.0.0",
+            "description": "Same version should be blocked.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "overwrite": True,
+            "source_code": "def run(payload):\n    return {'version': 'stale'}\n",
+            "interface": {"input": "dict", "output": "stale"},
+        },
+    )
+    missing_policy_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "versioned-tool",
+            "version": "1.1.0",
+            "description": "Newer version still requires explicit overwrite.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": "def run(payload):\n    return {'version': 'blocked'}\n",
+            "interface": {"input": "dict", "output": "blocked"},
+        },
+    )
+    registry_response = client.get("/api/v1/tools/registry?permission_level=autopilot_safe")
+    registry_tool = next(
+        item for item in registry_response.json()["items"] if item["tool_name"] == "versioned-tool"
+    )
+    usage_response = client.post(
+        f"/api/v1/tools/registry/{registry_tool['id']}/usage",
+        json={"status": "failure", "execution_time_ms": 25},
+    )
+    tool_path = root_dir / "localmcp" / "versioned-tool" / "tool.py"
+    manifest_path = root_dir / "localmcp" / "versioned-tool" / "manifest.json"
+    pre_migration_source = tool_path.read_text(encoding="utf-8")
+
+    assert first_response.status_code == 201
+    assert stale_response.status_code == 409
+    assert missing_policy_response.status_code == 409
+    assert "v1" in pre_migration_source
+    assert "stale" not in pre_migration_source
+    assert "blocked" not in pre_migration_source
+    assert usage_response.status_code == 200
+    assert usage_response.json()["usage_count"] == 1
+
+    migration_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "versioned-tool",
+            "version": "1.1.0",
+            "description": "Version two.",
+            "trigger_source": "skill",
+            "permission_mode": "approval_required",
+            "tags": ["migrated"],
+            "overwrite": True,
+            "source_code": "def run(payload):\n    return {'version': 'v2'}\n",
+            "interface": {"input": "dict", "output": "v2"},
+        },
+    )
+    migrated_registry_response = client.get("/api/v1/tools/registry")
+    tools_response = client.get("/tools")
+
+    assert migration_response.status_code == 201
+    assert migration_response.json()["duplicate_detected"] is True
+    migrated_manifest = migration_response.json()["manifest"]
+    assert migrated_manifest["version"] == "1.1.0"
+    assert migrated_manifest["permission_mode"] == "approval_required"
+    assert "v2" in tool_path.read_text(encoding="utf-8")
+    assert "Version: `1.1.0`" in (root_dir / "localmcp" / "versioned-tool" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["version"] == "1.1.0"
+    assert [tool["name"] for tool in tools_response.json() if tool["name"] == "versioned-tool"] == [
+        "versioned-tool"
+    ]
+
+    migrated_items = [
+        item
+        for item in migrated_registry_response.json()["items"]
+        if item["tool_name"] == "versioned-tool"
+    ]
+    assert len(migrated_items) == 1
+    migrated_registry_tool = migrated_items[0]
+    assert migrated_registry_tool["id"] == registry_tool["id"]
+    assert migrated_registry_tool["version"] == "1.1.0"
+    assert migrated_registry_tool["permission_level"] == "approval_required"
+    assert migrated_registry_tool["tags"] == ["migrated", "skill"]
+    assert migrated_registry_tool["usage_count"] == 0
+    assert migrated_registry_tool["success_count"] == 0
+    assert migrated_registry_tool["failure_count"] == 0
+    assert migrated_registry_tool["reliability_score"] == 1.0
+    assert migrated_registry_tool["deprecated"] is False
+
+
 def test_dynamic_tool_generation_blocks_invalid_permission_and_deprecates_tool(
     tmp_path, monkeypatch
 ) -> None:

@@ -144,6 +144,52 @@ class TestToolRegistry:
         assert updated.failure_count == 1
         assert abs(updated.reliability_score - 0.5) < 0.01
 
+    def test_update_tool_registration_resets_version_runtime_state(self, db_session: Session):
+        """Test updating a generated tool registry row for a new version."""
+        service = ToolRegistryService(db_session)
+        tool = service.register_tool(
+            ToolRegistryCreateRequest(
+                tool_name="versioned-tool",
+                version="1.0.0",
+                source_path="localmcp/versioned-tool/tool.py",
+                interface_signature="sha256:v1",
+                permission_level="autopilot_safe",
+                tags=["old"],
+                description="Old version.",
+            )
+        )
+        service.record_usage(tool.id, ToolUsageRequest(status="failure"))
+        service.deprecate_tool(tool.id)
+
+        updated = service.update_tool_registration(
+            tool.id,
+            ToolRegistryCreateRequest(
+                tool_name="versioned-tool",
+                version="2.0.0",
+                source_path="localmcp/versioned-tool/tool.py",
+                interface_signature="sha256:v2",
+                permission_level="approval_required",
+                tags=["new"],
+                description="New version.",
+                created_by_agent="main_agent",
+            ),
+        )
+
+        assert updated is not None
+        assert updated.id == tool.id
+        assert updated.version == "2.0.0"
+        assert updated.interface_signature == "sha256:v2"
+        assert updated.permission_level == "approval_required"
+        assert updated.tags == ["new"]
+        assert updated.description == "New version."
+        assert updated.created_by_agent == "main_agent"
+        assert updated.usage_count == 0
+        assert updated.success_count == 0
+        assert updated.failure_count == 0
+        assert updated.last_used_at is None
+        assert updated.reliability_score == 1.0
+        assert updated.deprecated is False
+
 
 class TestDuplicateDetection:
     """Tests for tool duplicate detection."""

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from hashlib import sha256
+from itertools import zip_longest
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -27,6 +29,10 @@ from dgentic.storage import JsonCollection
 from dgentic.tools.registry_service import ToolRegistryService
 
 _tools = JsonCollection("tools", ToolManifest, key_field="name")
+
+
+class ToolVersionConflictError(ValueError):
+    """Raised when generated-tool migration does not advance the version."""
 
 
 def register_tool(manifest: ToolManifest) -> ToolManifest:
@@ -58,11 +64,15 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
 
     interface = request.interface or {"input": "dict", "output": "dict"}
     interface_signature = _interface_signature(interface)
-    _ensure_sql_registry_allows_generation(request, interface_signature)
-
+    sql_existing = _ensure_sql_registry_allows_generation(request, interface_signature)
     existing = _find_duplicate(request)
-    if existing and not request.overwrite:
-        raise FileExistsError(f"Tool already exists or duplicates existing tool: {existing.name}")
+    if existing and existing.name != request.name:
+        raise FileExistsError(f"Tool duplicates existing tool: {existing.name}")
+    _ensure_generation_version_policy(
+        request,
+        existing_local=existing,
+        existing_sql=sql_existing,
+    )
 
     root_dir = get_settings().root_dir.resolve()
     localmcp_dir = (root_dir / "localmcp").resolve()
@@ -96,7 +106,12 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     manifest_path.write_text(manifest_json, encoding="utf-8")
     readme_path.write_text(_readme(request, manifest), encoding="utf-8")
     register_tool(manifest)
-    _register_sql_tool_manifest(request, manifest, interface_signature)
+    _register_sql_tool_manifest(
+        request,
+        manifest,
+        interface_signature,
+        existing_tool_id=sql_existing.id if sql_existing is not None else None,
+    )
     add_memory(
         MemoryRecord(
             kind=MemoryKind.artifact,
@@ -163,6 +178,57 @@ def _find_duplicate(request: ToolGenerationRequest) -> ToolManifest | None:
     return None
 
 
+_VERSION_PART_RE = re.compile(r"\d+|[A-Za-z]+")
+
+
+def _ensure_generation_version_policy(
+    request: ToolGenerationRequest,
+    *,
+    existing_local: ToolManifest | None,
+    existing_sql,
+) -> None:
+    existing_versions = [
+        version
+        for version in [
+            existing_local.version if existing_local is not None else None,
+            existing_sql.version if existing_sql is not None else None,
+        ]
+        if version is not None
+    ]
+    if not existing_versions:
+        return
+    current_version = max(existing_versions, key=_version_sort_key)
+    if not request.overwrite:
+        raise FileExistsError(
+            "Tool already exists. To migrate a generated tool version, submit a newer "
+            "version with overwrite=true."
+        )
+    if _compare_versions(request.version, current_version) <= 0:
+        raise ToolVersionConflictError(
+            f"Tool version must increase from {current_version} to migrate {request.name}."
+        )
+
+
+def _version_sort_key(version: str) -> tuple[tuple[int, int | str], ...]:
+    return tuple(_version_token(part) for part in _VERSION_PART_RE.findall(version))
+
+
+def _version_token(part: str) -> tuple[int, int | str]:
+    if part.isdigit():
+        return (1, int(part))
+    return (0, part.lower())
+
+
+def _compare_versions(left: str, right: str) -> int:
+    left_parts = _version_sort_key(left)
+    right_parts = _version_sort_key(right)
+    for left_part, right_part in zip_longest(left_parts, right_parts, fillvalue=(1, 0)):
+        if left_part == right_part:
+            continue
+        return 1 if left_part > right_part else -1
+    return 0
+
+
 def _interface_signature(interface: dict) -> str:
     payload = json.dumps(interface, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return f"sha256:{sha256(payload.encode('utf-8')).hexdigest()}"
@@ -171,13 +237,11 @@ def _interface_signature(interface: dict) -> str:
 def _ensure_sql_registry_allows_generation(
     request: ToolGenerationRequest,
     interface_signature: str,
-) -> None:
+):
     session = get_db_session()
     try:
         service = ToolRegistryService(session)
         existing = service.get_tool_by_name(request.name)
-        if existing is not None:
-            raise FileExistsError(f"Tool already exists in SQL registry: {existing.tool_name}")
 
         duplicate = service.check_duplicate(
             DuplicateCheckRequest(
@@ -194,6 +258,9 @@ def _ensure_sql_registry_allows_generation(
         different_tool_duplicate = similar_names - {request.name}
         if duplicate.get("is_duplicate") and (not request.overwrite or different_tool_duplicate):
             raise FileExistsError(duplicate["recommendation"])
+        if existing is not None:
+            session.expunge(existing)
+        return existing
     finally:
         session.close()
 
@@ -202,24 +269,28 @@ def _register_sql_tool_manifest(
     request: ToolGenerationRequest,
     manifest: ToolManifest,
     interface_signature: str,
+    *,
+    existing_tool_id: str | None,
 ) -> None:
     session = get_db_session()
     try:
         service = ToolRegistryService(session)
+        registration = ToolRegistryCreateRequest(
+            tool_name=manifest.name,
+            version=manifest.version,
+            source_path=manifest.entrypoint,
+            interface_signature=interface_signature,
+            permission_level=manifest.permission_mode.value,
+            tags=manifest.tags,
+            description=manifest.description,
+            created_by_agent=request.trigger_source.value,
+        )
+        if existing_tool_id is not None:
+            service.update_tool_registration(existing_tool_id, registration)
+            return
         if service.get_tool_by_name(manifest.name) is not None:
             return
-        service.register_tool(
-            ToolRegistryCreateRequest(
-                tool_name=manifest.name,
-                version=manifest.version,
-                source_path=manifest.entrypoint,
-                interface_signature=interface_signature,
-                permission_level=manifest.permission_mode.value,
-                tags=manifest.tags,
-                description=manifest.description,
-                created_by_agent=request.trigger_source.value,
-            )
-        )
+        service.register_tool(registration)
     except SQLAlchemyError as exc:
         raise RuntimeError(f"Failed to register generated tool in SQL registry: {exc}") from exc
     finally:
@@ -264,6 +335,7 @@ def _readme(request: ToolGenerationRequest, manifest: ToolManifest) -> str:
 
 
 __all__ = [
+    "ToolVersionConflictError",
     "ToolRegistryService",
     "generate_tool",
     "get_tool",

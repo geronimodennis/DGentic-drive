@@ -236,7 +236,8 @@ Current implementation status:
 - Completed: BL-005d runtime reliability policy automation, including SQL registry usage counter sync on actual generated-tool execution, warning events after enough low-reliability evidence, automatic disabling for repeatedly weak tools, automatic deprecation for very low-reliability tools, and no counter increments for pre-execution approval/permission blocks.
 - Completed: BL-005e per-tool local dependency import isolation, including validated manifest/generation dependency paths, Python isolated import mode for generated-tool subprocesses, host Python/virtualenv/library path environment stripping, standard `vendor` support, explicit dependency path fail-closed behavior, and symlink escape blocking before usage counters increment.
 - Completed: BL-005f generated-tool process cleanup hardening, including explicit `Popen` launch controls, process-group/new-process-group startup where supported, process-tree cleanup on timeout, partial timeout output preservation, and Windows `taskkill` timeout fallback to process kill.
-- Remaining: full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management beyond local vendor paths, and richer version migration policy beyond one registry row per tool name.
+- Completed: BL-005g bounded generated-tool version migration policy, including explicit same-name migration through `overwrite=true`, strictly newer version enforcement, no file rewrites on conflict, in-place SQL registry row updates, SQL reliability counter reset, and SQL deprecation clearing for the new generated artifact version.
+- Remaining: full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management beyond local vendor paths, and parallel multi-version SQL registry rows if production use needs multiple active versions of one tool name.
 
 ### BL-006: Provider System Productionization
 
@@ -535,7 +536,8 @@ Current Sprint 11 status:
 - Completed: runtime reliability policy automation for actual generated-tool execution, including SQL usage sync, warning events, auto-disable, and auto-deprecation.
 - Completed: per-tool local dependency import isolation for generated-tool execution.
 - Completed: generated-tool process-group launch and timeout cleanup hardening.
-- Remaining: full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management beyond local vendor paths, and richer version migration policy.
+- Completed: bounded generated-tool version migration policy for strictly newer same-name overwrites.
+- Remaining: full OS/filesystem/network sandbox isolation, production package/dependency lifecycle management beyond local vendor paths, and parallel multi-version SQL registry rows if needed.
 
 ### Sprint 12: Provider Productionization
 

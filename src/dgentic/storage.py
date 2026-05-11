@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 from dgentic.settings import get_settings
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+ResultT = TypeVar("ResultT")
 
 
 class JsonCollection(Generic[ModelT]):
@@ -80,6 +81,17 @@ class JsonCollection(Generic[ModelT]):
                         self._save_unlocked(items)
                         return updated
         raise KeyError(f"Item not found in collection {self.name}: {item_id}")
+
+    def transact(
+        self,
+        mutator: Callable[[list[ModelT]], tuple[list[ModelT], ResultT]],
+    ) -> ResultT:
+        with self._lock:
+            with self._file_lock():
+                items = self._load_unlocked()
+                updated_items, result = mutator(items)
+                self._save_unlocked(updated_items)
+                return result
 
     def get(self, item_id: str) -> ModelT | None:
         return next((item for item in self.list() if self._key(item) == item_id), None)

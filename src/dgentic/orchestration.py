@@ -1,9 +1,13 @@
 """Backend orchestration control plane for autonomous sprint task graphs."""
 
 import json
-from datetime import UTC, datetime
+import threading
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import PurePosixPath
-from typing import Any
+from threading import RLock, Thread
+from typing import Any, ParamSpec, TypeVar
 from uuid import uuid4
 
 from dgentic.agents import get_agent, spawn_agent, update_agent_status
@@ -20,6 +24,8 @@ from dgentic.schemas import (
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
+    OrchestrationExecution,
+    OrchestrationExecutionStatus,
     OrchestrationFollowUp,
     OrchestrationLoopRequest,
     OrchestrationLoopResult,
@@ -43,6 +49,12 @@ TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
 RECOVERABLE_TASK_BLOCKER_SEVERITIES = {"role_boundary", "retry_exhausted"}
 RESOLVABLE_TASK_BLOCKER_SEVERITIES = {"blocked", "security"}
+ACTIVE_EXECUTION_STATUSES = {
+    OrchestrationExecutionStatus.starting,
+    OrchestrationExecutionStatus.running,
+}
+BACKGROUND_EXECUTION_STALE_AFTER_SECONDS = 300
+BACKGROUND_EXECUTION_HEARTBEAT_INTERVAL_SECONDS = 30
 WRITE_FILE_ACTIONS = {
     "write",
     "binary_write",
@@ -57,12 +69,47 @@ class OrchestrationError(ValueError):
     """Raised when an orchestration graph or transition is invalid."""
 
 
+ParamT = ParamSpec("ParamT")
+ReturnT = TypeVar("ReturnT")
+
+
+def _locked_mutation(
+    method: Callable[ParamT, ReturnT],
+) -> Callable[ParamT, ReturnT]:
+    @wraps(method)
+    def wrapped(self, *args: ParamT.args, **kwargs: ParamT.kwargs) -> ReturnT:
+        with self._mutation_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
+def _should_mark_background_execution_stale(
+    execution: OrchestrationExecution,
+    *,
+    supervisor_id: str,
+    now: datetime,
+) -> bool:
+    if execution.status not in ACTIVE_EXECUTION_STATUSES:
+        return False
+    if execution.supervisor_id == supervisor_id:
+        return False
+    heartbeat_at = execution.last_heartbeat_at or execution.started_at
+    stale_before = now - timedelta(seconds=BACKGROUND_EXECUTION_STALE_AFTER_SECONDS)
+    return heartbeat_at <= stale_before
+
+
 class OrchestrationService:
     """Validate, schedule, and track autonomous orchestration task graphs."""
 
     def __init__(self) -> None:
         self._runs = JsonCollection("orchestrations", OrchestrationRun)
+        self._executions = JsonCollection("orchestration-executions", OrchestrationExecution)
+        self._mutation_lock = RLock()
+        self.supervisor_id = f"orchestration-supervisor-{uuid4()}"
+        self.reconcile_stale_background_executions()
 
+    @_locked_mutation
     def create_run(
         self,
         request: OrchestrationCreateRequest,
@@ -143,6 +190,7 @@ class OrchestrationService:
             return run
         return None
 
+    @_locked_mutation
     def advance_run(
         self,
         run_id: str,
@@ -155,6 +203,7 @@ class OrchestrationService:
         updated = self._schedule_ready_tasks(run, actor=actor)
         return self._persist(updated)
 
+    @_locked_mutation
     def run_cycle(
         self,
         run_id: str,
@@ -202,6 +251,7 @@ class OrchestrationService:
         )
         return self._persist(run)
 
+    @_locked_mutation
     def run_loop(
         self,
         run_id: str,
@@ -209,9 +259,16 @@ class OrchestrationService:
         *,
         actor: str | None = None,
         include_all: bool = True,
+        background_execution_id: str | None = None,
     ) -> OrchestrationLoopResult:
         run = self._require_run(run_id, actor=actor, include_all=include_all)
         _ensure_run_open(run)
+        self.reconcile_stale_background_executions()
+        active_execution = self._active_background_execution_for_run(run.id)
+        if active_execution is not None and active_execution.id != background_execution_id:
+            raise OrchestrationError(
+                f"Orchestration already has active background execution: {active_execution.id}"
+            )
         iterations = 0
         made_progress = False
         stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
@@ -255,6 +312,112 @@ class OrchestrationService:
             stopped_reason=stopped_reason,
         )
 
+    @_locked_mutation
+    def start_background_execution(
+        self,
+        run_id: str,
+        request: OrchestrationLoopRequest,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationExecution:
+        run = self._require_run(run_id, actor=actor, include_all=include_all)
+        _ensure_run_open(run)
+        self.reconcile_stale_background_executions()
+
+        now = datetime.now(UTC)
+        execution = OrchestrationExecution(
+            id=f"orchexec-{uuid4()}",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.starting,
+            request=request,
+            requested_by=actor or run.requested_by,
+            supervisor_id=self.supervisor_id,
+            status_reason="Orchestration background execution queued.",
+            started_at=now,
+            last_heartbeat_at=now,
+        )
+        saved = self._claim_background_execution(execution)
+        event_log.record(
+            LogEventType.task,
+            "Recorded orchestration background execution launch intent.",
+            actor=actor or "system",
+            subject_id=saved.id,
+            metadata={
+                "run_id": saved.run_id,
+                "supervisor_id": saved.supervisor_id,
+                "max_iterations": request.max_iterations,
+                "stop_on_blocked": request.stop_on_blocked,
+            },
+        )
+        worker = Thread(
+            target=self._run_background_execution,
+            args=(saved.id, actor, include_all),
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._finalize_background_execution(
+                saved.id,
+                status=OrchestrationExecutionStatus.failed,
+                status_reason="Orchestration background execution failed to start.",
+                error=error,
+                actor=actor,
+            )
+            safe_error = redact_sensitive_values(error)
+            raise OrchestrationError(
+                f"Failed to start orchestration background execution: {safe_error}"
+            ) from exc
+        return saved
+
+    def list_background_executions(
+        self,
+        run_id: str,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> list[OrchestrationExecution]:
+        self._require_run(run_id, actor=actor, include_all=include_all)
+        self.reconcile_stale_background_executions()
+        return [execution for execution in self._executions.list() if execution.run_id == run_id]
+
+    def get_background_execution(
+        self,
+        run_id: str,
+        execution_id: str,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationExecution:
+        self._require_run(run_id, actor=actor, include_all=include_all)
+        self.reconcile_stale_background_executions()
+        execution = self._executions.get(execution_id)
+        if execution is None or execution.run_id != run_id:
+            raise OrchestrationError(
+                f"Orchestration background execution not found: {execution_id}"
+            )
+        return execution
+
+    def reconcile_stale_background_executions(self) -> None:
+        now = datetime.now(UTC)
+        stale_executions = self._executions.transact(
+            lambda items: self._mark_stale_background_executions(items, now=now)
+        )
+        for stale_execution in stale_executions:
+            event_log.record(
+                LogEventType.task,
+                "Marked stale orchestration background execution.",
+                subject_id=stale_execution.id,
+                metadata={
+                    "run_id": stale_execution.run_id,
+                    "previous_supervisor_id": stale_execution.supervisor_id,
+                    "current_supervisor_id": self.supervisor_id,
+                },
+            )
+
+    @_locked_mutation
     def update_task(
         self,
         run_id: str,
@@ -325,6 +488,7 @@ class OrchestrationService:
         )
         return self._persist(run)
 
+    @_locked_mutation
     def recover_task(
         self,
         run_id: str,
@@ -436,6 +600,7 @@ class OrchestrationService:
         run = self._schedule_ready_tasks(run, actor=actor)
         return self._persist(run)
 
+    @_locked_mutation
     def resolve_blocker(
         self,
         run_id: str,
@@ -516,6 +681,7 @@ class OrchestrationService:
         )
         return self._persist(run)
 
+    @_locked_mutation
     def close_run(
         self,
         run_id: str,
@@ -790,6 +956,287 @@ class OrchestrationService:
         if run is None:
             raise OrchestrationError(f"Orchestration not found: {run_id}")
         return run
+
+    def _claim_background_execution(
+        self,
+        execution: OrchestrationExecution,
+    ) -> OrchestrationExecution:
+        def claim(
+            items: list[OrchestrationExecution],
+        ) -> tuple[list[OrchestrationExecution], OrchestrationExecution]:
+            active_execution = next(
+                (
+                    item
+                    for item in items
+                    if item.run_id == execution.run_id and item.status in ACTIVE_EXECUTION_STATUSES
+                ),
+                None,
+            )
+            if active_execution is not None:
+                raise OrchestrationError(
+                    f"Orchestration already has active background execution: {active_execution.id}"
+                )
+            return [*items, execution], execution
+
+        return self._executions.transact(claim)
+
+    def _active_background_execution_for_run(
+        self,
+        run_id: str,
+    ) -> OrchestrationExecution | None:
+        return next(
+            (
+                execution
+                for execution in self._executions.list()
+                if execution.run_id == run_id and execution.status in ACTIVE_EXECUTION_STATUSES
+            ),
+            None,
+        )
+
+    def _mark_stale_background_executions(
+        self,
+        executions: list[OrchestrationExecution],
+        *,
+        now: datetime,
+    ) -> tuple[list[OrchestrationExecution], list[OrchestrationExecution]]:
+        stale_executions: list[OrchestrationExecution] = []
+        updated_executions: list[OrchestrationExecution] = []
+        for execution in executions:
+            if not _should_mark_background_execution_stale(
+                execution,
+                supervisor_id=self.supervisor_id,
+                now=now,
+            ):
+                updated_executions.append(execution)
+                continue
+            stale_execution = execution.model_copy(
+                update={
+                    "status": OrchestrationExecutionStatus.stale,
+                    "status_reason": ("Background execution supervisor heartbeat expired."),
+                    "completed_at": now,
+                    "last_heartbeat_at": now,
+                }
+            )
+            stale_executions.append(stale_execution)
+            updated_executions.append(stale_execution)
+        return updated_executions, stale_executions
+
+    def _run_background_execution(
+        self,
+        execution_id: str,
+        actor: str | None,
+        include_all: bool,
+    ) -> None:
+        try:
+            execution = self._mark_background_execution_running(execution_id, actor=actor)
+        except Exception as exc:
+            self._finalize_background_execution(
+                execution_id,
+                status=OrchestrationExecutionStatus.failed,
+                status_reason="Orchestration background execution failed before starting.",
+                error=f"{type(exc).__name__}: {exc}",
+                actor=actor,
+            )
+            return
+        if execution is None:
+            return
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._heartbeat_background_execution,
+            args=(execution.id, stop_heartbeat),
+            daemon=True,
+        )
+        try:
+            heartbeat_thread.start()
+        except Exception as exc:
+            self._finalize_background_execution(
+                execution_id,
+                status=OrchestrationExecutionStatus.failed,
+                status_reason="Orchestration background execution heartbeat failed to start.",
+                error=f"{type(exc).__name__}: {exc}",
+                actor=actor,
+            )
+            return
+        try:
+            result = self.run_loop(
+                execution.run_id,
+                execution.request,
+                actor=actor,
+                include_all=include_all,
+                background_execution_id=execution.id,
+            )
+        except OrchestrationError as exc:
+            self._finalize_background_execution(
+                execution_id,
+                status=OrchestrationExecutionStatus.failed,
+                status_reason="Orchestration background execution failed.",
+                error=str(exc),
+                actor=actor,
+            )
+        except Exception as exc:
+            self._finalize_background_execution(
+                execution_id,
+                status=OrchestrationExecutionStatus.failed,
+                status_reason="Orchestration background execution failed unexpectedly.",
+                error=f"{type(exc).__name__}: {exc}",
+                actor=actor,
+            )
+        else:
+            self._finalize_background_execution(
+                execution_id,
+                status=OrchestrationExecutionStatus.completed,
+                status_reason=(
+                    f"Orchestration background execution stopped: {result.stopped_reason}."
+                ),
+                result=result,
+                actor=actor,
+            )
+        finally:
+            stop_heartbeat.set()
+
+    def _heartbeat_background_execution(
+        self,
+        execution_id: str,
+        stop_heartbeat: threading.Event,
+    ) -> None:
+        while not stop_heartbeat.wait(BACKGROUND_EXECUTION_HEARTBEAT_INTERVAL_SECONDS):
+            if self._renew_background_execution_heartbeat(execution_id) is None:
+                return
+
+    def _renew_background_execution_heartbeat(
+        self,
+        execution_id: str,
+    ) -> OrchestrationExecution | None:
+        def heartbeat(
+            items: list[OrchestrationExecution],
+        ) -> tuple[list[OrchestrationExecution], OrchestrationExecution | None]:
+            now = datetime.now(UTC)
+            updated_items: list[OrchestrationExecution] = []
+            saved: OrchestrationExecution | None = None
+            for execution in items:
+                if execution.id != execution_id:
+                    updated_items.append(execution)
+                    continue
+                if (
+                    execution.status not in ACTIVE_EXECUTION_STATUSES
+                    or execution.supervisor_id != self.supervisor_id
+                ):
+                    updated_items.append(execution)
+                    continue
+                saved = execution.model_copy(update={"last_heartbeat_at": now})
+                updated_items.append(saved)
+            return updated_items, saved
+
+        return self._executions.transact(heartbeat)
+
+    def _mark_background_execution_running(
+        self,
+        execution_id: str,
+        *,
+        actor: str | None,
+    ) -> OrchestrationExecution | None:
+        def mark_running(
+            items: list[OrchestrationExecution],
+        ) -> tuple[list[OrchestrationExecution], OrchestrationExecution | None]:
+            now = datetime.now(UTC)
+            updated_items: list[OrchestrationExecution] = []
+            saved: OrchestrationExecution | None = None
+            for execution in items:
+                if execution.id != execution_id:
+                    updated_items.append(execution)
+                    continue
+                if (
+                    execution.status != OrchestrationExecutionStatus.starting
+                    or execution.supervisor_id != self.supervisor_id
+                ):
+                    updated_items.append(execution)
+                    continue
+                saved = execution.model_copy(
+                    update={
+                        "status": OrchestrationExecutionStatus.running,
+                        "status_reason": "Orchestration background execution is running.",
+                        "last_heartbeat_at": now,
+                    }
+                )
+                updated_items.append(saved)
+            return updated_items, saved
+
+        saved = self._executions.transact(mark_running)
+        if saved is None:
+            return None
+        event_log.record(
+            LogEventType.task,
+            "Started orchestration background execution.",
+            actor=actor or "system",
+            subject_id=saved.id,
+            metadata={
+                "run_id": saved.run_id,
+                "supervisor_id": saved.supervisor_id,
+            },
+        )
+        return saved
+
+    def _finalize_background_execution(
+        self,
+        execution_id: str,
+        *,
+        status: OrchestrationExecutionStatus,
+        status_reason: str,
+        actor: str | None,
+        result: OrchestrationLoopResult | None = None,
+        error: str | None = None,
+    ) -> OrchestrationExecution | None:
+        def finalize(
+            items: list[OrchestrationExecution],
+        ) -> tuple[list[OrchestrationExecution], OrchestrationExecution | None]:
+            now = datetime.now(UTC)
+            updated_items: list[OrchestrationExecution] = []
+            saved: OrchestrationExecution | None = None
+            for execution in items:
+                if execution.id != execution_id:
+                    updated_items.append(execution)
+                    continue
+                if (
+                    execution.status not in ACTIVE_EXECUTION_STATUSES
+                    or execution.supervisor_id != self.supervisor_id
+                ):
+                    updated_items.append(execution)
+                    continue
+                saved = execution.model_copy(
+                    update={
+                        "status": status,
+                        "result": result,
+                        "status_reason": status_reason,
+                        "error": redact_sensitive_values(error) if error else None,
+                        "completed_at": now,
+                        "last_heartbeat_at": now,
+                    }
+                )
+                updated_items.append(saved)
+            return updated_items, saved
+
+        saved = self._executions.transact(finalize)
+        if saved is None:
+            return None
+        event_log.record(
+            LogEventType.task,
+            (
+                "Failed orchestration background execution."
+                if status == OrchestrationExecutionStatus.failed
+                else "Completed orchestration background execution."
+            ),
+            actor=actor or "system",
+            subject_id=saved.id,
+            metadata={
+                "run_id": saved.run_id,
+                "status": saved.status,
+                "status_reason": saved.status_reason,
+                "error": saved.error,
+                "iterations": result.iterations if result else None,
+                "stopped_reason": result.stopped_reason if result else None,
+            },
+        )
+        return saved
 
     def _persist(self, run: OrchestrationRun) -> OrchestrationRun:
         run = run.model_copy(update={"updated_at": datetime.now(UTC)})

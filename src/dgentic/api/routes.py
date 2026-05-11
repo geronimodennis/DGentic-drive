@@ -116,6 +116,7 @@ from dgentic.schemas import (
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
+    OrchestrationExecution,
     OrchestrationLoopRequest,
     OrchestrationLoopResult,
     OrchestrationRun,
@@ -279,6 +280,66 @@ def run_orchestration_loop(
         raise _orchestration_http_error(exc) from exc
 
 
+@router.post(
+    "/tasks/orchestrations/{run_id}/executions",
+    response_model=OrchestrationExecution,
+    status_code=202,
+)
+def start_orchestration_background_execution(
+    run_id: str,
+    request: Request,
+    payload: OrchestrationLoopRequest | None = None,
+) -> OrchestrationExecution:
+    loop_request = payload or OrchestrationLoopRequest()
+    try:
+        return orchestration_service.start_background_execution(
+            run_id,
+            loop_request,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.get(
+    "/tasks/orchestrations/{run_id}/executions",
+    response_model=list[OrchestrationExecution],
+)
+def list_orchestration_background_executions(
+    run_id: str,
+    request: Request,
+) -> list[OrchestrationExecution]:
+    try:
+        return orchestration_service.list_background_executions(
+            run_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.get(
+    "/tasks/orchestrations/{run_id}/executions/{execution_id}",
+    response_model=OrchestrationExecution,
+)
+def get_orchestration_background_execution(
+    run_id: str,
+    execution_id: str,
+    request: Request,
+) -> OrchestrationExecution:
+    try:
+        return orchestration_service.get_background_execution(
+            run_id,
+            execution_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
 @router.patch(
     "/tasks/orchestrations/{run_id}/tasks/{task_id}",
     response_model=OrchestrationRun,
@@ -376,7 +437,13 @@ def _require_orchestration_run(run_id: str, request: Request) -> OrchestrationRu
 
 def _orchestration_http_error(exc: OrchestrationError) -> HTTPException:
     message = str(exc)
-    status_code = 404 if "not found" in message.lower() else 400
+    lowered = message.lower()
+    if "not found" in lowered:
+        status_code = 404
+    elif "already has active background execution" in lowered:
+        status_code = 409
+    else:
+        status_code = 400
     return HTTPException(status_code=status_code, detail=message)
 
 

@@ -54,6 +54,14 @@ class AgentStatus(StrEnum):
     cancelled = "cancelled"
 
 
+class OrchestrationExecutionStatus(StrEnum):
+    starting = "starting"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    stale = "stale"
+
+
 class LogEventType(StrEnum):
     task = "task"
     agent = "agent"
@@ -412,6 +420,21 @@ class OrchestrationLoopResult(BaseModel):
     running_task_ids: list[str] = Field(default_factory=list)
     pending_task_ids: list[str] = Field(default_factory=list)
     unresolved_blocker_ids: list[str] = Field(default_factory=list)
+
+
+class OrchestrationExecution(BaseModel):
+    id: str
+    run_id: str
+    status: OrchestrationExecutionStatus = OrchestrationExecutionStatus.starting
+    request: OrchestrationLoopRequest
+    result: OrchestrationLoopResult | None = None
+    requested_by: str | None = None
+    supervisor_id: str | None = None
+    status_reason: str | None = None
+    error: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
 
 
 class OrchestrationDocumentSyncResult(BaseModel):

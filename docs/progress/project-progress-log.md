@@ -4,6 +4,49 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008k Detached Background Orchestration Execution
+
+Status: completed for the scoped detached process-local execution slice; Sprint 14 remains active for durable shared-memory coordination, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected detached background orchestration execution as the next Sprint 14 slice after bounded synchronous loops and generated project-document sync.
+- Completed: Developer added persisted orchestration execution records, process-local detached worker launch, start/list/get API endpoints, and active execution conflict handling.
+- Completed: Developer hardened execution claims through JSON collection transactions, owner/status-conditional running/finalization updates, stale-supervisor reconciliation, launch/pre-run failure finalization, and heartbeat renewal for live detached workers.
+- Completed: QA added service/API tests for lifecycle polling, duplicate active rejection, owner scoping, stale reconciliation, stale/foreign finalization preservation, launch/pre-run failure cleanup, foreground-loop conflict rejection, heartbeat freshness, and error redaction.
+- Completed: Reviewer/Security identified stale polling, launch failure, heartbeat, and foreground-loop race risks; Developer/QA remediated them and re-review found no blockers.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /tasks/orchestrations/{run_id}/executions` starts a detached process-local bounded orchestration loop and returns a persisted execution record with `202 Accepted`.
+- Implemented in this slice: `GET /tasks/orchestrations/{run_id}/executions` and `GET /tasks/orchestrations/{run_id}/executions/{execution_id}` list and poll detached execution records.
+- Implemented in this slice: execution records persist request, result, requester, supervisor id, status reason, redacted error, start/completion timestamps, and heartbeat timestamp.
+- Implemented in this slice: a run rejects duplicate active detached executions and rejects foreground `/loop` execution while a detached execution is active.
+- Implemented in this slice: stale foreign-supervisor active records are reconciled on start and poll after the heartbeat timeout, while live process-local workers renew heartbeat during execution.
+- Implemented in this slice: launch and pre-run failures finalize as failed records with redacted errors instead of pinning a same-supervisor active execution.
+- Implemented in this slice: finalization is conditional on active status and matching supervisor ownership so stale or foreign-owned records are not overwritten.
+
+Remaining Sprint 14 work:
+- Add durable shared-memory coordination across runs and agents.
+- Add detached worker cancellation and restart adoption/resume.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused detached execution gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "background_execution or detached"` passed with 14 tests.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 211 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\api\routes.py src\dgentic\schemas.py src\dgentic\storage.py tests\test_orchestration.py tests\test_api.py README.md docs\planning\backlog-needs-to-be-done.md docs\architecture\repository-architecture.md docs\how-to\using-dgentic.md` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\api\routes.py src\dgentic\schemas.py src\dgentic\storage.py tests\test_orchestration.py tests\test_api.py` passed with 6 files already formatted.
+- Diff whitespace gate: `git diff --check` passed with only Git LF/CRLF working-copy warnings.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 795 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 58 files already formatted.
+
+Next:
+- Continue Sprint 14 with durable shared-memory coordination or production scheduling/lease hardening.
+
 ### Sprint 14 BL-008j Generated Orchestration Document Sync
 
 Status: completed for the scoped generated project-document sync slice; Sprint 14 remains active for detached background execution, durable shared-memory coordination, and production scheduling hardening.

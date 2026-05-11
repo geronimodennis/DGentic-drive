@@ -375,7 +375,8 @@ Current implementation status:
 - Completed: BL-008h redacted dependency-output context handoff for spawned dependent agents, including objective redaction, bounded completed-dependency output summaries, preserved dependency ids in agent `required_data`, and API visibility through existing agent detail contracts without raw secret leakage.
 - Completed: BL-008i bounded autonomous orchestration loop, including a dedicated loop endpoint/result contract, repeated cycle execution until waiting agents/blockers/all-complete/quiescence/max-iteration stop conditions, owner/admin scoping through existing orchestration access rules, and iteration bounds to avoid unbounded API work.
 - Completed: BL-008j generated orchestration project-document sync, including automatic writes to `docs/progress/orchestration-runs.md` and `docs/planning/orchestration-follow-ups.md`, redacted run/blocker/follow-up text, resolved/completed item filtering for open backlog sections, symlink-aware repository path checks, and focused document-generation tests.
-- Remaining: detached background worker execution beyond synchronous loops, durable shared memory coordination across runs/agents, production multi-agent scheduling/lease semantics, and UI/operations surfacing for orchestration runs.
+- Completed: BL-008k detached process-local background orchestration execution, including persisted execution records, start/list/get API endpoints, duplicate-active execution and foreground-loop conflict rejection, periodic process-local heartbeat renewal, age-based stale-supervisor reconciliation on start/poll, owner/status-conditional finalization, redacted failure persistence, and focused service/API tests.
+- Remaining: durable shared memory coordination across runs/agents, detached worker cancellation and restart adoption/resume, production multi-agent scheduling/lease semantics, and UI/operations surfacing for orchestration runs.
 
 ### BL-009: Production Identity, Secret Management, And Network Guardrails
 
@@ -651,9 +652,9 @@ Exit criteria:
 - Sprint closure requires Definition of Done evidence.
 
 Current Sprint 14 status:
-- Active: BL-008a through BL-008j implement the backend orchestration control plane foundation plus filesystem, CLI, generated-tool runtime action binding, system-blocked task recovery, explicit and bounded-loop agent lifecycle reconciliation, manual/security blocker resolution, redacted dependency context handoff, and generated project-document sync.
-- Completed: task graph creation/list/get/advance/update/cycle/loop/close/recover/blocker-resolution contracts, dependency scheduling with redacted context handoff, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes and loop iterations, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks, orchestration-bound generated-tool approval/execution checks for active agent context, recoverable blocker rescheduling, admin-reviewed manual/security blocker resolution, agent terminal-status reconciliation, generated progress/follow-up document sync, and DoD evidence close gates.
-- Remaining before Sprint 14 can close: detached background worker execution, durable shared memory coordination, and production scheduling hardening.
+- Active: BL-008a through BL-008k implement the backend orchestration control plane foundation plus filesystem, CLI, generated-tool runtime action binding, system-blocked task recovery, explicit and bounded-loop agent lifecycle reconciliation, manual/security blocker resolution, redacted dependency context handoff, generated project-document sync, and detached process-local execution polling.
+- Completed: task graph creation/list/get/advance/update/cycle/loop/background-execution/close/recover/blocker-resolution contracts, dependency scheduling with redacted context handoff, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes and loop iterations, process-local detached execution records with duplicate-active/foreground-loop conflict rejection and heartbeat-based stale reconciliation, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks, orchestration-bound generated-tool approval/execution checks for active agent context, recoverable blocker rescheduling, admin-reviewed manual/security blocker resolution, agent terminal-status reconciliation, generated progress/follow-up document sync, and DoD evidence close gates.
+- Remaining before Sprint 14 can close: durable shared memory coordination, detached worker cancellation and restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing for orchestration runs.
 
 ### Sprint 15: Production Identity, Secrets, And Network Guardrails
 
@@ -735,7 +736,7 @@ Exit criteria:
 - Provider-specific external AI adapters beyond the generic OpenAI-compatible adapter: BL-013, Sprint 19.
 - Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15.
 - Network/domain guardrails: BL-009, Sprint 15.
-- Detached autonomous background execution, durable shared-memory coordination, production multi-agent scheduling, and full sprint execution inside the backend runtime: BL-008, Sprint 14.
+- Durable shared-memory coordination, detached worker restart adoption/resume, production multi-agent scheduling, and full sprint execution inside the backend runtime: BL-008, Sprint 14.
 - Runtime monitoring, metrics, alerting, and rollback automation: BL-012, Sprint 18.
 - Full process adoption/resumable output after backend restart: BL-002 follow-up, scheduled after the MVP CLI hardening scope.
 - Production multi-worker CLI process ownership and lease validation: BL-001 and BL-012 follow-up, Sprint 18 deployment gating.

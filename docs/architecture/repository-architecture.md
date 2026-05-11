@@ -69,10 +69,10 @@ Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
 - `auth.py`: Production/staging bearer-token authentication, route capability mapping, and startup fail-closed configuration validation.
-- `api/routes.py`: HTTP routes for health checks, tasks, orchestration runs, guardrails, CLI policy and approvals, provider approvals, providers, routing, agents, memory, tools, sessions, and logs.
+- `api/routes.py`: HTTP routes for health checks, tasks, orchestration runs and detached orchestration execution polling, guardrails, CLI policy and approvals, provider approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
-- `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
-- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling with redacted dependency-output context handoff, orchestration-bound filesystem, CLI, and generated-tool action authorization, explicit and bounded loop-based agent lifecycle reconciliation, retry escalation, blocked-task recovery, manual/security blocker resolution with audit history, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, audited generated project-document sync, and DoD evidence close gates.
+- `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, detached orchestration execution records, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
+- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling with redacted dependency-output context handoff, orchestration-bound filesystem, CLI, and generated-tool action authorization, explicit and bounded loop-based agent lifecycle reconciliation, detached process-local background loop execution with pollable records, active-run conflict rejection, heartbeat renewal, and stale-supervisor reconciliation, retry escalation, blocked-task recovery, manual/security blocker resolution with audit history, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, audited generated project-document sync, and DoD evidence close gates.
 - `orchestration_documents.py`: Generated orchestration project-document sync for redacted run status and open follow-up/blocker backlog Markdown files under `docs/progress/` and `docs/planning/`, with fixed paths, symlink rejection, and a shared sync lock.
 - `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, executable, exact-command, contains, and argument-aware command matching, shell-wrapper inspection, cwd-aware evaluation, orchestration-bound CLI action checks when agent context is supplied, and read-only path operand rootDir boundary checks.
 - `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, POSIX translation for policy-approved `cmd /c` and `cmd.exe /c` wrappers, chunked output polling, supervision metadata, auditable lifecycle states, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
@@ -95,12 +95,12 @@ Current modules:
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: SQLAlchemy schema migration ledger for the current metadata, vector embedding, tool registry baseline, and additive memory lifecycle metadata migration.
 - `database.py`: Configurable SQLAlchemy engine/session helper, migration initialization, cached database reset, SQLite path resolution, and file-backed SQLite backup/restore helpers.
-- `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine/restore helpers and inter-process locked reads plus item update transactions for approval claims and decisions.
+- `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine/restore helpers and inter-process locked reads plus item update/collection transactions for approval claims, decisions, and orchestration execution claims.
 - `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, orchestration scheduling, role-boundary enforcement, orchestration-bound filesystem, CLI, and generated-tool action checks, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval attribution and inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, orchestration scheduling, role-boundary enforcement, detached orchestration background execution polling and duplicate-active rejection, orchestration-bound filesystem, CLI, and generated-tool action checks, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, deterministic memory compression, vector backend contracts, retrieval attribution and inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -266,6 +266,7 @@ Current collections:
 - `task-plans.json`
 - `task-runs.json`
 - `orchestrations.json`
+- `orchestration-executions.json`
 - `events.json`
 - `agents.json`
 - `memory.json`

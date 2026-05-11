@@ -33,6 +33,19 @@ def isolated_tool_api_state(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def _configure_production_task_api_state(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+
+
 def test_health_returns_service_status() -> None:
     client = TestClient(create_app())
 
@@ -492,6 +505,144 @@ def test_orchestration_api_loop_reconciles_until_waiting_agents(
     assert default_loop_response.json()["stopped_reason"] == "waiting_for_agents"
 
 
+def test_orchestration_api_background_execution_start_poll_and_list(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Run detached orchestration from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate detached execution.",
+                    "description": "Keep the run active until agent work completes.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Detached execution can be polled.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    start_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+    execution_id = start_response.json()["id"]
+    completed = _poll_api_execution(client, run_id, execution_id)
+    list_response = client.get(f"/tasks/orchestrations/{run_id}/executions")
+
+    assert create_response.status_code == 201
+    assert start_response.status_code == 202
+    assert start_response.json()["status"] == "starting"
+    assert start_response.json()["request"]["max_iterations"] == 2
+    assert completed["status"] == "completed"
+    assert completed["result"]["stopped_reason"] == "waiting_for_agents"
+    assert completed["result"]["running_task_ids"] == ["qa-validation"]
+    assert list_response.status_code == 200
+    assert [execution["id"] for execution in list_response.json()] == [execution_id]
+
+
+def test_orchestration_api_background_execution_duplicate_active_returns_409(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject duplicate detached orchestration from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate detached duplicate rejection.",
+                    "description": "Keep the first execution active.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Second execution receives conflict.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    first_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+    second_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+
+    assert create_response.status_code == 201
+    assert first_response.status_code == 202
+    assert first_response.json()["status"] == "starting"
+    assert second_response.status_code == 409
+    assert first_response.json()["id"] in second_response.json()["detail"]
+
+
+def test_orchestration_api_loop_rejects_active_background_execution(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject foreground loops during detached execution from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate detached loop exclusion.",
+                    "description": "Keep the first execution active.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Foreground loop receives conflict.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    start_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+    loop_response = client.post(
+        f"/tasks/orchestrations/{run_id}/loop",
+        json={"max_iterations": 2},
+    )
+
+    assert create_response.status_code == 201
+    assert start_response.status_code == 202
+    assert loop_response.status_code == 409
+    assert start_response.json()["id"] in loop_response.json()["detail"]
+
+
 def test_orchestration_api_exposes_dependency_context_on_spawned_agent(
     isolated_tool_api_state,
 ) -> None:
@@ -560,13 +711,7 @@ def test_orchestration_api_exposes_dependency_context_on_spawned_agent(
 
 
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
-    monkeypatch.setenv(
-        "DGENTIC_AUTH_TOKENS",
-        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
-    )
-    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
-    get_settings.cache_clear()
+    _configure_production_task_api_state(tmp_path, monkeypatch)
     client = TestClient(create_app())
     payload = {
         "objective": "Owner-scoped orchestration.",
@@ -610,17 +755,79 @@ def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, mo
     get_settings.cache_clear()
 
 
+def test_orchestration_api_background_execution_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure_production_task_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped detached orchestration.",
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate detached owner filtering.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_api.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = alpha_create.json()["id"]
+    alpha_start = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"max_iterations": 2},
+    )
+    execution_id = alpha_start.json()["id"]
+    completed = _poll_api_execution(
+        client,
+        run_id,
+        execution_id,
+        headers={"Authorization": "Bearer alpha-token"},
+    )
+    beta_list = client.get(
+        f"/tasks/orchestrations/{run_id}/executions",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    beta_get = client.get(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    admin_list = client.get(
+        f"/tasks/orchestrations/{run_id}/executions",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    admin_get = client.get(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert alpha_create.status_code == 201
+    assert alpha_start.status_code == 202
+    assert alpha_start.json()["requested_by"] == alpha_create.json()["requested_by"]
+    assert completed["status"] == "completed"
+    assert beta_list.status_code == 404
+    assert beta_get.status_code == 404
+    assert admin_list.status_code == 200
+    assert [execution["id"] for execution in admin_list.json()] == [execution_id]
+    assert admin_get.status_code == 200
+    assert admin_get.json()["id"] == execution_id
+    get_settings.cache_clear()
+
+
 def test_orchestration_api_recovery_respects_authenticated_task_owner(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
-    monkeypatch.setenv(
-        "DGENTIC_AUTH_TOKENS",
-        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
-    )
-    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
-    get_settings.cache_clear()
+    _configure_production_task_api_state(tmp_path, monkeypatch)
     client = TestClient(create_app())
     payload = {
         "objective": "Owner-scoped recovery.",
@@ -672,13 +879,7 @@ def test_orchestration_api_resolves_manual_blocker_with_admin_audit(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
-    monkeypatch.setenv(
-        "DGENTIC_AUTH_TOKENS",
-        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
-    )
-    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
-    get_settings.cache_clear()
+    _configure_production_task_api_state(tmp_path, monkeypatch)
     client = TestClient(create_app())
     payload = {
         "objective": "Resolve manual blocker through admin review.",
@@ -761,13 +962,7 @@ def test_orchestration_api_cycle_respects_authenticated_task_owner(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
-    monkeypatch.setenv(
-        "DGENTIC_AUTH_TOKENS",
-        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
-    )
-    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
-    get_settings.cache_clear()
+    _configure_production_task_api_state(tmp_path, monkeypatch)
     client = TestClient(create_app())
     payload = {
         "objective": "Owner-scoped cycle.",
@@ -5851,6 +6046,27 @@ def test_logs_redact_legacy_approval_reason_metadata(tmp_path, monkeypatch) -> N
     assert "nested-secret" not in serialized
     assert "hunter2" not in serialized
     get_settings.cache_clear()
+
+
+def _poll_api_execution(
+    client: TestClient,
+    run_id: str,
+    execution_id: str,
+    *,
+    headers: dict[str, str] | None = None,
+    attempts: int = 50,
+) -> dict:
+    for _ in range(attempts):
+        response = client.get(
+            f"/tasks/orchestrations/{run_id}/executions/{execution_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] not in {"starting", "running"}:
+            return body
+        time.sleep(0.01)
+    pytest.fail(f"Background execution did not finish: {execution_id}")
 
 
 def _interface_signature(interface: dict) -> str:

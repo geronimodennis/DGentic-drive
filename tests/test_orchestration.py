@@ -1,3 +1,6 @@
+import time
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from dgentic.agents import get_agent, update_agent_status
@@ -11,7 +14,10 @@ from dgentic.schemas import (
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
+    OrchestrationExecution,
+    OrchestrationExecutionStatus,
     OrchestrationLoopRequest,
+    OrchestrationLoopResult,
     OrchestrationTask,
     OrchestrationTaskRecoveryRequest,
     OrchestrationTaskSpec,
@@ -222,6 +228,419 @@ def test_orchestration_loop_reconciles_until_waiting_for_agents(
     assert result.unresolved_blocker_ids == []
     assert _task_by_id(result.run, "dev-implementation").status == StepStatus.completed
     assert _task_by_id(result.run, "qa-validation").status == StepStatus.running
+
+
+def test_background_execution_lifecycle_persists_and_completes_with_result_polling(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Run detached orchestration until it waits for agents.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    execution = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=3),
+        actor="qa-owner",
+    )
+    completed = _poll_execution(service, run.id, execution.id)
+
+    assert execution.status == OrchestrationExecutionStatus.starting
+    assert execution.request.max_iterations == 3
+    assert execution.requested_by == "qa-owner"
+    assert completed.status == OrchestrationExecutionStatus.completed
+    assert completed.result is not None
+    assert completed.result.stopped_reason == "waiting_for_agents"
+    assert completed.result.running_task_ids == ["qa-validation"]
+    assert completed.completed_at is not None
+    assert service.list_background_executions(run.id) == [completed]
+
+
+def test_background_execution_rejects_duplicate_active_execution_across_service_instances(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep the first detached execution active.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    first = service1.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    service2 = OrchestrationService()
+
+    with pytest.raises(OrchestrationError, match=first.id):
+        service2.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    persisted = service2.get_background_execution(run.id, first.id)
+    assert persisted.status == OrchestrationExecutionStatus.starting
+    assert persisted.supervisor_id == service1.supervisor_id
+
+
+def test_background_execution_blocks_foreground_loop_while_active(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject foreground loops during active detached execution.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    execution = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+    )
+
+    with pytest.raises(OrchestrationError, match=execution.id):
+        service.run_loop(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+
+def test_background_execution_reconciles_prior_supervisor_active_records(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reconcile abandoned detached executions.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    fresh_at = datetime.now(UTC)
+    old_at = fresh_at - timedelta(seconds=301)
+    stale_starting = OrchestrationExecution(
+        id="orchexec-old-starting",
+        run_id=run.id,
+        status=OrchestrationExecutionStatus.starting,
+        request=OrchestrationLoopRequest(max_iterations=1),
+        supervisor_id="previous-supervisor",
+        started_at=old_at,
+        last_heartbeat_at=None,
+    )
+    stale_running = stale_starting.model_copy(
+        update={
+            "id": "orchexec-old-running",
+            "status": OrchestrationExecutionStatus.running,
+            "last_heartbeat_at": old_at,
+        }
+    )
+    fresh_running = stale_starting.model_copy(
+        update={
+            "id": "orchexec-fresh-running",
+            "status": OrchestrationExecutionStatus.running,
+            "started_at": fresh_at,
+            "last_heartbeat_at": fresh_at,
+        }
+    )
+    current_running = stale_starting.model_copy(
+        update={
+            "id": "orchexec-current-running",
+            "status": OrchestrationExecutionStatus.running,
+            "supervisor_id": service.supervisor_id,
+            "last_heartbeat_at": old_at,
+        }
+    )
+    service._executions.upsert(stale_starting)
+    service._executions.upsert(stale_running)
+    service._executions.upsert(fresh_running)
+    service._executions.upsert(current_running)
+
+    service.reconcile_stale_background_executions()
+
+    assert (
+        service.get_background_execution(run.id, "orchexec-old-starting").status
+        == OrchestrationExecutionStatus.stale
+    )
+    assert (
+        service.get_background_execution(run.id, "orchexec-old-running").status
+        == OrchestrationExecutionStatus.stale
+    )
+    fresh = service.get_background_execution(run.id, "orchexec-fresh-running")
+    assert fresh.status == OrchestrationExecutionStatus.running
+    assert fresh.completed_at is None
+    current = service.get_background_execution(run.id, "orchexec-current-running")
+    assert current.status == OrchestrationExecutionStatus.running
+
+
+def test_background_execution_polling_reconciles_expired_foreign_records(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Poll stale detached executions.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-poll-stale",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    fetched = service.get_background_execution(run.id, "orchexec-poll-stale")
+    listed = service.list_background_executions(run.id)
+
+    assert fetched.status == OrchestrationExecutionStatus.stale
+    assert fetched.completed_at is not None
+    assert [execution.status for execution in listed] == [OrchestrationExecutionStatus.stale]
+
+
+def test_background_execution_heartbeat_keeps_foreign_running_record_fresh(
+    orchestration_state,
+) -> None:
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep long detached executions fresh with heartbeat renewal.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-heartbeat-running",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id=service1.supervisor_id,
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    renewed = service1._renew_background_execution_heartbeat("orchexec-heartbeat-running")
+    service2 = OrchestrationService()
+    fetched = service2.get_background_execution(run.id, "orchexec-heartbeat-running")
+
+    assert renewed is not None
+    assert renewed.last_heartbeat_at is not None
+    assert renewed.last_heartbeat_at > old_at
+    assert fetched.status == OrchestrationExecutionStatus.running
+    assert fetched.completed_at is None
+
+
+def test_background_execution_finalize_preserves_stale_or_foreign_records(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Avoid overwriting detached executions no longer owned by this supervisor.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    now = datetime.now(UTC)
+    stale_execution = OrchestrationExecution(
+        id="orchexec-stale-before-finalize",
+        run_id=run.id,
+        status=OrchestrationExecutionStatus.stale,
+        request=OrchestrationLoopRequest(max_iterations=1),
+        supervisor_id=service.supervisor_id,
+        status_reason="Existing stale reason.",
+        error="preserved stale error",
+        started_at=now,
+        completed_at=now,
+        last_heartbeat_at=now,
+    )
+    foreign_execution = stale_execution.model_copy(
+        update={
+            "id": "orchexec-foreign-before-finalize",
+            "status": OrchestrationExecutionStatus.running,
+            "supervisor_id": "other-supervisor",
+            "status_reason": "Existing foreign reason.",
+            "error": "preserved foreign error",
+            "completed_at": None,
+        }
+    )
+    attempted_result = OrchestrationLoopResult(
+        run=run,
+        iterations=0,
+        made_progress=False,
+        stopped_reason="quiescent",
+    )
+    service._executions.upsert(stale_execution)
+    service._executions.upsert(foreign_execution)
+
+    stale_finalized = service._finalize_background_execution(
+        stale_execution.id,
+        status=OrchestrationExecutionStatus.completed,
+        status_reason="Attempted stale overwrite.",
+        result=attempted_result,
+        actor="qa-owner",
+    )
+    foreign_finalized = service._finalize_background_execution(
+        foreign_execution.id,
+        status=OrchestrationExecutionStatus.completed,
+        status_reason="Attempted foreign overwrite.",
+        result=attempted_result,
+        actor="qa-owner",
+    )
+
+    assert stale_finalized is None
+    assert foreign_finalized is None
+    persisted_stale = service.get_background_execution(run.id, stale_execution.id)
+    persisted_foreign = service.get_background_execution(run.id, foreign_execution.id)
+    assert persisted_stale.status == OrchestrationExecutionStatus.stale
+    assert persisted_stale.status_reason == "Existing stale reason."
+    assert persisted_stale.error == "preserved stale error"
+    assert persisted_stale.result is None
+    assert persisted_foreign.status == OrchestrationExecutionStatus.running
+    assert persisted_foreign.status_reason == "Existing foreign reason."
+    assert persisted_foreign.error == "preserved foreign error"
+    assert persisted_foreign.result is None
+
+
+def test_background_execution_launch_failure_finalizes_and_allows_retry(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class RaisingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            raise RuntimeError("SECRET=thread-secret")
+
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", RaisingThread)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Finalize failed detached execution launch.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    with pytest.raises(OrchestrationError, match="SECRET=\\[REDACTED\\]"):
+        service.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    failed = service.list_background_executions(run.id)[0]
+    assert failed.status == OrchestrationExecutionStatus.failed
+    assert failed.error == "RuntimeError: SECRET=[REDACTED]"
+    assert "thread-secret" not in failed.model_dump_json()
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    retry = service.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+    assert retry.status == OrchestrationExecutionStatus.starting
+
+
+def test_background_execution_pre_run_failure_finalizes_record(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class ImmediateThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Finalize detached execution pre-run failure.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    def fail_mark_running(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("TOKEN=pre-run-secret")
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", ImmediateThread)
+    monkeypatch.setattr(service, "_mark_background_execution_running", fail_mark_running)
+
+    execution = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+    )
+    persisted = service.get_background_execution(run.id, execution.id)
+
+    assert persisted.status == OrchestrationExecutionStatus.failed
+    assert persisted.error == "RuntimeError: TOKEN=[REDACTED]"
+    assert "pre-run-secret" not in persisted.model_dump_json()
+
+
+def test_background_execution_failure_redacts_error(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class ImmediateThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    def fail_loop(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("SECRET=background-secret")
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", ImmediateThread)
+    monkeypatch.setattr(OrchestrationService, "run_loop", fail_loop)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Redact detached execution failures.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    execution = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+    )
+    persisted = service.get_background_execution(run.id, execution.id)
+
+    assert persisted.status == OrchestrationExecutionStatus.failed
+    assert persisted.error == "RuntimeError: SECRET=[REDACTED]"
+    assert "background-secret" not in persisted.model_dump_json()
 
 
 def test_orchestration_loop_honors_max_iterations_after_progress(
@@ -1968,6 +2387,24 @@ def _invalid_graph_tasks(case: str) -> list[OrchestrationTask]:
 
 def _task_by_id(run, task_id: str) -> OrchestrationTask:
     return next(task for task in run.tasks if task.id == task_id)
+
+
+def _poll_execution(
+    service: OrchestrationService,
+    run_id: str,
+    execution_id: str,
+    *,
+    attempts: int = 50,
+) -> OrchestrationExecution:
+    for _ in range(attempts):
+        execution = service.get_background_execution(run_id, execution_id)
+        if execution.status not in {
+            OrchestrationExecutionStatus.starting,
+            OrchestrationExecutionStatus.running,
+        }:
+            return execution
+        time.sleep(0.01)
+    pytest.fail(f"Background execution did not finish: {execution_id}")
 
 
 def _status_by_id(run) -> dict[str, StepStatus]:

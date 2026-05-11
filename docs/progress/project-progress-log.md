@@ -4,6 +4,53 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006g Provider Payload Validation
+
+Status: completed for the scoped provider request and upstream response payload-validation contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, and cost accounting.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected payload validation as the next Sprint 12 slice after BL-006f because it closes a documented provider-runtime hardening gap without expanding credential storage or external-adapter scope.
+- Completed: Developer updated production source only for bounded provider request validation, sanitized request-validation errors, supported chat-role enforcement, JSON-compatible bounded options, provider-specific malformed success-payload rejection, OpenAI-compatible streaming error-object rejection, safe metadata narrowing, and generic sanitized upstream failure behavior.
+- Completed: QA updated tests only for invalid request-shape rejection, API 422-before-transport no-echo behavior, malformed non-streaming success payload failures, malformed streaming success chunk failures, huge-number metadata handling, and no-secret API/log behavior.
+- Completed: Reviewer/Security found validation-error echo, untrusted metadata, non-string stream content, empty stream choices, and huge-integer metadata blockers; Developer remediated them and QA added focused coverage.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: provider generation requests now require nonblank provider/model identifiers, 1-64 messages, supported chat roles, nonblank bounded message content, 0.0-2.0 temperature, positive bounded `max_tokens`, positive bounded timeout, and bounded JSON-compatible options.
+- Implemented in this slice: provider options reject too many keys, oversize serialized option payloads, non-string or blank keys, too-deep nesting, oversize lists, non-finite numbers, and non-JSON-compatible values.
+- Implemented in this slice: Ollama and OpenAI-compatible non-streaming success responses now reject `error` objects, missing/malformed message objects, missing/non-string content, and malformed/empty choices instead of returning silent empty completions.
+- Implemented in this slice: API request-validation failures omit rejected input and context fields so invalid prompts/options are not echoed in 422 responses.
+- Implemented in this slice: safe provider metadata is narrowed to booleans, bounded numeric counters, known finish reasons, known message roles, and known usage counters; provider-controlled ids, model names, unsafe usage fields, and oversized numbers are dropped.
+- Implemented in this slice: OpenAI-compatible streaming chunks now reject upstream `error` objects, empty choices, malformed delta objects, and non-string content with sanitized provider failures.
+
+Validation:
+- Focused security-remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_provider_generation_request_rejects_invalid_payload_shape tests\test_provider_runtime.py::test_provider_generation_handles_malformed_or_untrusted_success_payloads tests\test_provider_runtime.py::test_openai_compatible_streaming_rejects_malformed_success_chunks tests\test_api.py::test_provider_generate_api_returns_422_for_invalid_payload_before_transport tests\test_api.py::test_provider_generate_api_maps_malformed_success_payload_to_bad_gateway tests\test_api.py::test_provider_generate_stream_api_maps_malformed_success_chunk_to_bad_gateway` passed with 26 tests.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 166 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\main.py src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\main.py src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed with 4 files already formatted after formatting `src\dgentic\provider_runtime.py`.
+- Final Reviewer recheck: no blockers after huge-integer metadata remediation.
+- Final Security recheck: no blockers after 422 sanitization, metadata narrowing, streaming non-string rejection, and huge-integer metadata remediation.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 607 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+- Whitespace gate: `git diff --check` passed.
+
+Residual risks:
+- Provider request validation is intentionally conservative for the current text-chat contract; tool-call-specific response payloads remain out of scope until the provider stream/result schema supports tool-call events.
+- Encrypted credential storage, provider-specific external adapters, circuit breakers, and cost accounting remain future Sprint 12 work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/main.py` and `src/dgentic/provider_runtime.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Run final full quality gates, commit/push the stable BL-006g checkpoint, then continue Sprint 12 with circuit-breaker/cost work, encrypted credential strategy, or provider-specific external adapters depending on risk priority.
+
 ### Sprint 12 BL-006f Ollama Streaming Generation
 
 Status: completed for the scoped Ollama streaming contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, cost accounting, and broader payload validation.

@@ -2279,6 +2279,41 @@ def test_provider_generate_api_rejects_unsupported_provider() -> None:
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("path", ["/providers/generate", "/providers/generate/stream"])
+def test_provider_generate_api_returns_422_for_invalid_payload_before_transport(
+    path,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append(url)
+        return {}
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        path,
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "messages": [{"role": "invalid", "content": "TOKEN=validation-secret"}],
+            "options": {"api_key": "validation-option-secret"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+    assert "validation-secret" not in response.text
+    assert "validation-option-secret" not in response.text
+
+
 def test_provider_generate_api_rejects_disallowed_base_url_before_post(
     monkeypatch,
 ) -> None:
@@ -2886,6 +2921,35 @@ def test_provider_generate_stream_api_maps_malformed_first_chunk_to_bad_gateway(
 
     assert response.status_code == 502
     assert response.json()["detail"] == "Provider request failed."
+
+
+def test_provider_generate_stream_api_maps_malformed_success_chunk_to_bad_gateway(
+    monkeypatch,
+) -> None:
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {"choices": [{"index": 0, "delta": {"content": {"secret": "stream-content"}}}]}
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    assert "stream-upstream-secret" not in response.text
+    assert "stream-content" not in response.text
 
 
 def test_provider_generate_stream_api_emits_sanitized_error_after_first_chunk(
@@ -3560,6 +3624,34 @@ def test_provider_generate_api_maps_malformed_upstream_json_to_bad_gateway(monke
     assert sleeps == []
 
 
+def test_provider_generate_api_maps_malformed_success_payload_to_bad_gateway(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append(url)
+        return {"error": {"message": "upstream-provider-secret"}}
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    assert calls == ["http://127.0.0.1:1234/v1/chat/completions"]
+    assert "upstream-provider-secret" not in response.text
+
+
 def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
@@ -3572,16 +3664,23 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
     ]
     calls: list[dict] = []
     raw_response = {
-        "id": "chatcmpl-safe-api",
-        "model": "local-model",
+        "id": "chatcmpl-safe-api-upstream-secret",
+        "model": "local-model-upstream-secret",
         "choices": [
             {
                 "index": 0,
                 "message": {"role": "assistant", "content": "Hello from provider API."},
-                "finish_reason": "stop",
+                "finish_reason": "unsafe-upstream-finish-secret",
             }
         ],
-        "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 4,
+            "total_tokens": 7,
+            "eval_count": 10**309,
+            "prompt": "usage-prompt-secret",
+            "total": "usage-total-secret",
+        },
         "token": raw_secrets[0],
         "authorization": f"Bearer {raw_secrets[1]}",
     }
@@ -3623,14 +3722,19 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
     body = response.json()
     assert body["content"] == "Hello from provider API."
     assert body["raw_response_metadata"] == {
-        "id": "chatcmpl-safe-api",
-        "model": "local-model",
         "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         "choice_count": 1,
-        "finish_reasons": ["stop"],
+        "finish_reasons": ["other"],
     }
     serialized_response = response.text
-    for raw_secret in raw_secrets:
+    metadata_secrets = [
+        "chatcmpl-safe-api-upstream-secret",
+        "local-model-upstream-secret",
+        "unsafe-upstream-finish-secret",
+        "usage-prompt-secret",
+        "usage-total-secret",
+    ]
+    for raw_secret in raw_secrets + metadata_secrets:
         assert raw_secret not in serialized_response
 
     assert logs_response.status_code == 200
@@ -3639,7 +3743,7 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
     assert "content" not in provider_events[-1]["metadata"]
     serialized_logs = json.dumps(provider_events, sort_keys=True)
     assert "Hello from provider API." not in serialized_logs
-    for raw_secret in raw_secrets:
+    for raw_secret in raw_secrets + metadata_secrets:
         assert raw_secret not in serialized_logs
     get_settings.cache_clear()
 

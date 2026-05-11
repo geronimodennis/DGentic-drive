@@ -273,7 +273,8 @@ Current implementation status:
 - Completed: BL-006d OpenAI-compatible streaming generation contract for LM Studio and the configured external OpenAI-compatible adapter, including upstream SSE parsing, downstream NDJSON events, pre-stream retry behavior, post-chunk sanitized error events, streaming provider advertisement, and no-content/no-secret logs.
 - Completed: BL-006e bound provider approval records for configured external provider generation, including create/list/review/approve/deny APIs, approval-capability separation, safe prompt review metadata, request/config HMAC binding, development/test boolean bypass preservation, staging/production single-use `approval_id` enforcement for non-streaming and streaming calls, inter-process locked approval decisions/claims, and focused no-leak tests.
 - Completed: BL-006f Ollama streaming generation support, including `/api/chat` stream payload construction, Ollama NDJSON parsing, terminal chunk handling, sanitized Ollama stream error mapping, provider capability advertisement, and runtime/API no-content/no-secret log tests.
-- Remaining: encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, circuit breaker behavior, cost metadata, and broader provider payload shape validation.
+- Completed: BL-006g provider request and upstream response payload validation, including bounded provider/model/message/options/timeout/token/temperature request shapes, supported chat-role enforcement, JSON-compatible option validation, provider error-object rejection, malformed success-payload rejection for Ollama/OpenAI-compatible responses, and generic no-secret API failure mapping.
+- Remaining: encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, circuit breaker behavior, and cost metadata.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -557,7 +558,7 @@ Exit criteria:
 - External provider adapter works through shared provider contracts.
 - Credentials are protected.
 - Streaming, retry, rate-limit, and routing tests pass.
-- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist; BL-006d adds OpenAI-compatible streaming for LM Studio and the configured external adapter; BL-006e adds bound provider approval records for external generation in staging/production; BL-006f adds Ollama streaming.
+- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist; BL-006d adds OpenAI-compatible streaming for LM Studio and the configured external adapter; BL-006e adds bound provider approval records for external generation in staging/production; BL-006f adds Ollama streaming; BL-006g adds provider request and upstream response payload validation.
 
 ### Sprint 13: Memory Production Lifecycle
 

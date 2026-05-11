@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
+from pydantic import ValidationError
 
 from dgentic import provider_runtime, provider_transport
 from dgentic.provider_policy import (
@@ -129,6 +130,38 @@ def configure_external_provider(
     get_settings.cache_clear()
 
 
+@pytest.mark.parametrize(
+    "payload_override",
+    [
+        {"provider_id": "   "},
+        {"model": "   "},
+        {"messages": []},
+        {"messages": [{"role": "invalid", "content": "Say hello."}]},
+        {"messages": [{"role": "   ", "content": "Say hello."}]},
+        {"messages": [{"role": "user", "content": "   "}]},
+        {"temperature": -0.1},
+        {"temperature": 2.1},
+        {"max_tokens": 0},
+        {"timeout_seconds": 0},
+        {"options": {f"key_{index}": index for index in range(33)}},
+        {"options": {"bad": float("nan")}},
+        {"options": {"bad": object()}},
+    ],
+)
+def test_provider_generation_request_rejects_invalid_payload_shape(
+    payload_override,
+) -> None:
+    payload = {
+        "provider_id": "ollama",
+        "model": "llama3.1",
+        "messages": [{"role": "user", "content": "Say hello."}],
+    }
+    payload.update(payload_override)
+
+    with pytest.raises(ValidationError):
+        ProviderGenerationRequest(**payload)
+
+
 def test_ollama_generation_posts_chat_payload_and_returns_content(monkeypatch) -> None:
     event_log = RecordingEventLog()
     calls: list[dict] = []
@@ -175,7 +208,6 @@ def test_ollama_generation_posts_chat_payload_and_returns_content(monkeypatch) -
     assert result.model == "llama3.1"
     assert result.content == "Hello from Ollama."
     assert result.raw_response_metadata == {
-        "model": "llama3.1",
         "done": True,
         "total_duration": 12345,
         "message_role": "assistant",
@@ -245,8 +277,6 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
     assert result.model == "local-model"
     assert result.content == "Hello from LM Studio."
     assert result.raw_response_metadata == {
-        "id": "chatcmpl-test",
-        "model": "local-model",
         "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
         "choice_count": 1,
         "finish_reasons": ["stop"],
@@ -261,6 +291,118 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
     assert "Hello from LM Studio." not in serialized_event
     assert "upstream-response-secret" not in serialized_event
     assert "upstream-token-secret" not in serialized_event
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "base_url", "raw_response"),
+    [
+        (
+            "ollama",
+            "http://127.0.0.1:11434",
+            {"error": "ollama-upstream-error-secret"},
+        ),
+        (
+            "ollama",
+            "http://127.0.0.1:11434",
+            {"message": {"role": "assistant"}},
+        ),
+        (
+            "lm-studio",
+            "http://127.0.0.1:1234",
+            {"choices": []},
+        ),
+        (
+            "lm-studio",
+            "http://127.0.0.1:1234",
+            {"choices": [{"message": {"role": "assistant", "content": 42}}]},
+        ),
+        (
+            "lm-studio",
+            "http://127.0.0.1:1234",
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "Hello."},
+                        "finish_reason": "secret-finish-reason",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "eval_count": 10**309,
+                    "prompt": "usage-secret",
+                    "total_tokens": "usage-total-secret",
+                },
+                "id": "upstream-id-secret",
+                "model": "upstream-model-secret",
+            },
+        ),
+    ],
+)
+def test_provider_generation_handles_malformed_or_untrusted_success_payloads(
+    provider_id,
+    base_url,
+    raw_response,
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+    calls: list[str] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append(url)
+        return raw_response
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    first_choice = (
+        raw_response.get("choices", [{}])[0]
+        if isinstance(raw_response.get("choices"), list) and raw_response.get("choices")
+        else {}
+    )
+    first_message = first_choice.get("message", {}) if isinstance(first_choice, dict) else {}
+    expected_error = (
+        "error" in raw_response
+        or provider_id == "ollama"
+        or raw_response.get("choices") == []
+        or not isinstance(first_message.get("content"), str)
+    )
+    if expected_error:
+        with pytest.raises(provider_transport.ProviderUpstreamResponseError):
+            generate_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id=provider_id,
+                    model="local-model",
+                    base_url=base_url,
+                    messages=[{"role": "user", "content": "prompt-secret-123"}],
+                )
+            )
+        failure_metadata = event_log.records[-1]["metadata"]
+        assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+        assert failure_metadata["error"] == "Provider request failed."
+    else:
+        result = generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=provider_id,
+                model="local-model",
+                base_url=base_url,
+                messages=[{"role": "user", "content": "prompt-secret-123"}],
+            )
+        )
+        assert result.raw_response_metadata == {
+            "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+            "choice_count": 1,
+            "finish_reasons": ["other"],
+        }
+
+    assert len(calls) == 1
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "prompt-secret-123" not in serialized
+    assert "ollama-upstream-error-secret" not in serialized
+    assert "openai-compatible-upstream-error-secret" not in serialized
+    assert "usage-secret" not in serialized
+    assert "upstream-id-secret" not in serialized
+    assert "upstream-model-secret" not in serialized
 
 
 @pytest.mark.parametrize("environment", ["development", "test", "testing"])
@@ -1203,7 +1345,6 @@ def test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks(
     assert [event.delta for event in events] == ["delta-secret-", "abc", ""]
     assert events[-1].finish_reason == "stop"
     assert events[-1].raw_response_metadata == {
-        "model": "llama3.1",
         "done": True,
         "done_reason": "stop",
         "total_duration": 12345,
@@ -1583,6 +1724,48 @@ def test_streaming_malformed_first_chunk_raises_safe_error(monkeypatch) -> None:
     serialized = json.dumps(event_log.records, sort_keys=True, default=str)
     assert '{"not": "valid"' not in serialized
     assert "Say hello." not in serialized
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": {"message": "stream-upstream-error-secret"}},
+        {"choices": []},
+        {"choices": [{"index": 0, "delta": "not-an-object", "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": {"secret": "stream-content"}}}]},
+    ],
+)
+def test_openai_compatible_streaming_rejects_malformed_success_chunks(
+    payload,
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(openai_stream_lines(payload))
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_transport.ProviderUpstreamResponseError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id="lm-studio",
+                    model="local-model",
+                    base_url="http://127.0.0.1:1234",
+                    messages=[{"role": "user", "content": "prompt-secret-123"}],
+                )
+            )
+        )
+
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    assert failure_metadata["error"] == "Provider request failed."
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "prompt-secret-123" not in serialized
+    assert "stream-upstream-error-secret" not in serialized
+    assert "stream-content" not in serialized
 
 
 def test_streaming_failure_after_first_chunk_emits_sanitized_error_event(

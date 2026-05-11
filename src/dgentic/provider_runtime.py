@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import math
 import secrets
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from dgentic.events import event_log
 from dgentic.provider_policy import (
@@ -37,6 +38,44 @@ from dgentic.storage import JsonCollection
 
 DEFAULT_GENERATION_TIMEOUT_SECONDS = 60.0
 DEFAULT_PROVIDER_APPROVAL_TTL_MINUTES = 30
+MAX_PROVIDER_MESSAGES = 64
+MAX_PROVIDER_MESSAGE_CONTENT_CHARS = 100_000
+MAX_PROVIDER_OPTIONS = 32
+MAX_PROVIDER_OPTION_KEY_CHARS = 96
+MAX_PROVIDER_OPTIONS_JSON_CHARS = 16_384
+MAX_PROVIDER_OPTION_DEPTH = 6
+MAX_PROVIDER_OPTION_LIST_ITEMS = 128
+MAX_PROVIDER_TIMEOUT_SECONDS = 600.0
+MAX_PROVIDER_TOKENS = 200_000
+MAX_PROVIDER_CONTEXT_FIELD_CHARS = 256
+MAX_PROVIDER_METADATA_ABS_NUMERIC = 10**18
+SUPPORTED_PROVIDER_MESSAGE_ROLES = {
+    "assistant",
+    "developer",
+    "system",
+    "tool",
+    "user",
+}
+SAFE_PROVIDER_FINISH_REASONS = {
+    "content_filter",
+    "function_call",
+    "length",
+    "load",
+    "stop",
+    "tool_calls",
+    "unload",
+}
+SAFE_PROVIDER_USAGE_KEYS = {
+    "completion_tokens",
+    "eval_count",
+    "eval_duration",
+    "load_duration",
+    "prompt_eval_count",
+    "prompt_eval_duration",
+    "prompt_tokens",
+    "total_duration",
+    "total_tokens",
+}
 OLLAMA_PROVIDER_ID = "ollama"
 LM_STUDIO_PROVIDER_ID = "lm-studio"
 EXTERNAL_PLACEHOLDER_PROVIDER_ID = "external-placeholder"
@@ -68,26 +107,63 @@ class ProviderApprovalStatus(StrEnum):
 
 
 class ProviderChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1, max_length=MAX_PROVIDER_MESSAGE_CONTENT_CHARS)
+
+    @field_validator("role")
+    @classmethod
+    def role_must_be_supported(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_PROVIDER_MESSAGE_ROLES:
+            allowed_roles = ", ".join(sorted(SUPPORTED_PROVIDER_MESSAGE_ROLES))
+            raise ValueError(f"Provider message role must be one of: {allowed_roles}.")
+        return normalized
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Provider message content must not be blank.")
+        return value
 
 
 class ProviderGenerationRequest(BaseModel):
-    provider_id: str
-    model: str
-    messages: list[ProviderChatMessage]
+    provider_id: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=256)
+    messages: list[ProviderChatMessage] = Field(
+        min_length=1,
+        max_length=MAX_PROVIDER_MESSAGES,
+    )
     base_url: str | None = None
-    temperature: float | None = None
-    max_tokens: int | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=1, le=MAX_PROVIDER_TOKENS)
     options: dict[str, Any] = Field(default_factory=dict)
     stream: bool = False
     approved: bool = False
-    approval_id: str | None = None
-    requested_by: str | None = None
-    agent_id: str | None = None
-    agent_role: str | None = None
-    task_id: str | None = None
-    timeout_seconds: float = DEFAULT_GENERATION_TIMEOUT_SECONDS
+    approval_id: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    requested_by: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    agent_id: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    agent_role: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    task_id: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    timeout_seconds: float = Field(
+        default=DEFAULT_GENERATION_TIMEOUT_SECONDS,
+        gt=0.0,
+        le=MAX_PROVIDER_TIMEOUT_SECONDS,
+    )
+
+    @field_validator("provider_id", "model")
+    @classmethod
+    def text_identifiers_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Provider request identifiers must not be blank.")
+        return stripped
+
+    @field_validator("options")
+    @classmethod
+    def options_must_be_bounded_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _validate_provider_options(value)
+        return value
 
 
 class ProviderApproval(BaseModel):
@@ -659,21 +735,95 @@ def _build_provider_stream_request(
 
 def _extract_content(provider_id: str, response: dict[str, Any]) -> str:
     if provider_id == OLLAMA_PROVIDER_ID:
+        _raise_if_provider_error_response(response)
         message = response.get("message", {})
         if not isinstance(message, dict):
-            return ""
-        return str(message.get("content", ""))
+            raise ProviderUpstreamResponseError("Provider returned malformed chat message.")
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ProviderUpstreamResponseError("Provider returned malformed chat content.")
+        return content
 
     if provider_id in {LM_STUDIO_PROVIDER_ID, EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}:
+        _raise_if_provider_error_response(response)
         choices = response.get("choices", [])
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            return ""
+            raise ProviderUpstreamResponseError("Provider returned malformed chat choices.")
         message = choices[0].get("message", {})
         if not isinstance(message, dict):
-            return ""
-        return str(message.get("content", ""))
+            raise ProviderUpstreamResponseError("Provider returned malformed chat message.")
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ProviderUpstreamResponseError("Provider returned malformed chat content.")
+        return content
 
     raise ValueError(f"Unsupported provider_id: {provider_id}")
+
+
+def _raise_if_provider_error_response(response: dict[str, Any]) -> None:
+    if response.get("error") is not None:
+        raise ProviderUpstreamResponseError("Provider returned an error response.")
+
+
+def _validate_provider_options(options: dict[str, Any]) -> None:
+    _validate_provider_option_mapping(options, depth=0)
+    try:
+        encoded = json.dumps(
+            options,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Provider options must be JSON-compatible.") from exc
+    if len(encoded) > MAX_PROVIDER_OPTIONS_JSON_CHARS:
+        raise ValueError(
+            f"Provider options JSON must be at most {MAX_PROVIDER_OPTIONS_JSON_CHARS} characters."
+        )
+
+
+def _validate_provider_option_mapping(options: dict[Any, Any], *, depth: int) -> None:
+    if depth > MAX_PROVIDER_OPTION_DEPTH:
+        raise ValueError(
+            f"Provider options may be nested at most {MAX_PROVIDER_OPTION_DEPTH} levels."
+        )
+    if len(options) > MAX_PROVIDER_OPTIONS:
+        raise ValueError(f"Provider options must include at most {MAX_PROVIDER_OPTIONS} keys.")
+    for key, value in options.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("Provider option keys must be non-empty strings.")
+        if len(key) > MAX_PROVIDER_OPTION_KEY_CHARS:
+            raise ValueError(
+                f"Provider option keys must be at most {MAX_PROVIDER_OPTION_KEY_CHARS} characters."
+            )
+        _validate_provider_option_value(value, depth=depth + 1)
+
+
+def _validate_provider_option_value(value: Any, *, depth: int) -> None:
+    if depth > MAX_PROVIDER_OPTION_DEPTH:
+        raise ValueError(
+            f"Provider options may be nested at most {MAX_PROVIDER_OPTION_DEPTH} levels."
+        )
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Provider numeric option values must be finite.")
+        return
+    if isinstance(value, list):
+        if len(value) > MAX_PROVIDER_OPTION_LIST_ITEMS:
+            raise ValueError(
+                "Provider option lists must include at most "
+                f"{MAX_PROVIDER_OPTION_LIST_ITEMS} items."
+            )
+        for item in value:
+            _validate_provider_option_value(item, depth=depth + 1)
+        return
+    if isinstance(value, dict):
+        _validate_provider_option_mapping(value, depth=depth)
+        return
+    raise ValueError("Provider options must contain only JSON-compatible values.")
 
 
 def _base_url_for(request: ProviderGenerationRequest) -> str:
@@ -710,10 +860,6 @@ def _safe_response_metadata(provider_id: str, response: dict[str, Any]) -> dict[
         safe_metadata = {
             key: response[key]
             for key in (
-                "model",
-                "created_at",
-                "done",
-                "done_reason",
                 "total_duration",
                 "load_duration",
                 "prompt_eval_count",
@@ -721,32 +867,75 @@ def _safe_response_metadata(provider_id: str, response: dict[str, Any]) -> dict[
                 "eval_count",
                 "eval_duration",
             )
-            if key in response
+            if key in response and _is_safe_provider_numeric_value(response[key])
         }
+        if isinstance(response.get("done"), bool):
+            safe_metadata["done"] = response["done"]
+        done_reason = _safe_provider_finish_reason(response.get("done_reason"))
+        if done_reason is not None:
+            safe_metadata["done_reason"] = done_reason
         message = response.get("message")
-        if isinstance(message, dict) and "role" in message:
-            safe_metadata["message_role"] = message["role"]
-        return redact_metadata(safe_metadata)
+        message_role = _safe_provider_message_role(
+            message.get("role") if isinstance(message, dict) else None
+        )
+        if message_role is not None:
+            safe_metadata["message_role"] = message_role
+        return safe_metadata
 
     if provider_id in {LM_STUDIO_PROVIDER_ID, EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}:
         choices = response.get("choices", [])
         finish_reasons = []
         if isinstance(choices, list):
             finish_reasons = [
-                choice.get("finish_reason")
+                safe_reason
                 for choice in choices
-                if isinstance(choice, dict) and choice.get("finish_reason") is not None
+                if isinstance(choice, dict)
+                for safe_reason in [_safe_provider_finish_reason(choice.get("finish_reason"))]
+                if safe_reason is not None
             ]
-        safe_metadata = {
-            key: response[key]
-            for key in ("id", "object", "created", "model", "usage")
-            if key in response
-        }
+        safe_metadata = {}
+        usage = _safe_provider_usage(response.get("usage"))
+        if usage:
+            safe_metadata["usage"] = usage
         safe_metadata["choice_count"] = len(choices) if isinstance(choices, list) else 0
         safe_metadata["finish_reasons"] = finish_reasons
-        return redact_metadata(safe_metadata)
+        return safe_metadata
 
     return redact_metadata({"response_keys": sorted(str(key) for key in response)})
+
+
+def _safe_provider_usage(value: Any) -> dict[str, int | float]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if str(key) in SAFE_PROVIDER_USAGE_KEYS and _is_safe_provider_numeric_value(item)
+    }
+
+
+def _safe_provider_finish_reason(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in SAFE_PROVIDER_FINISH_REASONS:
+        return normalized
+    return "other"
+
+
+def _safe_provider_message_role(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in SUPPORTED_PROVIDER_MESSAGE_ROLES else None
+
+
+def _is_safe_provider_numeric_value(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    if isinstance(value, int):
+        return abs(value) <= MAX_PROVIDER_METADATA_ABS_NUMERIC
+    return math.isfinite(value) and abs(value) <= MAX_PROVIDER_METADATA_ABS_NUMERIC
 
 
 def _completion_event_metadata(
@@ -943,16 +1132,18 @@ def _stream_event_from_ollama_payload(
     model: str,
     payload: dict[str, Any],
 ) -> ProviderStreamEvent | None:
-    if payload.get("error") is not None:
-        raise ProviderUpstreamResponseError("Provider returned a streaming error.")
+    _raise_if_provider_error_response(payload)
     message = payload.get("message", {})
     if message is not None and not isinstance(message, dict):
         raise ProviderUpstreamResponseError("Provider returned malformed streaming message.")
     delta = ""
     if isinstance(message, dict) and message.get("content") is not None:
-        delta = str(message.get("content", ""))
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ProviderUpstreamResponseError("Provider returned malformed streaming content.")
+        delta = content
     done = payload.get("done") is True
-    finish_reason = str(payload.get("done_reason")) if payload.get("done_reason") else None
+    finish_reason = _safe_provider_finish_reason(payload.get("done_reason"))
     if not delta and not done and finish_reason is None:
         return None
     return ProviderStreamEvent(
@@ -970,18 +1161,26 @@ def _stream_events_from_openai_payload(
     model: str,
     payload: dict[str, Any],
 ) -> Iterator[ProviderStreamEvent]:
+    _raise_if_provider_error_response(payload)
     choices = payload.get("choices", [])
-    if not isinstance(choices, list):
+    if not isinstance(choices, list) or not choices:
         raise ProviderUpstreamResponseError("Provider returned malformed streaming choices.")
     for choice in choices:
         if not isinstance(choice, dict):
             raise ProviderUpstreamResponseError("Provider returned malformed streaming choice.")
         delta_payload = choice.get("delta", {})
+        if delta_payload is not None and not isinstance(delta_payload, dict):
+            raise ProviderUpstreamResponseError("Provider returned malformed streaming delta.")
         delta = ""
         if isinstance(delta_payload, dict) and delta_payload.get("content") is not None:
-            delta = str(delta_payload.get("content", ""))
+            content = delta_payload.get("content")
+            if not isinstance(content, str):
+                raise ProviderUpstreamResponseError(
+                    "Provider returned malformed streaming content."
+                )
+            delta = content
         finish_reason = choice.get("finish_reason")
-        finish_reason_text = str(finish_reason) if finish_reason is not None else None
+        finish_reason_text = _safe_provider_finish_reason(finish_reason)
         if delta or finish_reason_text is not None:
             yield ProviderStreamEvent(
                 provider_id=provider_id,
@@ -996,10 +1195,6 @@ def _safe_ollama_stream_response_metadata(payload: dict[str, Any]) -> dict[str, 
     safe_metadata = {
         key: payload[key]
         for key in (
-            "model",
-            "created_at",
-            "done",
-            "done_reason",
             "total_duration",
             "load_duration",
             "prompt_eval_count",
@@ -1007,24 +1202,34 @@ def _safe_ollama_stream_response_metadata(payload: dict[str, Any]) -> dict[str, 
             "eval_count",
             "eval_duration",
         )
-        if key in payload
+        if key in payload and _is_safe_provider_numeric_value(payload[key])
     }
+    if isinstance(payload.get("done"), bool):
+        safe_metadata["done"] = payload["done"]
+    done_reason = _safe_provider_finish_reason(payload.get("done_reason"))
+    if done_reason is not None:
+        safe_metadata["done_reason"] = done_reason
     message = payload.get("message")
-    if isinstance(message, dict) and "role" in message:
-        safe_metadata["message_role"] = message["role"]
-    return redact_metadata(safe_metadata)
+    message_role = _safe_provider_message_role(
+        message.get("role") if isinstance(message, dict) else None
+    )
+    if message_role is not None:
+        safe_metadata["message_role"] = message_role
+    return safe_metadata
 
 
 def _safe_stream_response_metadata(
     payload: dict[str, Any],
     choice: dict[str, Any],
 ) -> dict[str, Any]:
-    safe_metadata = {
-        key: payload[key] for key in ("id", "object", "created", "model", "usage") if key in payload
-    }
-    if choice.get("index") is not None:
-        safe_metadata["choice_index"] = choice["index"]
-    return redact_metadata(safe_metadata)
+    safe_metadata: dict[str, Any] = {}
+    usage = _safe_provider_usage(payload.get("usage"))
+    if usage:
+        safe_metadata["usage"] = usage
+    choice_index = choice.get("index")
+    if _is_safe_provider_numeric_value(choice_index):
+        safe_metadata["choice_index"] = choice_index
+    return safe_metadata
 
 
 def _stream_transport_metadata(

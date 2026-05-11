@@ -2906,6 +2906,254 @@ def test_generated_tool_execute_api_updates_reliability(tmp_path, monkeypatch) -
     get_settings.cache_clear()
 
 
+def test_generated_tool_execute_api_serializes_orchestration_decisions(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Bind tool execution to the scheduled QA task.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Evaluate orchestration-bound tool execution.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Tool binding is enforced.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-orchestration-tool",
+            "description": "Serialize orchestration action decisions.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": "def run(payload):\n    return {'ok': True}\n",
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-orchestration-tool/execute",
+        json={
+            "payload": {},
+            "agent_id": task["agent_id"],
+            "agent_role": task["role"],
+            "task_id": task["id"],
+        },
+    )
+    logs_response = client.get("/logs?event_type=tool")
+
+    expected_orchestration = {
+        "allowed": True,
+        "reason": "Tool action is bound to a running orchestration task.",
+        "run_id": create_response.json()["id"],
+        "task_id": task["id"],
+        "agent_id": task["agent_id"],
+        "agent_role": task["role"],
+        "violating_paths": [],
+    }
+    assert create_response.status_code == 201
+    assert generate_response.status_code == 201
+    assert execute_response.status_code == 200
+    assert execute_response.json()["orchestration"] == expected_orchestration
+    execution_event = [
+        event for event in logs_response.json() if event["subject_id"] == "api-orchestration-tool"
+    ][-1]
+    assert execution_event["metadata"]["orchestration"] == expected_orchestration
+    get_settings.cache_clear()
+
+
+def test_generated_tool_api_blocks_partial_active_orchestration_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block partial generated-tool context for active QA task.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate API tool orchestration binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Tool runtime binding is enforced.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+    approval_generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-partial-approval-tool",
+            "description": "Reject partial active approval context.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": "def run(payload):\n    return {'approval_ok': True}\n",
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-partial-approval-tool/execute",
+        json={
+            "payload": {},
+            "agent_id": task["agent_id"],
+        },
+    )
+    role_only_execute_response = client.post(
+        "/tools/api-partial-approval-tool/execute",
+        json={
+            "payload": {},
+            "agent_role": task["role"],
+        },
+    )
+    approval_response = client.post(
+        "/tools/api-partial-approval-tool/approvals?requested_by=tester",
+        json={
+            "payload": {},
+            "task_id": task["id"],
+        },
+    )
+    role_only_approval_response = client.post(
+        "/tools/api-partial-approval-tool/approvals?requested_by=tester",
+        json={
+            "payload": {},
+            "agent_role": task["role"],
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert approval_generate_response.status_code == 201
+    assert execute_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in execute_response.json()["detail"]
+    assert role_only_execute_response.status_code == 403
+    assert (
+        "require agent_id, agent_role, and task_id" in role_only_execute_response.json()["detail"]
+    )
+    assert approval_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in approval_response.json()["detail"]
+    assert role_only_approval_response.status_code == 403
+    assert (
+        "require agent_id, agent_role, and task_id" in role_only_approval_response.json()["detail"]
+    )
+    get_settings.cache_clear()
+
+
+def test_generated_tool_api_redacts_orchestration_denial_reason(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Redact generated-tool orchestration denial context.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate API denial redaction.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Tool runtime binding redacts denial context.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-redacted-denial-tool",
+            "description": "Redact orchestration denial context.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": "def run(payload):\n    return {'ok': True}\n",
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-redacted-denial-tool/execute",
+        json={
+            "payload": {},
+            "agent_id": task["agent_id"],
+            "agent_role": "Developer SECRET=api-role-leak",
+            "task_id": task["id"],
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert generate_response.status_code == 201
+    assert execute_response.status_code == 403
+    assert "api-role-leak" not in execute_response.text
+    assert "SECRET=[REDACTED]" in execute_response.text
+    get_settings.cache_clear()
+
+
+def test_approved_generated_tool_execution_rechecks_active_orchestration_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-approval-recheck-tool",
+            "description": "Recheck orchestration context before execution.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": "def run(payload):\n    return {'ok': True}\n",
+        },
+    )
+    approval_response = client.post(
+        "/tools/api-approval-recheck-tool/approvals?requested_by=tester",
+        json={
+            "payload": {},
+            "task_id": "qa-validation",
+        },
+    )
+    approval_id = approval_response.json()["id"]
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Recheck active context before generated-tool execution.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate approved generated-tool binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Approved generated-tool execution is rechecked.",
+                }
+            ],
+        },
+    )
+    approve_response = client.post(
+        f"/tools/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    execute_response = client.post(
+        "/tools/api-approval-recheck-tool/execute",
+        json={
+            "payload": {},
+            "approval_id": approval_id,
+            "task_id": "qa-validation",
+        },
+    )
+
+    assert generate_response.status_code == 201
+    assert approval_response.status_code == 201
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in execute_response.json()["detail"]
+    get_settings.cache_clear()
+
+
 def test_generated_tool_execute_api_requires_bound_approval_in_production(
     isolated_tool_api_state,
     monkeypatch,

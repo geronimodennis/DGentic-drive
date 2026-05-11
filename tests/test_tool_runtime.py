@@ -11,10 +11,15 @@ import dgentic.tool_runtime as tool_runtime
 from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
 from dgentic.memory.schemas import ToolRegistryCreateRequest
+from dgentic.orchestration import OrchestrationService
 from dgentic.redaction import REDACTED_SECRET_MARKER
 from dgentic.schemas import (
     LogEventType,
+    OrchestrationCreateRequest,
+    OrchestrationTaskSpec,
+    OrchestrationTaskUpdate,
     PermissionMode,
+    StepStatus,
     ToolExecutionRequest,
     ToolManifest,
     ToolStatus,
@@ -121,6 +126,428 @@ def test_approval_required_tool_must_be_approved(
     assert approved_manifest is not None
     assert approved_manifest.usage_count == 1
     assert approved_manifest.success_count == 1
+
+
+def test_execute_tool_keeps_legacy_agent_context_without_orchestration_match(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "legacy-context-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="legacy-context-tool",
+            description="Legacy context should remain audit-compatible.",
+            entrypoint="localmcp/legacy-context-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool(
+        "legacy-context-tool",
+        {},
+        agent_id="legacy-agent",
+        agent_role="Developer",
+        task_id="legacy-task",
+    )
+    latest_event = event_log.list(LogEventType.tool)[-1]
+
+    assert result.exit_code == 0
+    assert result.orchestration is not None
+    assert result.orchestration.allowed is True
+    assert (
+        result.orchestration.reason == "No active orchestration task matched supplied tool context."
+    )
+    assert latest_event.metadata["orchestration"] == result.orchestration.model_dump(mode="json")
+
+
+def test_execute_tool_fails_closed_for_partial_active_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "active-bound-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="active-bound-tool",
+            description="Active context must be complete.",
+            entrypoint="localmcp/active-bound-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    run = _create_running_orchestration_task_for_tool_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        execute_tool("active-bound-tool", {}, agent_id=task.agent_id)
+
+    stored = get_tool("active-bound-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_execute_tool_fails_closed_for_role_only_active_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "role-only-active-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="role-only-active-tool",
+            description="Role-only active context must be complete.",
+            entrypoint="localmcp/role-only-active-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    _create_running_orchestration_task_for_tool_runtime()
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        execute_tool("role-only-active-tool", {}, agent_role="QA")
+
+    stored = get_tool("role-only-active-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_execute_tool_fails_closed_for_completed_orchestration_task_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "completed-context-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="completed-context-tool",
+            description="Completed task context cannot run tools.",
+            entrypoint="localmcp/completed-context-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    service = OrchestrationService()
+    run = _create_running_orchestration_task_for_tool_runtime(service)
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+    service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    with pytest.raises(PermissionError, match="not running"):
+        execute_tool(
+            "completed-context-tool",
+            {},
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            task_id=task.id,
+        )
+
+    stored = get_tool("completed-context-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_execute_tool_fails_closed_for_pending_orchestration_task_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "pending-context-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="pending-context-tool",
+            description="Pending task context cannot run tools.",
+            entrypoint="localmcp/pending-context-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    _create_pending_orchestration_task_for_tool_runtime()
+
+    with pytest.raises(PermissionError, match="not running"):
+        execute_tool(
+            "pending-context-tool",
+            {},
+            agent_role="QA",
+            task_id="qa-validation",
+        )
+
+    stored = get_tool("pending-context-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_execute_tool_redacts_orchestration_denial_reason(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "redacted-denial-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="redacted-denial-tool",
+            description="Redact orchestration denial context.",
+            entrypoint="localmcp/redacted-denial-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    run = _create_running_orchestration_task_for_tool_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError) as exc:
+        execute_tool(
+            "redacted-denial-tool",
+            {},
+            agent_id=task.agent_id,
+            agent_role="Developer SECRET=role-leak",
+            task_id=task.id,
+        )
+
+    assert "role-leak" not in str(exc.value)
+    assert "SECRET=[REDACTED]" in str(exc.value)
+
+
+def test_create_tool_approval_fails_closed_for_partial_active_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "active-approval-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="active-approval-tool",
+            description="Active approval context must be complete.",
+            entrypoint="localmcp/active-approval-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    run = _create_running_orchestration_task_for_tool_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        create_tool_approval(
+            "active-approval-tool",
+            ToolExecutionRequest(payload={}, task_id=task.id),
+        )
+
+    assert list_tool_approvals() == []
+
+
+def test_approved_tool_execution_rechecks_active_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "approval-recheck-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="approval-recheck-tool",
+            description="Approved execution must recheck active context.",
+            entrypoint="localmcp/approval-recheck-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    approval = create_tool_approval(
+        "approval-recheck-tool",
+        ToolExecutionRequest(payload={}, task_id="qa-validation"),
+    )
+    approve_tool_approval(approval.id, decided_by="reviewer")
+
+    _create_running_orchestration_task_for_tool_runtime()
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        execute_tool(
+            "approval-recheck-tool",
+            {},
+            approval_id=approval.id,
+            task_id="qa-validation",
+        )
+
+    assert list_tool_approvals()[0].status == ToolApprovalStatus.approved
+    stored = get_tool("approval-recheck-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_approved_tool_execution_blocks_completed_orchestration_context_before_claim(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "approved-completed-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="approved-completed-tool",
+            description="Approved execution must require a running task.",
+            entrypoint="localmcp/approved-completed-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    service = OrchestrationService()
+    run = _create_running_orchestration_task_for_tool_runtime(service)
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+    approval = create_tool_approval(
+        "approved-completed-tool",
+        ToolExecutionRequest(
+            payload={},
+            timeout_seconds=5,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            task_id=task.id,
+        ),
+    )
+    approve_tool_approval(approval.id, decided_by="reviewer")
+    service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    with pytest.raises(PermissionError, match="not running"):
+        execute_tool(
+            "approved-completed-tool",
+            {},
+            approval_id=approval.id,
+            timeout_seconds=5,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            task_id=task.id,
+        )
+
+    assert list_tool_approvals()[0].status == ToolApprovalStatus.approved
+    stored = get_tool("approved-completed-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_tool_approval_and_execution_serialize_matching_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "serialized-context-tool",
+        tool_source="def run(payload):\n    return {'ok': True, 'value': payload.get('value')}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="serialized-context-tool",
+            description="Serialize matching orchestration context.",
+            entrypoint="localmcp/serialized-context-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    run = _create_running_orchestration_task_for_tool_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    approval = create_tool_approval(
+        "serialized-context-tool",
+        ToolExecutionRequest(
+            payload={"value": "ok"},
+            timeout_seconds=5,
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            task_id=task.id,
+        ),
+    )
+    review = get_tool_approval_review(approval.id)
+    approval_event = event_log.list(LogEventType.approval)[-1]
+    approve_tool_approval(approval.id, decided_by="reviewer")
+    result = execute_tool(
+        "serialized-context-tool",
+        {"value": "ok"},
+        approval_id=approval.id,
+        timeout_seconds=5,
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+    )
+    latest_event = event_log.list(LogEventType.tool)[-1]
+
+    expected_orchestration = {
+        "allowed": True,
+        "reason": "Tool action is bound to a running orchestration task.",
+        "run_id": run.id,
+        "task_id": task.id,
+        "agent_id": task.agent_id,
+        "agent_role": task.role,
+        "violating_paths": [],
+    }
+    assert approval.orchestration is not None
+    assert approval.orchestration.model_dump(mode="json") == expected_orchestration
+    assert approval_event.metadata["orchestration"] == expected_orchestration
+    assert review.orchestration is not None
+    assert review.orchestration.model_dump(mode="json") == expected_orchestration
+    assert result.exit_code == 0
+    assert result.orchestration is not None
+    assert result.orchestration.model_dump(mode="json") == expected_orchestration
+    assert latest_event.metadata["orchestration"] == expected_orchestration
+
+
+def test_tool_approval_event_redacts_legacy_orchestration_context(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "redacted-approval-context-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="redacted-approval-context-tool",
+            description="Redact legacy orchestration context metadata.",
+            entrypoint="localmcp/redacted-approval-context-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+
+    approval = create_tool_approval(
+        "redacted-approval-context-tool",
+        ToolExecutionRequest(
+            payload={},
+            agent_id="agent PASSWORD=agent-leak",
+            agent_role="Developer SECRET=role-leak",
+            task_id="task API_KEY=task-leak",
+        ),
+    )
+    latest_event = event_log.list(LogEventType.approval)[-1]
+    serialized_event = json.dumps(latest_event.metadata, sort_keys=True)
+
+    assert approval.orchestration is not None
+    assert approval.orchestration.allowed is True
+    assert "agent-leak" not in serialized_event
+    assert "role-leak" not in serialized_event
+    assert "task-leak" not in serialized_event
+    assert "PASSWORD=[REDACTED]" in serialized_event
+    assert "SECRET=[REDACTED]" in serialized_event
+    assert "API_KEY=[REDACTED]" in serialized_event
 
 
 def test_production_approval_required_tool_requires_bound_approval(
@@ -1287,3 +1714,54 @@ def _write_tool(
     if wrapper_source is not None:
         (tool_dir / "wrapper.py").write_text(wrapper_source, encoding="utf-8")
     return tool_dir
+
+
+def _create_running_orchestration_task_for_tool_runtime(
+    service: OrchestrationService | None = None,
+):
+    service = service or OrchestrationService()
+    return service.create_run(
+        OrchestrationCreateRequest(
+            objective="Bind generated tool runtime to a running QA task.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate orchestration-bound tool runtime behavior.",
+                    role="QA",
+                    declared_write_paths=["tests/test_tool_runtime.py"],
+                    expected_output="Focused tool runtime regressions.",
+                    validation="pytest tests/test_tool_runtime.py passes.",
+                )
+            ],
+        )
+    )
+
+
+def _create_pending_orchestration_task_for_tool_runtime():
+    return OrchestrationService().create_run(
+        OrchestrationCreateRequest(
+            objective="Keep QA pending behind developer implementation.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="dev-implementation",
+                    title="Developer implementation",
+                    description="Implement source changes.",
+                    role="Developer",
+                    declared_write_paths=["src/dgentic/tool_runtime.py"],
+                    expected_output="Source changes.",
+                    validation="Developer smoke passes.",
+                ),
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate generated-tool runtime behavior.",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    declared_write_paths=["tests/test_tool_runtime.py"],
+                    expected_output="Focused tool runtime regressions.",
+                    validation="pytest tests/test_tool_runtime.py passes.",
+                ),
+            ],
+        )
+    )

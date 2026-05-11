@@ -382,6 +382,189 @@ def test_orchestration_cli_allows_matching_running_task_context(
     assert decision.task_id == task.id
 
 
+def test_orchestration_tool_context_is_backward_compatible_without_active_task_match(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    service.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep legacy tool context behavior when no task matches.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    decision = service.authorize_tool_action(
+        agent_id="legacy-agent",
+        agent_role="Developer",
+        task_id="legacy-task",
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "No active orchestration task matched supplied tool context."
+    assert decision.agent_id == "legacy-agent"
+    assert decision.agent_role == "Developer"
+    assert decision.task_id == "legacy-task"
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "agent_role", "task_id", "reason"),
+    [
+        ("agent-from-task", None, None, "require agent_id, agent_role, and task_id"),
+        (None, "QA", "qa-validation", "require agent_id, agent_role, and task_id"),
+        ("wrong-agent", "QA", "qa-validation", "does not match the running orchestration task"),
+        ("agent-from-task", "Developer", "qa-validation", "does not match orchestration task role"),
+        ("agent-from-task", "QA", "wrong-task", "does not match the running orchestration task"),
+    ],
+)
+def test_orchestration_tool_binding_blocks_partial_or_mismatched_active_context(
+    orchestration_state,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    reason: str,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject incomplete or mismatched tool ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    bound_agent_id = task.agent_id if agent_id == "agent-from-task" else agent_id
+
+    decision = service.authorize_tool_action(
+        agent_id=bound_agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+
+    assert decision.allowed is False
+    assert reason in decision.reason
+
+
+def test_orchestration_tool_binding_blocks_known_non_running_task_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject stale tool ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    run = service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    decision = service.authorize_tool_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+    )
+
+    assert _task_by_id(run, "qa-validation").status == StepStatus.completed
+    assert decision.allowed is False
+    assert "not running" in decision.reason
+
+
+def test_orchestration_tool_binding_blocks_known_terminal_run_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject terminal-run tool ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    run = service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+    closed = service.close_run(
+        run.id,
+        OrchestrationCloseRequest(
+            evidence={
+                "tests": "pytest passed",
+                "docs": "docs updated",
+                "review": "review completed",
+            }
+        ),
+    )
+
+    decision = service.authorize_tool_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+    )
+
+    assert closed.status == PlanStatus.completed
+    assert decision.allowed is False
+    assert "not running" in decision.reason
+
+
+def test_orchestration_tool_binding_blocks_pending_known_task_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject pending tool ownership context.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+
+    decision = service.authorize_tool_action(
+        agent_id=None,
+        agent_role="QA",
+        task_id="qa-validation",
+    )
+
+    assert _task_by_id(run, "qa-validation").status == StepStatus.pending
+    assert decision.allowed is False
+    assert "not running" in decision.reason
+
+
+def test_orchestration_tool_allows_matching_running_task_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Allow exact running task tool context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+
+    decision = service.authorize_tool_action(
+        agent_id=task.agent_id,
+        agent_role="qa",
+        task_id=task.id,
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "Tool action is bound to a running orchestration task."
+    assert decision.run_id == run.id
+    assert decision.agent_id == task.agent_id
+    assert decision.agent_role == "qa"
+    assert decision.task_id == task.id
+
+
 def test_orchestration_retry_exhaustion_creates_blocker_and_follow_up(
     orchestration_state,
 ) -> None:

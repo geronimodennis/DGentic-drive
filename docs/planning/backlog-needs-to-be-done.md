@@ -368,7 +368,8 @@ Current implementation status:
 - Completed: BL-008a backend orchestration control plane with persisted orchestration runs, DAG validation, dependency-aware scheduling into sub-agent briefs, machine-readable role-boundary decisions with canonical declared-path validation, blocker and follow-up records, retry escalation, bounded scheduling passes, API lifecycle endpoints under `/tasks/orchestrations`, closed-run mutation rejection, and DoD evidence gating before run closeout.
 - Completed: BL-008b orchestration-bound filesystem action checks, including optional agent context compatibility, fail-closed partial/mismatched context, declared write-path enforcement for writes, read-only action allowance for running bound tasks, and serialized orchestration decisions in filesystem policy audit metadata.
 - Completed: BL-008c orchestration-bound CLI action checks, including backward-compatible omitted/no-active-match context, fail-closed partial or mismatched active orchestration context, exact running task role/agent/task matching, command policy blocking before execution, and serialized orchestration decisions in command policy/API/run metadata.
-- Remaining: real autonomous execution loop beyond scheduling briefs, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, runtime binding for tool actions, production multi-agent scheduling/lease semantics, richer blocked-run recovery, and UI/operations surfacing for orchestration runs.
+- Completed: BL-008d orchestration-bound generated-tool action checks, including backward-compatible omitted/no-active-match context, fail-closed partial or mismatched active orchestration context, exact running task role/agent/task matching for tool approvals and execution, and serialized orchestration decisions in tool approval/review/result/API/audit metadata.
+- Remaining: real autonomous execution loop beyond scheduling briefs, automatic backlog/progress document mutation from orchestration events, shared context/memory coordination across running agents, production multi-agent scheduling/lease semantics, richer blocked-run recovery, and UI/operations surfacing for orchestration runs.
 
 ### BL-009: Production Identity, Secret Management, And Network Guardrails
 
@@ -644,9 +645,9 @@ Exit criteria:
 - Sprint closure requires Definition of Done evidence.
 
 Current Sprint 14 status:
-- Active: BL-008a through BL-008c implement the backend orchestration control plane foundation plus filesystem and CLI runtime action binding.
-- Completed: task graph creation/list/get/advance/update/close contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks for active agent context, and DoD evidence close gates.
-- Remaining before Sprint 14 can close: autonomous execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, runtime binding for tool actions, blocked-run recovery, and production scheduling hardening.
+- Active: BL-008a through BL-008d implement the backend orchestration control plane foundation plus filesystem, CLI, and generated-tool runtime action binding.
+- Completed: task graph creation/list/get/advance/update/close contracts, dependency scheduling, role-boundary blocking with canonical declared-path validation, retry escalation, follow-up creation, closed-run mutation rejection, bounded scheduling passes, orchestration-bound filesystem write checks, orchestration-bound CLI command policy/runtime checks, orchestration-bound generated-tool approval/execution checks for active agent context, and DoD evidence close gates.
+- Remaining before Sprint 14 can close: autonomous execution loop, automatic progress/backlog updates from run events, shared context/memory coordination, blocked-run recovery, and production scheduling hardening.
 
 ### Sprint 15: Production Identity, Secrets, And Network Guardrails
 

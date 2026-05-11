@@ -4,6 +4,50 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008d Orchestration-Bound Generated Tool Actions
+
+Status: completed for the scoped generated-tool runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, shared context/memory coordination, blocked-run recovery, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected generated-tool action binding as the next Sprint 14 runtime-binding slice after filesystem and CLI binding.
+- Completed: Developer updated production source only for tool orchestration authorization, generated-tool approval/result metadata, and tool audit metadata.
+- Completed: QA updated tests only for orchestration authorization, generated-tool runtime enforcement, approval creation, approved execution recheck, API serialization, and fail-closed active context behavior.
+- Completed: Reviewer/Security found stale known context, role-only partial context, and denial-reason redaction blockers.
+- Completed: Developer remediated stale known context and role-only active context fail-closed behavior, and redacted orchestration denial reasons before tool runtime/API surfacing.
+- Completed: QA added regressions for role-only active context, pending/completed/terminal known context, approved execution after task completion, denial reason redaction, and approval event orchestration metadata redaction.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: generated-tool approval and execution paths now enforce orchestration-bound active task context when `agent_id`, `agent_role`, or `task_id` references a running orchestration task.
+- Implemented in this slice: omitted generated-tool orchestration context preserves existing non-orchestrated behavior.
+- Implemented in this slice: legacy agent/task context with no active running orchestration task remains backward-compatible.
+- Implemented in this slice: partial or mismatched context that references a running orchestration task blocks before approval creation, approval claim, or subprocess execution.
+- Implemented in this slice: exact active `agent_id`, `agent_role`, and `task_id` context is required when a generated-tool action is bound to a running orchestration task.
+- Implemented in this slice: tool approvals, approval review responses, execution results, API responses, and tool audit events serialize the orchestration decision.
+
+Remaining Sprint 14 work:
+- Add a real autonomous execution loop beyond scheduling briefs.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Add richer blocked-run recovery or reassignment semantics.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused generated-tool binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_tool_runtime.py tests\test_api.py -k "tool or orchestration"` passed with 102 tests and 96 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\tool_runtime.py tests\test_orchestration.py tests\test_tool_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\tool_runtime.py tests\test_orchestration.py tests\test_tool_runtime.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 744 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+- Whitespace gate: `git diff --check` passed with only LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 14 with the autonomous execution loop or event-driven project progress/backlog update slice, depending on review and full-gate results.
+
 ### Sprint 14 BL-008c Orchestration-Bound CLI Actions
 
 Status: completed for the scoped CLI runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, tool action binding, blocked-run recovery, and production scheduling hardening.

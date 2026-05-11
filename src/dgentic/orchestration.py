@@ -361,6 +361,107 @@ class OrchestrationService:
             task_id=task_id,
         )
 
+    def authorize_tool_action(
+        self,
+        *,
+        agent_id: str | None,
+        agent_role: str | None,
+        task_id: str | None,
+    ) -> OrchestrationActionDecision:
+        if not any([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=True,
+                reason="No orchestration context was supplied.",
+            )
+
+        all_runs = self._runs.list()
+        open_runs = [run for run in all_runs if run.status not in TERMINAL_RUN_STATUSES]
+        known_context_tasks = [
+            (run, task)
+            for run in all_runs
+            for task in run.tasks
+            if (agent_id is not None and task.agent_id == agent_id) or task.id == task_id
+        ]
+        relevant_tasks = [
+            (run, task)
+            for run in open_runs
+            for task in run.tasks
+            if task.status == StepStatus.running
+            and ((agent_id is not None and task.agent_id == agent_id) or task.id == task_id)
+        ]
+        has_active_tasks = any(
+            task.status == StepStatus.running for run in open_runs for task in run.tasks
+        )
+        if known_context_tasks and not relevant_tasks:
+            return OrchestrationActionDecision(
+                allowed=False,
+                reason=(
+                    "Supplied tool agent context matches an orchestration task that is not running."
+                ),
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+        if not relevant_tasks and has_active_tasks and not all([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=False,
+                reason=(
+                    "Orchestration-bound tool actions require agent_id, agent_role, and task_id."
+                ),
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+        if not relevant_tasks:
+            return OrchestrationActionDecision(
+                allowed=True,
+                reason="No active orchestration task matched supplied tool context.",
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+        if not all([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=False,
+                reason=(
+                    "Orchestration-bound tool actions require agent_id, agent_role, and task_id."
+                ),
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+
+        for run, task in relevant_tasks:
+            if task.id == task_id and task.agent_id == agent_id:
+                if _normalize_role(task.role) != _normalize_role(agent_role or ""):
+                    return OrchestrationActionDecision(
+                        allowed=False,
+                        reason=(
+                            f"Agent role {agent_role} does not match orchestration "
+                            f"task role {task.role}."
+                        ),
+                        run_id=run.id,
+                        task_id=task.id,
+                        agent_id=agent_id,
+                        agent_role=agent_role,
+                    )
+                return OrchestrationActionDecision(
+                    allowed=True,
+                    reason="Tool action is bound to a running orchestration task.",
+                    run_id=run.id,
+                    task_id=task.id,
+                    agent_id=agent_id,
+                    agent_role=agent_role,
+                )
+
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason="Supplied tool agent context does not match the running orchestration task.",
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+        )
+
     def _require_run(
         self,
         run_id: str,
@@ -808,6 +909,19 @@ def authorize_cli_action(
     task_id: str | None,
 ) -> OrchestrationActionDecision:
     return orchestration_service.authorize_cli_action(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+
+
+def authorize_tool_action(
+    *,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> OrchestrationActionDecision:
+    return orchestration_service.authorize_tool_action(
         agent_id=agent_id,
         agent_role=agent_role,
         task_id=task_id,

@@ -20,9 +20,11 @@ from dgentic.database import get_db_session
 from dgentic.events import event_log
 from dgentic.memory.models import ToolManifest as RegistryToolManifest
 from dgentic.memory.schemas import ToolUsageRequest
+from dgentic.orchestration import authorize_tool_action
 from dgentic.redaction import redact_metadata, redact_sensitive_values
 from dgentic.schemas import (
     LogEventType,
+    OrchestrationActionDecision,
     PermissionMode,
     ToolExecutionRequest,
     ToolManifest,
@@ -141,6 +143,7 @@ class ToolApproval(BaseModel):
     agent_id: str | None = None
     agent_role: str | None = None
     task_id: str | None = None
+    orchestration: OrchestrationActionDecision | None = None
     decided_by: str | None = None
     decision_reason: str | None = None
     denial_reason: str | None = None
@@ -160,6 +163,8 @@ class ToolApproval(BaseModel):
         self.agent_id = _redact_optional_sensitive_text(self.agent_id)
         self.agent_role = _redact_optional_sensitive_text(self.agent_role)
         self.task_id = _redact_optional_sensitive_text(self.task_id)
+        if self.orchestration is not None:
+            self.orchestration = _redact_orchestration_decision(self.orchestration)
         self.decided_by = _redact_optional_sensitive_text(self.decided_by)
         self.decision_reason = _redact_optional_sensitive_text(self.decision_reason)
         self.denial_reason = _redact_optional_sensitive_text(self.denial_reason)
@@ -185,6 +190,7 @@ class ToolApprovalReview(BaseModel):
     agent_id: str | None = None
     agent_role: str | None = None
     task_id: str | None = None
+    orchestration: OrchestrationActionDecision | None = None
     requires_bound_execution_request: bool = True
     direct_execute_available: bool = False
     review_warnings: list[str] = Field(default_factory=list)
@@ -213,6 +219,7 @@ class ToolExecutionResult(BaseModel):
     stderr: str
     duration_ms: int
     parsed_output: Any | None = None
+    orchestration: OrchestrationActionDecision | None = None
     manifest: ToolManifest = Field(
         description="The manifest after reliability counters were updated."
     )
@@ -238,6 +245,11 @@ def execute_tool(
         raise LookupError(f"Tool not found: {name}")
 
     _ensure_registry_allows_manifest(manifest)
+    orchestration_decision = _authorize_tool_or_raise(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
     bound_approval_id = _ensure_tool_can_run(
         manifest,
         payload=payload or {},
@@ -287,6 +299,7 @@ def execute_tool(
         agent_id=agent_id,
         agent_role=agent_role,
         task_id=task_id,
+        orchestration=orchestration_decision,
     )
 
     return ToolExecutionResult(
@@ -300,6 +313,7 @@ def execute_tool(
         stderr=stderr,
         duration_ms=duration_ms,
         parsed_output=redacted_output,
+        orchestration=orchestration_decision,
         manifest=updated_manifest,
     )
 
@@ -317,6 +331,11 @@ def create_tool_approval(
         raise LookupError(f"Tool not found: {name}")
 
     _ensure_registry_allows_manifest(manifest)
+    orchestration_decision = _authorize_tool_or_raise(
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
     _ensure_tool_can_be_queued_for_approval(manifest)
     requested_by_value = requested_by or request.requested_by
     root_dir = get_settings().root_dir.resolve()
@@ -355,6 +374,7 @@ def create_tool_approval(
         agent_id=request.agent_id,
         agent_role=request.agent_role,
         task_id=request.task_id,
+        orchestration=orchestration_decision,
     )
     _tool_approvals.upsert(approval)
     event_log.record(
@@ -372,6 +392,7 @@ def create_tool_approval(
             "agent_id": approval.agent_id,
             "agent_role": approval.agent_role,
             "task_id": approval.task_id,
+            "orchestration": _orchestration_metadata(approval.orchestration),
             "payload_digest": approval.payload_digest,
             "approval_digest": approval.approval_digest,
             "expires_at": approval.expires_at.isoformat(),
@@ -415,6 +436,7 @@ def get_tool_approval_review(approval_id: str) -> ToolApprovalReview:
         agent_id=approval.agent_id,
         agent_role=approval.agent_role,
         task_id=approval.task_id,
+        orchestration=approval.orchestration,
         direct_execute_available=False,
         review_warnings=warnings,
         decided_by=approval.decided_by,
@@ -690,6 +712,44 @@ def _redact_optional_sensitive_text(text: str | None) -> str | None:
     if text is None:
         return None
     return redact_sensitive_values(text)
+
+
+def _redact_orchestration_decision(
+    decision: OrchestrationActionDecision,
+) -> OrchestrationActionDecision:
+    return decision.model_copy(
+        update={
+            "reason": redact_sensitive_values(decision.reason),
+            "agent_id": _redact_optional_sensitive_text(decision.agent_id),
+            "agent_role": _redact_optional_sensitive_text(decision.agent_role),
+            "task_id": _redact_optional_sensitive_text(decision.task_id),
+        }
+    )
+
+
+def _authorize_tool_or_raise(
+    *,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> OrchestrationActionDecision:
+    decision = authorize_tool_action(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+    decision = _redact_orchestration_decision(decision)
+    if not decision.allowed:
+        raise PermissionError(decision.reason)
+    return decision
+
+
+def _orchestration_metadata(
+    decision: OrchestrationActionDecision | None,
+) -> dict[str, Any] | None:
+    if decision is None:
+        return None
+    return decision.model_dump(mode="json")
 
 
 def _approval_boolean_bypass_allowed() -> bool:
@@ -1253,6 +1313,7 @@ def _record_execution_event(
     agent_id: str | None,
     agent_role: str | None,
     task_id: str | None,
+    orchestration: OrchestrationActionDecision | None,
 ) -> None:
     event_log.record(
         LogEventType.tool,
@@ -1280,6 +1341,7 @@ def _record_execution_event(
             "agent_id": agent_id,
             "agent_role": agent_role,
             "task_id": task_id,
+            "orchestration": _orchestration_metadata(orchestration),
             "stdout_bytes": len(stdout.encode("utf-8")),
             "stderr_bytes": len(stderr.encode("utf-8")),
         },

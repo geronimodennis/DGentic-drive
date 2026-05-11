@@ -383,7 +383,7 @@ Invoke-RestMethod `
 
 Provider generation and health probes only use exact allowlisted base URLs. The default allowlist is the configured Ollama and LM Studio base URLs, plus any trusted URLs in `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`. Provider redirects are blocked, malformed upstream JSON or provider-specific success payloads are returned to API callers as generic provider failures, and provider logs store safe metadata rather than raw completion content. Generation retries only bounded transient failures such as `429` and upstream `5xx`; repeated retry-exhausted generation failures open an in-process per-provider circuit breaker that returns a fast `503` until its cooldown expires. Tune this with `DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD` and `DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS`. Health probes do not retry.
 
-Optionally layer a domain policy on top of exact provider base URL allowlists. `allow` and `audit` permit matching outbound provider requests, while `deny` and `approval_required` fail closed before provider transport until a future network-approval workflow exists:
+Optionally layer a domain policy on top of exact provider base URL allowlists. `allow` and `audit` permit matching outbound provider requests, `deny` fails closed before provider transport, and `approval_required` requires a single-use bound `network_approval_id` before provider generation or streaming can reach transport:
 
 ```powershell
 $env:DGENTIC_NETWORK_DOMAIN_POLICY = '{"default_mode":"deny","rules":[{"domain":"provider.example.test","mode":"allow"},{"domain":"*.review.example.test","mode":"approval_required","reason":"Network review required."}]}'
@@ -397,6 +397,26 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/guardrails/network `
   -ContentType "application/json" `
   -Body '{"url":"https://provider.example.test/v1/chat/completions"}'
+```
+
+Create, review, approve, and use a bound network approval for an approval-required provider base URL:
+
+```powershell
+$networkApproval = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/network/approvals `
+  -ContentType "application/json" `
+  -Body '{"url":"https://provider.example.test/v1","surface":"provider","action":"generate","requested_by":"operator"}'
+
+Invoke-RestMethod `
+  -Method Get `
+  -Uri "http://127.0.0.1:8000/network/approvals/$($networkApproval.id)/review"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/network/approvals/$($networkApproval.id)/approve" `
+  -ContentType "application/json" `
+  -Body '{"decided_by":"reviewer","reason":"Approved for this provider endpoint."}'
 ```
 
 To enable the OpenAI-compatible external adapter, set an API-versioned HTTPS base URL, a comma-separated model allowlist, and either the name of an environment variable that already contains the API key or a persisted credential reference id. The API key value itself is not stored in DGentic settings:
@@ -450,7 +470,7 @@ $env:DGENTIC_PROVIDER_ROLE_ROUTING = '{"planner":{"provider_id":"lm-studio","mod
 
 Invalid role-routing JSON or unsupported provider ids fail closed before provider health probes.
 
-Direct external generation is approval-required. In development/test mode, local smoke checks may include `"approved": true`; staging/production requests need a single-use bound `approval_id`. External API-key lookup and Authorization header construction are deferred until pricing, configuration, circuit-breaker, and approval gates allow outbound transport.
+Direct external generation is approval-required. In development/test mode, local smoke checks may include `"approved": true`; staging/production requests need a single-use bound provider `approval_id`. If the network domain policy for the configured provider base URL is `approval_required`, the same generation request also needs a bound `network_approval_id`. External API-key lookup and Authorization header construction are deferred until pricing, configuration, circuit-breaker, provider approval, and network approval gates allow outbound transport.
 
 Create, review, approve, and execute a bound external provider request:
 
@@ -475,10 +495,10 @@ Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/providers/generate" `
   -ContentType "application/json" `
-  -Body ('{"provider_id":"external-openai-compatible","model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello."}],"approval_id":"' + $approval.id + '","requested_by":"operator"}')
+  -Body ('{"provider_id":"external-openai-compatible","model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello."}],"approval_id":"' + $approval.id + '","network_approval_id":"' + $networkApproval.id + '","requested_by":"operator"}')
 ```
 
-Provider approval records bind provider id, model, stream mode, messages, generation options, timeout, configured base URL, credential reference identity, model allowlist, requester, and agent/task context through HMAC digests. Review responses expose safe metadata without raw prompt content or credential values. When auth is enabled, provider approval create/list/review/approve/deny routes require the `approvals` capability; generation requires the `providers` capability. Approved records are claimed only after external request/config/circuit/credential gates pass and immediately before outbound provider transport, so actual transport failures consume the approval while earlier fail-fast paths preserve it.
+Provider approval records bind provider id, model, stream mode, messages, generation options, timeout, configured base URL, credential reference identity, model allowlist, requester, and agent/task context through HMAC digests. Network approval records bind sanitized URL metadata, full URL digest, policy decision digest, surface/action, requester, and agent/task context, and are single-use when claimed for provider transport. Review responses expose safe metadata without raw prompt content, URL query secrets, or credential values. When auth is enabled, provider and network approval create/list/review/approve/deny routes require the `approvals` capability; generation requires the `providers` capability. Approved records are claimed only after external request/config/circuit/credential gates pass and immediately before outbound provider transport, so actual transport failures consume the approval while earlier fail-fast paths preserve it.
 
 OpenAI-compatible streaming is available through `POST /providers/generate/stream` for LM Studio and the configured external adapter. The endpoint reads upstream `data:` server-sent event chunks and returns newline-delimited JSON (`application/x-ndjson`) events; non-streaming `/providers/generate` continues to reject `stream: true`.
 
@@ -637,7 +657,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, encrypted local credential storage, task-scoped verification for caller-supplied orchestration agent context, and non-provider network approval workflows remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, encrypted local credential storage, task-scoped verification for caller-supplied orchestration agent context, and non-provider network enforcement surfaces remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.

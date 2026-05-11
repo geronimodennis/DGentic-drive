@@ -68,7 +68,18 @@ from dgentic.guardrails import (
     write_guarded_text_file,
 )
 from dgentic.memory import add_memory, search_memory
-from dgentic.network_policy import NetworkDomainPolicyError, evaluate_network_domain_policy
+from dgentic.network_policy import (
+    NetworkApproval,
+    NetworkApprovalReview,
+    NetworkApprovalStatus,
+    NetworkDomainPolicyError,
+    approve_network_approval,
+    create_network_approval,
+    deny_network_approval,
+    evaluate_network_domain_policy,
+    get_network_approval_review,
+    list_network_approvals,
+)
 from dgentic.orchestration import OrchestrationError, orchestration_service
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_pricing import ProviderPricingConfigurationError
@@ -139,6 +150,7 @@ from dgentic.schemas import (
     MemoryQuery,
     MemoryRecord,
     MemorySearchResult,
+    NetworkApprovalRequest,
     NetworkPolicyDecision,
     NetworkPolicyRequest,
     OrchestrationBlockerResolutionRequest,
@@ -839,6 +851,78 @@ def check_network_policy(request: NetworkPolicyRequest) -> NetworkPolicyDecision
         matched_domain=decision.matched_domain,
         reason=decision.reason,
     )
+
+
+@router.post("/network/approvals", response_model=NetworkApproval, status_code=201)
+def create_network_policy_approval(
+    payload: NetworkApprovalRequest,
+    http_request: Request,
+) -> NetworkApproval:
+    try:
+        return create_network_approval(
+            payload.url,
+            surface=payload.surface,
+            action=payload.action,
+            requested_by=_approval_requester(http_request, payload.requested_by),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
+        )
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/network/approvals", response_model=list[NetworkApproval])
+def get_network_policy_approvals(
+    status: NetworkApprovalStatus | None = None,
+) -> list[NetworkApproval]:
+    return list_network_approvals(status)
+
+
+@router.get("/network/approvals/{approval_id}/review", response_model=NetworkApprovalReview)
+def review_network_policy_approval(approval_id: str) -> NetworkApprovalReview:
+    try:
+        return get_network_approval_review(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/network/approvals/{approval_id}/approve", response_model=NetworkApproval)
+def approve_network_policy_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> NetworkApproval:
+    try:
+        return approve_network_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/network/approvals/{approval_id}/deny", response_model=NetworkApproval)
+def deny_network_policy_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> NetworkApproval:
+    try:
+        return deny_network_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)

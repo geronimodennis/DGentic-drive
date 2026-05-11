@@ -2,7 +2,13 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from dgentic.network_policy import NetworkDomainPolicyError, evaluate_network_domain_policy
+from dgentic.network_policy import (
+    NetworkApprovalRequiredError,
+    NetworkDomainPolicyError,
+    claim_network_approval,
+    evaluate_network_domain_policy,
+    validate_bound_network_approval,
+)
 from dgentic.settings import get_settings
 
 
@@ -31,6 +37,15 @@ def validate_provider_base_url(
     provider_id: str,
     base_url: str,
     settings: Any | None = None,
+    network_approval_id: str | None = None,
+    network_surface: str = "provider",
+    network_action: str = "request",
+    requested_by: str | None = None,
+    agent_id: str | None = None,
+    agent_role: str | None = None,
+    task_id: str | None = None,
+    require_network_approval: bool = True,
+    claim_network_approval_record: bool = False,
 ) -> str:
     active_settings = settings if settings is not None else get_settings()
     normalized = normalize_provider_base_url(base_url)
@@ -40,14 +55,47 @@ def validate_provider_base_url(
         raise ProviderEgressPolicyError("Network domain policy is invalid.") from exc
     if network_decision.mode == "deny":
         raise ProviderEgressPolicyError("Provider domain is denied by network policy.")
-    if network_decision.mode == "approval_required":
-        raise ProviderEgressPolicyError(
-            "Provider domain requires network approval, which is not available yet."
-        )
     allowed = allowed_provider_base_urls_for_provider(provider_id, active_settings)
     if normalized not in allowed:
         raise ProviderEgressPolicyError(
             f"Provider base_url for {provider_id} is not allowed by egress policy."
+        )
+    if network_decision.mode == "approval_required" and require_network_approval:
+        if not network_approval_id:
+            raise ProviderEgressPolicyError(
+                "Provider domain requires network approval via an approved "
+                "network_approval_id before transport."
+            )
+        try:
+            if claim_network_approval_record:
+                claim_network_approval(
+                    network_approval_id,
+                    url=normalized,
+                    surface=network_surface,
+                    action=network_action,
+                    requested_by=requested_by,
+                    agent_id=agent_id,
+                    agent_role=agent_role,
+                    task_id=task_id,
+                    settings=active_settings,
+                )
+            else:
+                validate_bound_network_approval(
+                    network_approval_id,
+                    url=normalized,
+                    surface=network_surface,
+                    action=network_action,
+                    requested_by=requested_by,
+                    agent_id=agent_id,
+                    agent_role=agent_role,
+                    task_id=task_id,
+                    settings=active_settings,
+                )
+        except (NetworkApprovalRequiredError, NetworkDomainPolicyError, ValueError) as exc:
+            raise ProviderEgressPolicyError(str(exc)) from exc
+    elif network_approval_id:
+        raise ProviderEgressPolicyError(
+            "network_approval_id is only valid when provider domain policy requires approval."
         )
     return normalized
 

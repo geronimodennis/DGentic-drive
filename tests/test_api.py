@@ -1821,6 +1821,81 @@ def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_network_approval_api_lifecycle_redacts_safe_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "approval_required",
+                        "reason": "Review provider token=policy-secret.",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/network/approvals",
+        json={
+            "url": "https://provider.example.test/v1?token=url-secret",
+            "surface": "provider",
+            "action": "generate",
+            "requested_by": "operator SECRET=requester-secret",
+        },
+    )
+
+    assert create_response.status_code == 201
+    body = create_response.json()
+    approval_id = body["id"]
+    assert body["url"] == "https://provider.example.test/v1"
+    assert body["requested_by"] == "operator SECRET=[REDACTED]"
+    assert body["policy_reason"] == "Review provider token=[REDACTED]"
+    assert body["status"] == "pending"
+
+    list_response = client.get("/network/approvals?status=pending")
+    review_response = client.get(f"/network/approvals/{approval_id}/review")
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={
+            "decided_by": "reviewer TOKEN=reviewer-secret",
+            "reason": "Approved PASSWORD=reason-secret",
+        },
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == approval_id
+    assert review_response.status_code == 200
+    assert review_response.json()["direct_execute_available"] is False
+    assert approve_response.status_code == 200
+    assert approve_response.json()["decided_by"] == "reviewer TOKEN=[REDACTED]"
+
+    response_text = json.dumps(
+        {
+            "create": create_response.json(),
+            "list": list_response.json(),
+            "review": review_response.json(),
+            "approve": approve_response.json(),
+        }
+    )
+    stored = (tmp_path / "state" / "network-approvals.json").read_text(encoding="utf-8")
+    for secret in [
+        "url-secret",
+        "policy-secret",
+        "requester-secret",
+        "reviewer-secret",
+        "reason-secret",
+    ]:
+        assert secret not in response_text
+        assert secret not in stored
+    get_settings.cache_clear()
+
+
 def test_guardrails_classify_powershell_slash_command_wrapper() -> None:
     client = TestClient(create_app())
 

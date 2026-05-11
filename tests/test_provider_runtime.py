@@ -17,6 +17,12 @@ from dgentic.credentials import (
     credential_secret_for_reference,
     revoke_credential_reference,
 )
+from dgentic.network_policy import (
+    NetworkApprovalStatus,
+    approve_network_approval,
+    create_network_approval,
+    list_network_approvals,
+)
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
     _NoProviderRedirectHandler,
@@ -1682,6 +1688,130 @@ def test_provider_generation_rejects_network_domain_policy_before_transport(
         )
 
     assert calls == []
+    get_settings.cache_clear()
+
+
+def test_provider_generation_accepts_bound_network_approval_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_LM_STUDIO_BASE_URL", "http://provider.example.test:1234")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    approval = create_network_approval(
+        "http://provider.example.test:1234",
+        surface="provider",
+        action="generate",
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    calls: list[dict] = []
+
+    def fake_post_json(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        headers: dict | None = None,
+    ) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return json.loads(lm_studio_response("Approved by network record.").decode("utf-8"))
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    result = generate_provider_completion(
+        ProviderGenerationRequest(
+            provider_id="lm-studio",
+            model="local-model",
+            messages=[{"role": "user", "content": "Say hello."}],
+            requested_by="operator",
+            network_approval_id=approval.id,
+        )
+    )
+
+    assert result.content == "Approved by network record."
+    assert calls == [
+        {
+            "url": "http://provider.example.test:1234/v1/chat/completions",
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "Say hello."}],
+                "stream": False,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.executed
+    get_settings.cache_clear()
+
+
+def test_provider_generation_rejects_mismatched_network_approval_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_LM_STUDIO_BASE_URL", "http://provider.example.test:1234")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    approval = create_network_approval(
+        "http://provider.example.test:1234",
+        surface="provider",
+        action="stream",
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    calls: list[str] = []
+
+    def fake_post_json(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        headers: dict | None = None,
+    ) -> dict:
+        calls.append(url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    with pytest.raises(provider_runtime.ProviderEgressPolicyError, match="not bound"):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                messages=[{"role": "user", "content": "Say hello."}],
+                requested_by="operator",
+                network_approval_id=approval.id,
+            )
+        )
+
+    assert calls == []
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.approved
     get_settings.cache_clear()
 
 

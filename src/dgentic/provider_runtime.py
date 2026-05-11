@@ -155,6 +155,10 @@ class ProviderGenerationRequest(BaseModel):
     stream: bool = False
     approved: bool = False
     approval_id: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
+    network_approval_id: str | None = Field(
+        default=None,
+        max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS,
+    )
     requested_by: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
     agent_id: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
     agent_role: str | None = Field(default=None, max_length=MAX_PROVIDER_CONTEXT_FIELD_CHARS)
@@ -551,6 +555,7 @@ def generate_provider_completion(
         approval = _authorize_provider_request_for_transport(request)
         headers = _provider_transport_headers(request, headers)
         _claim_provider_request_for_transport(approval, request)
+        _claim_provider_network_approval_for_transport(request)
         if headers:
             transport_result = _post_json(
                 url,
@@ -632,6 +637,7 @@ def stream_provider_completion(
         approval = _authorize_provider_request_for_transport(request)
         headers = _provider_transport_headers(request, headers)
         _claim_provider_request_for_transport(approval, request)
+        _claim_provider_network_approval_for_transport(request)
         transport_result = _open_stream(
             url,
             payload,
@@ -705,7 +711,7 @@ def _build_provider_request(
         settings = get_settings()
         _reject_external_runtime_base_url(request)
         _validate_external_model(request.model, settings)
-        base_url = _external_base_url(settings)
+        base_url = _external_base_url(settings, request=request)
         payload = {
             "model": request.model,
             "messages": messages,
@@ -762,7 +768,7 @@ def _build_provider_stream_request(
         settings = get_settings()
         _reject_external_runtime_base_url(request)
         _validate_external_model(request.model, settings)
-        base_url = _external_base_url(settings)
+        base_url = _external_base_url(settings, request=request)
         payload = {
             "model": request.model,
             "messages": messages,
@@ -875,7 +881,11 @@ def _validate_provider_option_value(value: Any, *, depth: int) -> None:
     raise ValueError("Provider options must contain only JSON-compatible values.")
 
 
-def _base_url_for(request: ProviderGenerationRequest) -> str:
+def _base_url_for(
+    request: ProviderGenerationRequest,
+    *,
+    claim_network_approval: bool = False,
+) -> str:
     settings = get_settings()
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID and request.base_url:
         _reject_external_runtime_base_url(request)
@@ -884,6 +894,8 @@ def _base_url_for(request: ProviderGenerationRequest) -> str:
             provider_id=request.provider_id,
             base_url=request.base_url,
             settings=settings,
+            request=request,
+            claim_network_approval=claim_network_approval,
         )
 
     if request.provider_id == OLLAMA_PROVIDER_ID:
@@ -891,15 +903,23 @@ def _base_url_for(request: ProviderGenerationRequest) -> str:
             provider_id=request.provider_id,
             base_url=settings.ollama_base_url,
             settings=settings,
+            request=request,
+            claim_network_approval=claim_network_approval,
         )
     if request.provider_id == LM_STUDIO_PROVIDER_ID:
         return _validate_base_url_for_provider(
             provider_id=request.provider_id,
             base_url=settings.lm_studio_base_url,
             settings=settings,
+            request=request,
+            claim_network_approval=claim_network_approval,
         )
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
-        return _external_base_url(settings)
+        return _external_base_url(
+            settings,
+            request=request,
+            claim_network_approval=claim_network_approval,
+        )
 
     raise ValueError(f"Unsupported provider_id: {request.provider_id}")
 
@@ -1532,13 +1552,20 @@ def _duration_ms(started_at: float) -> int:
     return round((perf_counter() - started_at) * 1000)
 
 
-def _external_base_url(settings: Any) -> str:
+def _external_base_url(
+    settings: Any,
+    *,
+    request: ProviderGenerationRequest | None = None,
+    claim_network_approval: bool = False,
+) -> str:
     if not settings.external_openai_compatible_base_url.strip():
         raise ProviderConfigurationError("External provider is not configured.")
     normalized = _validate_base_url_for_provider(
         provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
         base_url=settings.external_openai_compatible_base_url,
         settings=settings,
+        request=request,
+        claim_network_approval=claim_network_approval,
     )
     if not normalized.startswith("https://"):
         raise ProviderEgressPolicyError(
@@ -1655,6 +1682,11 @@ def _claim_provider_request_for_transport(
         _claim_bound_provider_approval(approval, request=request, settings=get_settings())
 
 
+def _claim_provider_network_approval_for_transport(request: ProviderGenerationRequest) -> None:
+    if request.network_approval_id:
+        _base_url_for(request, claim_network_approval=True)
+
+
 def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> None:
     if request.base_url:
         raise ProviderEgressPolicyError(
@@ -1662,12 +1694,34 @@ def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> Non
         )
 
 
-def _validate_base_url_for_provider(*, provider_id: str, base_url: str, settings: Any) -> str:
+def _validate_base_url_for_provider(
+    *,
+    provider_id: str,
+    base_url: str,
+    settings: Any,
+    request: ProviderGenerationRequest | None = None,
+    claim_network_approval: bool = False,
+) -> str:
     return validate_provider_base_url(
         provider_id=provider_id,
         base_url=base_url,
         settings=settings,
+        network_approval_id=request.network_approval_id if request is not None else None,
+        network_surface="provider",
+        network_action=_network_action_for_provider_request(request),
+        requested_by=request.requested_by if request is not None else None,
+        agent_id=request.agent_id if request is not None else None,
+        agent_role=request.agent_role if request is not None else None,
+        task_id=request.task_id if request is not None else None,
+        require_network_approval=request is not None,
+        claim_network_approval_record=claim_network_approval,
     )
+
+
+def _network_action_for_provider_request(request: ProviderGenerationRequest | None) -> str:
+    if request is None:
+        return "configuration"
+    return "stream" if request.stream else "generate"
 
 
 def _provider_request_for_path(

@@ -578,6 +578,13 @@ class NetworkPolicyRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
+class NetworkApprovalRequest(AgentActionContext):
+    url: str = Field(min_length=1, max_length=2048)
+    surface: str = Field(default="provider", min_length=1, max_length=64)
+    action: str = Field(default="request", min_length=1, max_length=64)
+    requested_by: str | None = Field(default=None, max_length=256)
+
+
 class NetworkPolicyDecision(BaseModel):
     allowed: bool
     url: str

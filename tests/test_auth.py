@@ -1169,6 +1169,10 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
     monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "DGENTIC_TEST_EXTERNAL")
     monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
     monkeypatch.setenv("DGENTIC_TEST_EXTERNAL", "secret-value")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "network.example.test", "mode": "approval_required"}]}),
+    )
     client = production_client_with_state(tmp_path, monkeypatch)
     create_operator(client, "operator-approver", ["cli", "approvals", "tools"])
     created = issue_auth_token(client, "operator-approver", ["cli", "approvals", "tools"])
@@ -1214,6 +1218,16 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         headers=headers,
         json={"payload": {"ok": True}, "timeout_seconds": 5},
     )
+    network_approval_response = client.post(
+        "/network/approvals",
+        headers=headers,
+        json={"url": "https://network.example.test/v1", "requested_by": "network-spoof"},
+    )
+    network_approve_response = client.post(
+        f"/network/approvals/{network_approval_response.json()['id']}/approve",
+        headers=headers,
+        json={"decided_by": "network-reviewer-spoof"},
+    )
 
     assert approval_response.status_code == 201
     assert approval_response.json()["requested_by"] == "operator-approver"
@@ -1224,6 +1238,10 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
     assert create_tool_response.status_code == 201
     assert tool_approval_response.status_code == 201
     assert tool_approval_response.json()["requested_by"] == "operator-approver"
+    assert network_approval_response.status_code == 201
+    assert network_approval_response.json()["requested_by"] == "operator-approver"
+    assert network_approve_response.status_code == 200
+    assert network_approve_response.json()["decided_by"] == "operator-approver"
 
 
 @pytest.mark.parametrize(
@@ -1235,6 +1253,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/auth/tokens", "auth"),
         ("/credentials/references", "credentials"),
         ("/guardrails/network", "network"),
+        ("/network/approvals", "approvals"),
         ("/filesystem/read", "filesystem"),
         ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),

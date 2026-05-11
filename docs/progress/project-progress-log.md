@@ -2,6 +2,36 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+## 2026-05-12
+
+### Sprint 15 BL-009h Network Approval Records
+
+Status: completed for the scoped provider-call network approval record slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, non-provider network enforcement surfaces, task-scoped agent-context verification, and broader CLI host-boundary enforcement.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected network approval records as the next bounded Sprint 15 security slice after authenticated audit actor propagation.
+- Completed: Architect and QA scouts confirmed the existing provider, CLI, and generated-tool approval families as the safest implementation pattern.
+- Completed: Developer added `network-approvals.json` records with pending/approved/denied/executed states, redacted safe review metadata, HMAC URL/policy/approval digests, TTLs, list/review/approve/deny APIs, and authenticated requester/decider binding.
+- Completed: Developer wired provider egress so `approval_required` network-domain decisions can proceed only with a bound single-use `network_approval_id`, while deny decisions and provider base URL allowlists still fail closed.
+- Completed: QA added network approval lifecycle, redaction, drift/denied/expired, provider transport, API lifecycle, route capability, and authenticated actor-binding regressions.
+- Completed: PM updated README, architecture, setup/usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: provider generation and streaming can now satisfy approval-required network-domain policy through a bound `network_approval_id` instead of treating the mode as unavailable.
+- Implemented in this slice: network approval records persist only sanitized URL previews, digests, policy metadata, context, and decisions; URL query/fragment secrets and secret-shaped actor/reason text are redacted from persistence and responses.
+- Still out of scope after this slice: non-provider network enforcement surfaces such as web retrieval and generated-tool outbound network access, richer user/group identity workflows, encrypted local credential vaulting, first-class provider-specific secret-manager APIs, and stronger verification for body-supplied orchestration agent context (`agent_id`, `agent_role`, `task_id`).
+
+Validation:
+- Focused network approval gate: `python -m pytest -q tests\test_network_policy.py tests\test_provider_runtime.py tests\test_api.py::test_network_approval_api_lifecycle_redacts_safe_metadata tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes tests\test_auth.py::test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions` passed with 144 tests.
+- Full regression gate: `python -m pytest -q` passed with 898 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with either task-scoped verification for caller-supplied orchestration agent context or non-provider network enforcement surfaces unless key-management design is ready for encrypted local credential vaulting.
+
 ## 2026-05-11
 
 ### Sprint 15 BL-009g Authenticated Audit Actor Propagation

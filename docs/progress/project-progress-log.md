@@ -4,9 +4,46 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008p Detached Worker Restart Adoption
+
+Status: completed for the scoped detached worker restart adoption/resume slice; Sprint 14 remains active for production scheduling/lease hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected detached worker restart adoption/resume as the next bounded Sprint 14 slice after shared-memory policy and exposure hardening.
+- Completed: Developer changed orchestration service startup to adopt expired prior-supervisor `starting` and `running` background executions for open runs instead of marking every expired active record stale.
+- Completed: Developer preserved the original execution id and request, transferred supervisor ownership, refreshed heartbeat metadata, and resumed the existing bounded loop through the normal worker path.
+- Completed: Developer finalized expired `cancelling` records as `cancelled`, skipped closed/non-resumable runs as `stale`, skipped duplicate stale records for the same run, and finalized adoption start failures as redacted `failed` records.
+- Completed: QA added focused restart-adoption tests for expired running adoption, expired cancellation finalization, no duplicate agent spawn for already-running tasks, closed-run skip behavior, and adoption start-failure recovery.
+- Completed: DevOps review confirmed production scheduler leases/fencing remain the final Sprint 14 hardening blocker.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: process startup can resume an abandoned detached orchestration execution once the previous supervisor heartbeat is expired.
+- Implemented in this slice: adopted executions keep their existing execution id and request, then continue through the normal bounded loop and finalization machinery.
+- Implemented in this slice: already-running tasks keep their existing `agent_id` during adoption, avoiding duplicate sub-agent spawn on restart.
+- Implemented in this slice: stale `cancelling` executions become terminal `cancelled`, while closed-run or duplicate stale executions are not resumed.
+- Implemented in this slice: adoption worker start failures are persisted as failed records with redacted errors and no pinned active execution.
+
+Remaining Sprint 14 work:
+- Harden production multi-agent scheduling and lease semantics.
+
+Validation:
+- Focused background execution service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "background_execution"` passed with 20 tests.
+- Focused background execution API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "background_execution or operations_summary"` passed with 8 tests.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 101 tests.
+- Broader orchestration/background API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration or background_execution or operations_summary"` passed with 34 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 828 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 14 with production scheduling lease/fencing hardening.
+
 ### Sprint 14 BL-008o Shared-Memory Reuse Policy And Exposure Hardening
 
-Status: completed for the scoped shared-memory reuse policy and API exposure hardening slice; Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
+Status: completed for the scoped shared-memory reuse policy and API exposure hardening slice; BL-008p later completed detached worker restart adoption/resume, and Sprint 14 remains active for production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -29,8 +66,8 @@ Feature tracking:
 - Implemented in this slice: when auth is enabled, non-admin `/agents` and `/api/v1/memory/*` reads only expose orchestration agent/shared-memory context owned by the authenticated actor; admin tokens retain all-run visibility.
 
 Remaining Sprint 14 work:
-- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
+- Detached worker restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused shared-memory service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 9 tests.
@@ -41,11 +78,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008n Orchestration Operations Summary
 
-Status: completed for the scoped operations summary slice; BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
+Status: completed for the scoped operations summary slice; BL-008o later completed shared-memory reuse policy and API exposure hardening, BL-008p later completed detached worker restart adoption/resume, and Sprint 14 remains active for production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -63,9 +100,9 @@ Feature tracking:
 - Implemented in this slice: the summary route is registered before `{run_id}` lookup to avoid path capture by the dynamic route.
 
 Remaining Sprint 14 work:
-- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
+- Detached worker restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused summary service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "operations_summary"` passed with 2 tests.
@@ -76,11 +113,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008m Detached Orchestration Execution Cancellation
 
-Status: completed for the scoped detached-execution cancellation slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
+Status: completed for the scoped detached-execution cancellation slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, BL-008p later completed detached worker restart adoption/resume, and Sprint 14 remains active for production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -99,10 +136,10 @@ Feature tracking:
 - Implemented in this slice: cancelling a detached execution stops only the detached orchestration loop; it does not cancel spawned tasks or agents.
 
 Remaining Sprint 14 work:
-- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Operations summary surfacing was completed later in BL-008n.
 - Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
+- Detached worker restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused cancellation service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "background_execution_cancel"` passed with 5 tests.
@@ -113,11 +150,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008l Opt-In Orchestration Shared Memory
 
-Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
+Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, BL-008p later completed detached worker restart adoption/resume, and Sprint 14 remains active for production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -139,10 +176,10 @@ Feature tracking:
 - Implemented in this slice: the metadata list API accepts `tags` query parameters for tag-filter verification and consumers.
 
 Remaining Sprint 14 work:
-- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Operations summary surfacing was completed later in BL-008n.
 - Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
+- Detached worker restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused shared-memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 6 tests.
@@ -154,11 +191,11 @@ Validation:
 - Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 803 tests and 2 skipped.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008k Detached Background Orchestration Execution
 
-Status: completed for the scoped detached process-local execution slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for durable shared-memory coordination, detached worker restart adoption/resume, and production scheduling/lease hardening.
+Status: completed for the scoped detached process-local execution slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory policy/exposure hardening, BL-008p later completed detached worker restart adoption/resume, and Sprint 14 remains active for production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -181,10 +218,11 @@ Feature tracking:
 - Implemented in this slice: finalization is conditional on active status and matching supervisor ownership so stale or foreign-owned records are not overwritten.
 
 Remaining Sprint 14 work:
-- Add durable shared-memory coordination across runs and agents.
-- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Operations summary surfacing was completed later in BL-008n.
+- Durable shared-memory coordination was completed later in BL-008l.
+- Shared-memory policy/exposure hardening was completed later in BL-008o.
+- Detached worker restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused detached execution gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py -k "background_execution or detached"` passed with 14 tests.
@@ -197,11 +235,11 @@ Validation:
 - Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 58 files already formatted.
 
 Next:
-- Continue Sprint 14 with durable shared-memory coordination or production scheduling/lease hardening.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008j Generated Orchestration Document Sync
 
-Status: completed for the scoped generated project-document sync slice; Sprint 14 remains active for detached background execution, durable shared-memory coordination, and production scheduling hardening.
+Status: completed for the scoped generated project-document sync slice; later BL-008k/BL-008l/BL-008p slices completed detached background execution, durable shared-memory coordination, and detached restart adoption/resume, so Sprint 14 remains active for production scheduling hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -224,10 +262,11 @@ Feature tracking:
 - Implemented in this slice: task update transitions now have direct audit events rather than relying on generic document sync records.
 
 Remaining Sprint 14 work:
-- Add detached background worker execution beyond synchronous loop calls.
-- Add durable shared-memory coordination across runs and agents.
 - Harden production multi-agent scheduling and lease semantics.
+- Detached background execution was completed later in BL-008k.
+- Durable shared-memory coordination was completed later in BL-008l.
 - Operations summary surfacing was completed later in BL-008n.
+- Detached restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused generated-doc/reviewer remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "task_update_records_redacted_audit_metadata or generated_document_symlink_failures or generated_documents or create_run_syncs_generated_project_documents"` passed with 7 tests.
@@ -239,11 +278,11 @@ Validation:
 - Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 58 files already formatted.
 
 Next:
-- Continue Sprint 14 with detached background execution or durable shared-memory coordination.
+- Continue Sprint 14 with production scheduling/lease hardening.
 
 ### Sprint 14 BL-008i Bounded Autonomous Orchestration Loop
 
-Status: completed for the scoped synchronous loop slice; Sprint 14 remains active for detached background execution, project-document mutation, durable shared memory coordination, and production scheduling hardening.
+Status: completed for the scoped synchronous loop slice; later slices completed detached background execution, project-document mutation, durable shared memory coordination, operations surfacing, and detached restart adoption/resume, so Sprint 14 remains active for production scheduling hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -267,11 +306,12 @@ Feature tracking:
 - Implemented in this slice: loop bounds are explicit and default to a small synchronous API workload rather than a detached background worker.
 
 Remaining Sprint 14 work:
-- Add detached background worker execution beyond synchronous loop calls.
-- Add automatic backlog/progress document mutation from orchestration events.
-- Add durable shared memory coordination across runs and agents.
 - Harden production multi-agent scheduling and lease semantics.
+- Detached background execution was completed later in BL-008k.
+- Automatic backlog/progress document mutation was completed later in BL-008j.
+- Durable shared memory coordination was completed later in BL-008l.
 - Operations summary surfacing was completed later in BL-008n.
+- Detached restart adoption/resume was completed later in BL-008p.
 
 Validation:
 - Focused loop service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "loop or cycle"` passed with 11 tests.

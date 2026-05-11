@@ -970,6 +970,238 @@ def test_background_execution_reconciles_prior_supervisor_active_records(
     assert current.status == OrchestrationExecutionStatus.running
 
 
+def test_background_execution_startup_adopts_expired_foreign_execution(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class ImmediateThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Resume expired detached execution after restart.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-adopt-after-restart",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            requested_by="qa-owner",
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", ImmediateThread)
+    service2 = OrchestrationService()
+    adopted = service2.get_background_execution(run.id, "orchexec-adopt-after-restart")
+
+    assert adopted.status == OrchestrationExecutionStatus.completed
+    assert adopted.supervisor_id == service2.supervisor_id
+    assert adopted.result is not None
+    assert adopted.result.stopped_reason == "waiting_for_agents"
+    event = next(
+        event
+        for event in event_log.list(LogEventType.task)
+        if event.message == "Adopted stale orchestration background execution."
+        and event.subject_id == "orchexec-adopt-after-restart"
+    )
+    assert event.metadata["run_id"] == run.id
+
+
+def test_background_execution_startup_cancels_expired_cancelling_execution(
+    orchestration_state,
+) -> None:
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Finalize expired cancellation after restart.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-cancelling-after-restart",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.cancelling,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    service2 = OrchestrationService()
+    cancelled = service2.get_background_execution(run.id, "orchexec-cancelling-after-restart")
+
+    assert cancelled.status == OrchestrationExecutionStatus.cancelled
+    assert cancelled.status_reason == "Orchestration background execution cancelled after restart."
+    assert cancelled.completed_at is not None
+
+
+def test_background_execution_startup_resume_keeps_existing_running_agent(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class ImmediateThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Resume without duplicating running agent.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    original_task = _task_by_id(run, "qa-validation")
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-adopt-with-running-agent",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", ImmediateThread)
+    service2 = OrchestrationService()
+    resumed_run = service2.get_run(run.id)
+    resumed_execution = service2.get_background_execution(
+        run.id,
+        "orchexec-adopt-with-running-agent",
+    )
+
+    assert resumed_run is not None
+    assert _task_by_id(resumed_run, "qa-validation").agent_id == original_task.agent_id
+    assert resumed_execution.status == OrchestrationExecutionStatus.completed
+    assert resumed_execution.result is not None
+    assert resumed_execution.result.stopped_reason == "waiting_for_agents"
+
+
+def test_background_execution_startup_does_not_resume_closed_run(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class RaisingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            raise AssertionError("Closed run should not be resumed.")
+
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Do not resume closed runs.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    closed = run.model_copy(update={"status": PlanStatus.completed})
+    service1._runs.upsert(closed)
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-closed-run-after-restart",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", RaisingThread)
+    service2 = OrchestrationService()
+    stale = service2.get_background_execution(run.id, "orchexec-closed-run-after-restart")
+
+    assert stale.status == OrchestrationExecutionStatus.stale
+    assert (
+        stale.status_reason
+        == "Stale background execution skipped because the run is not resumable."
+    )
+
+
+def test_background_execution_adoption_start_failure_finalizes_and_allows_retry(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class RaisingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            raise RuntimeError("SECRET=adoption-start-secret")
+
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    service1 = OrchestrationService()
+    run = service1.create_run(
+        OrchestrationCreateRequest(
+            objective="Fail adopted worker start safely.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    old_at = datetime.now(UTC) - timedelta(seconds=301)
+    service1._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-adoption-start-fails",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.starting,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id="previous-supervisor",
+            started_at=old_at,
+            last_heartbeat_at=old_at,
+        )
+    )
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", RaisingThread)
+    service2 = OrchestrationService()
+    failed = service2.get_background_execution(run.id, "orchexec-adoption-start-fails")
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    retry = service2.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+
+    assert failed.status == OrchestrationExecutionStatus.failed
+    assert failed.error == "RuntimeError: SECRET=[REDACTED]"
+    assert "adoption-start-secret" not in failed.model_dump_json()
+    assert retry.status == OrchestrationExecutionStatus.starting
+
+
 def test_background_execution_polling_reconciles_expired_foreign_records(
     orchestration_state,
 ) -> None:

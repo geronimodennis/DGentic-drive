@@ -120,7 +120,7 @@ class OrchestrationService:
         self._executions = JsonCollection("orchestration-executions", OrchestrationExecution)
         self._mutation_lock = RLock()
         self.supervisor_id = f"orchestration-supervisor-{uuid4()}"
-        self.reconcile_stale_background_executions()
+        self.resume_stale_background_executions()
 
     @_locked_mutation
     def create_run(
@@ -446,13 +446,8 @@ class OrchestrationService:
                 "stop_on_blocked": request.stop_on_blocked,
             },
         )
-        worker = Thread(
-            target=self._run_background_execution,
-            args=(saved.id, actor, include_all),
-            daemon=True,
-        )
         try:
-            worker.start()
+            self._start_background_worker(saved.id, actor=actor, include_all=include_all)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             self._finalize_background_execution(
@@ -561,6 +556,68 @@ class OrchestrationService:
                     "current_supervisor_id": self.supervisor_id,
                 },
             )
+
+    def resume_stale_background_executions(self) -> None:
+        now = datetime.now(UTC)
+        resumable_run_ids = {
+            run.id for run in self._runs.list() if run.status not in TERMINAL_RUN_STATUSES
+        }
+        adopted_executions, cancelled_executions, stale_executions = self._executions.transact(
+            lambda items: self._adopt_stale_background_executions(
+                items,
+                now=now,
+                resumable_run_ids=resumable_run_ids,
+            )
+        )
+        for stale_execution in stale_executions:
+            event_log.record(
+                LogEventType.task,
+                "Marked duplicate stale orchestration background execution during adoption.",
+                subject_id=stale_execution.id,
+                metadata={
+                    "run_id": stale_execution.run_id,
+                    "previous_supervisor_id": stale_execution.supervisor_id,
+                    "current_supervisor_id": self.supervisor_id,
+                },
+            )
+        for cancelled_execution in cancelled_executions:
+            event_log.record(
+                LogEventType.task,
+                "Cancelled stale orchestration background execution during adoption.",
+                subject_id=cancelled_execution.id,
+                metadata={
+                    "run_id": cancelled_execution.run_id,
+                    "previous_supervisor_id": cancelled_execution.supervisor_id,
+                    "current_supervisor_id": self.supervisor_id,
+                },
+            )
+        for adopted_execution in adopted_executions:
+            event_log.record(
+                LogEventType.task,
+                "Adopted stale orchestration background execution.",
+                actor=adopted_execution.requested_by or "system",
+                subject_id=adopted_execution.id,
+                metadata={
+                    "run_id": adopted_execution.run_id,
+                    "supervisor_id": adopted_execution.supervisor_id,
+                    "max_iterations": adopted_execution.request.max_iterations,
+                    "stop_on_blocked": adopted_execution.request.stop_on_blocked,
+                },
+            )
+            try:
+                self._start_background_worker(
+                    adopted_execution.id,
+                    actor=adopted_execution.requested_by,
+                    include_all=True,
+                )
+            except Exception as exc:
+                self._finalize_background_execution(
+                    adopted_execution.id,
+                    status=OrchestrationExecutionStatus.failed,
+                    status_reason="Adopted orchestration background execution failed to start.",
+                    error=f"{type(exc).__name__}: {exc}",
+                    actor=adopted_execution.requested_by,
+                )
 
     @_locked_mutation
     def update_task(
@@ -1167,6 +1224,105 @@ class OrchestrationService:
             stale_executions.append(stale_execution)
             updated_executions.append(stale_execution)
         return updated_executions, stale_executions
+
+    def _adopt_stale_background_executions(
+        self,
+        executions: list[OrchestrationExecution],
+        *,
+        now: datetime,
+        resumable_run_ids: set[str],
+    ) -> tuple[
+        list[OrchestrationExecution],
+        tuple[
+            list[OrchestrationExecution],
+            list[OrchestrationExecution],
+            list[OrchestrationExecution],
+        ],
+    ]:
+        adopted_executions: list[OrchestrationExecution] = []
+        cancelled_executions: list[OrchestrationExecution] = []
+        stale_executions: list[OrchestrationExecution] = []
+        adopted_run_ids: set[str] = set()
+        updated_executions: list[OrchestrationExecution] = []
+        for execution in executions:
+            if not _should_mark_background_execution_stale(
+                execution,
+                supervisor_id=self.supervisor_id,
+                now=now,
+            ):
+                updated_executions.append(execution)
+                continue
+            if execution.status == OrchestrationExecutionStatus.cancelling:
+                cancelled_execution = execution.model_copy(
+                    update={
+                        "status": OrchestrationExecutionStatus.cancelled,
+                        "status_reason": (
+                            "Orchestration background execution cancelled after restart."
+                        ),
+                        "error": None,
+                        "completed_at": now,
+                        "last_heartbeat_at": now,
+                    }
+                )
+                cancelled_executions.append(cancelled_execution)
+                updated_executions.append(cancelled_execution)
+                continue
+            if execution.run_id not in resumable_run_ids:
+                stale_execution = execution.model_copy(
+                    update={
+                        "status": OrchestrationExecutionStatus.stale,
+                        "status_reason": (
+                            "Stale background execution skipped because the run is not resumable."
+                        ),
+                        "completed_at": now,
+                        "last_heartbeat_at": now,
+                    }
+                )
+                stale_executions.append(stale_execution)
+                updated_executions.append(stale_execution)
+                continue
+            if execution.run_id in adopted_run_ids:
+                stale_execution = execution.model_copy(
+                    update={
+                        "status": OrchestrationExecutionStatus.stale,
+                        "status_reason": (
+                            "Duplicate stale background execution skipped during adoption."
+                        ),
+                        "completed_at": now,
+                        "last_heartbeat_at": now,
+                    }
+                )
+                stale_executions.append(stale_execution)
+                updated_executions.append(stale_execution)
+                continue
+            adopted_execution = execution.model_copy(
+                update={
+                    "status": OrchestrationExecutionStatus.starting,
+                    "supervisor_id": self.supervisor_id,
+                    "status_reason": ("Orchestration background execution adopted after restart."),
+                    "error": None,
+                    "completed_at": None,
+                    "last_heartbeat_at": now,
+                }
+            )
+            adopted_run_ids.add(execution.run_id)
+            adopted_executions.append(adopted_execution)
+            updated_executions.append(adopted_execution)
+        return updated_executions, (adopted_executions, cancelled_executions, stale_executions)
+
+    def _start_background_worker(
+        self,
+        execution_id: str,
+        *,
+        actor: str | None,
+        include_all: bool,
+    ) -> None:
+        worker = Thread(
+            target=self._run_background_execution,
+            args=(execution_id, actor, include_all),
+            daemon=True,
+        )
+        worker.start()
 
     def _run_background_execution(
         self,

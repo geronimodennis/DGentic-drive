@@ -266,7 +266,7 @@ Definition of Done:
 - README, setup docs, provider architecture docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: Ollama and LM Studio health checks, local generation calls, and scored routing are available for the backend MVP.
+- Completed for Sprint 12 scope: Ollama and LM Studio health checks, local generation calls, scored routing, OpenAI-compatible external adapter support, streaming, retry/backoff, circuit breakers, approval controls, safe telemetry, pricing estimates, and role-routing are implemented for the backend MVP.
 - Completed: BL-006a provider egress policy and safe telemetry, including exact provider base URL allowlist enforcement for generation and health probes, redirect blocking, safe display of configured base URLs, disabled/non-routable external placeholder behavior, generic malformed-upstream API failures, provider completion logs without raw content, and whitelisted response metadata with preserved numeric usage counters.
 - Completed: BL-006b shared provider transport and bounded retry/backoff for generation, including deterministic retry policy settings, retry-after parsing/capping, generic rate-limit and upstream failure API mapping, safe retry metadata logging, no retries for policy/unsupported/malformed/ordinary 4xx failures, and no-retry health probes.
 - Completed: BL-006c OpenAI-compatible external provider adapter boundary, including disabled-by-default HTTPS configuration, env-var-referenced bearer credential, explicit external-generation approval checks, model allowlist enforcement, provider-scoped egress allowlist, no live external health probe, external routing when configured and policy-allowed, privacy routing exclusion, and credential no-leak tests.
@@ -279,7 +279,32 @@ Current implementation status:
 - Completed: BL-006j provider pricing catalog and advisory cost estimation, including bounded exact provider/model pricing configuration, usage-based external cost estimates for non-streaming and streaming responses, routing request estimates, invalid-catalog fail-closed behavior before transport, and no-content/no-secret log coverage.
 - Completed: BL-006k external credential-resolution ordering hardening, including deferred external API-key/header construction until pricing/configuration/circuit/approval gates allow transport, approval preservation for fail-fast paths before transport eligibility, and runtime/API regressions that prove rejected paths do not read credential values.
 - Completed: BL-006l provider role-routing policy, including bounded `DGENTIC_PROVIDER_ROLE_ROUTING` parsing, exact role-to-provider/model preferences, normal eligibility enforcement for configured role routes, fail-closed invalid configuration before probes, and no-silent-fallback behavior for blocked role routes.
-- Remaining: encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, durable multi-worker circuit state, and provider billing reconciliation beyond advisory estimates.
+- Moved to follow-up backlog: encrypted credential storage or secret-manager integration is tracked under BL-009/Sprint 15, durable multi-worker circuit state is tracked under BL-012/Sprint 18 deployment work, provider-specific billing reconciliation remains future operations/provider-specific work, and named provider-specific adapters beyond OpenAI-compatible chat completions are tracked under BL-013/Sprint 19.
+
+### BL-013: Provider-Specific External Adapter Expansion
+
+Feature group: Provider system follow-up.
+
+User value:
+- Operators may eventually want first-class adapters for specific AI providers when OpenAI-compatible endpoints are not enough.
+
+Needs to be done:
+- Select concrete provider targets based on product need, account availability, and API-contract differences.
+- Add provider-specific request/stream/usage adapters only when they need behavior not covered by the generic OpenAI-compatible adapter.
+- Preserve existing provider egress, approval, retry, circuit, pricing, role-routing, and safe telemetry controls.
+- Add provider-specific usage/cost normalization and error mapping where APIs differ materially.
+
+Acceptance criteria:
+- A named adapter can be configured, routed, approved, called, streamed if supported, and monitored without leaking credentials or raw prompt/completion content.
+- The adapter fails closed on invalid config, unsupported models, and policy-blocked routes.
+- Tests cover adapter success, failure, streaming if supported, usage/cost metadata, approval paths, no-secret logs, and routing behavior.
+
+Definition of Done:
+- Tests, README, setup docs, architecture docs, and progress log are updated for each named adapter.
+- Security review confirms no credential, prompt, or provider-controlled metadata leak paths.
+
+Current implementation status:
+- Not yet implemented: named Google AI, DeepSeek, Anthropic, Copilot, or other provider-specific adapters. The generic OpenAI-compatible external adapter remains the supported Sprint 12 external-provider path.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -541,7 +566,7 @@ Exit criteria:
 - Security tests pass for sandbox, environment, filesystem, and permission boundaries.
 
 Current Sprint 11 status:
-- In progress: Sprint 11 started with BL-005a registry integration and execution permission hardening.
+- Closed: Sprint 11 completed the scoped generated-tool runtime safety and registry integration exit criteria for the MVP backend.
 - Completed: generated-tool SQL registry auto-registration, duplicate preflight, no file writes on SQL duplicate conflicts, deprecated registry row blocking, permission conflict fail-closed behavior, and reduced inherited subprocess environment.
 - Completed: tool execution stdout/stderr/parsed-output redaction and execution audit events without raw output or payload content.
 - Completed: bound approval records for approval-required generated tools outside development/test mode, including payload/context/full-artifact-tree binding, safe review endpoints, and a separate `approvals` capability for approval decisions when auth is enabled.
@@ -564,6 +589,10 @@ Exit criteria:
 - Credentials are protected.
 - Streaming, retry, rate-limit, and routing tests pass.
 - Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist; BL-006d adds OpenAI-compatible streaming for LM Studio and the configured external adapter; BL-006e adds bound provider approval records for external generation in staging/production; BL-006f adds Ollama streaming; BL-006g adds provider request and upstream response payload validation; BL-006h adds normalized usage/cost metadata and max-cost routing ceilings; BL-006i adds in-process provider circuit breakers; BL-006j adds bounded provider/model pricing estimates for external usage and routing; BL-006k hardens external credential-resolution ordering so fail-fast paths avoid API-key lookup/header construction; BL-006l adds bounded role-to-provider/model routing preferences.
+
+Current Sprint 12 status:
+- Closed: Sprint 12 completed the scoped provider productionization exit criteria for the backend MVP.
+- Moved to follow-up backlog: encrypted credential storage or secret-manager integration to Sprint 15, durable multi-worker circuit state to Sprint 18, provider-specific billing reconciliation to future operations/provider-specific work, and named provider-specific external adapters to Sprint 19 after a concrete provider target is selected.
 
 ### Sprint 13: Memory Production Lifecycle
 
@@ -650,6 +679,18 @@ Exit criteria:
 - Multi-worker CLI deployments either have DB-backed process ownership lease validation or are explicitly constrained to a single backend worker.
 - Rollback workflow is documented and smoke-verified.
 
+### Sprint 19: Provider-Specific External Adapter Expansion
+
+Goal:
+- Add first-class named external adapters only when the generic OpenAI-compatible adapter does not satisfy a concrete provider requirement.
+
+Stories:
+- BL-013: Provider-Specific External Adapter Expansion.
+
+Exit criteria:
+- At least one selected named adapter has a documented configuration contract, guarded generation/streaming support where applicable, approval-safe credential handling, routing integration, no-secret telemetry, and provider-specific tests.
+- Existing OpenAI-compatible provider contracts remain backward compatible.
+
 ## Not-Yet-Implemented Coverage Map
 
 - Web frontend/dashboard: BL-010, Sprint 16.
@@ -657,7 +698,7 @@ Exit criteria:
 - Dedicated CLI client interface: BL-011, Sprint 17.
 - Interactive approval UI: BL-010, Sprint 16.
 - Production deployment infrastructure and CI/CD pipeline: BL-012, Sprint 18.
-- External AI provider adapters beyond current local-provider runtime contracts: BL-006, Sprint 12.
+- Provider-specific external AI adapters beyond the generic OpenAI-compatible adapter: BL-013, Sprint 19.
 - Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15.
 - Network/domain guardrails: BL-009, Sprint 15.
 - Full autonomous backlog management and sprint execution inside the backend runtime: BL-008, Sprint 14.

@@ -4,6 +4,31 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 Provider Productionization Closeout
+
+Status: closed for the scoped backend MVP provider-production contract.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM reviewed BL-006a through BL-006l and confirmed Sprint 12 exit criteria are met for secure external-provider support, protected credentials, streaming, retry/rate-limit behavior, circuit breaking, routing, and no-secret telemetry.
+- Completed: PM reclassified remaining provider-adjacent work so Sprint 12 can close without pulling in later-sprint dependencies.
+- Completed: Encrypted credential storage or secret-manager integration remains tracked under BL-009/Sprint 15.
+- Completed: Durable multi-worker provider circuit state remains tracked under BL-012/Sprint 18 deployment and observability work.
+- Completed: Named provider-specific adapters beyond the generic OpenAI-compatible adapter are tracked under new BL-013/Sprint 19 after a concrete provider target is selected.
+- Completed: Provider-specific billing reconciliation beyond advisory estimates remains future operations/provider-specific work.
+- Completed: README and backlog were updated to reflect Sprint 12 closeout and Sprint 13 as the next planned sprint.
+
+Validation:
+- Sprint 12 final BL-006l checkpoint `f621e70` passed `uv --cache-dir .uv-cache run pytest -q` with 648 tests and 2 skipped.
+- Sprint 12 final BL-006l checkpoint passed `uv --cache-dir .uv-cache run ruff check .`.
+- Sprint 12 final BL-006l checkpoint passed `uv --cache-dir .uv-cache run ruff format --check .`.
+- Sprint 12 final BL-006l checkpoint passed `git diff --check` with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Start Sprint 13: Memory Production Lifecycle, beginning with a current-state assessment of memory storage, retrieval contracts, migrations, lifecycle gaps, and the smallest safe production-memory slice.
+
 ### Sprint 12 BL-006l Provider Role Routing Policy
 
 Status: completed for the scoped provider role-routing policy; stable checkpoint committed and pushed.
@@ -1471,18 +1496,19 @@ Status: completed; PM mapped all current root README not-yet-implemented items i
 
 Checklist:
 - Completed: Reviewed the root README not-yet-implemented list.
-- Completed: Confirmed external AI provider adapters are covered by BL-006 / Sprint 12.
+- Completed: Confirmed generic external AI provider adapter productionization is covered by BL-006 / Sprint 12; named provider-specific adapter expansion is now tracked separately under BL-013 / Sprint 19.
 - Completed: Confirmed full autonomous backlog management and sprint execution are covered by BL-008 / Sprint 14.
 - Completed: Added BL-009 for production identity, secret management, encrypted credentials, token rotation, and network/domain guardrails.
 - Completed: Added BL-010 for cross-platform web UI, dashboard, settings, and interactive approval UI.
 - Completed: Added BL-011 for VS Code extension and dedicated CLI client.
 - Completed: Added BL-012 for production deployment, CI/CD, observability, monitoring, alerting, and rollback.
-- Completed: Extended the proposed sprint sequence through Sprint 18.
+- Completed: Extended the proposed sprint sequence through Sprint 19.
 - Completed: Updated the Agile task plan with the extended sprint sequence and dedicated CLI client story.
 - Completed: Updated the root README not-yet-implemented list with planned sprint coverage.
 
 Sprint coverage decisions:
-- Sprint 12: External AI provider adapters.
+- Sprint 12: Provider productionization with a generic OpenAI-compatible external adapter.
+- Sprint 19: Provider-specific external adapter expansion after a concrete provider target is selected.
 - Sprint 14: Full autonomous backlog management and sprint execution.
 - Sprint 15: Production identity, secrets, and network guardrails.
 - Sprint 16: Cross-platform UI, dashboard, settings, and interactive approval experience.

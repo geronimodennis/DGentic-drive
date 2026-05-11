@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from dgentic.events import event_log
+from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import LogEventType
 from dgentic.settings import Settings, get_settings
 from dgentic.storage import JsonCollection
@@ -126,6 +127,11 @@ class AuthTokenRequest(BaseModel):
     def expires_at_must_be_utc(cls, value: datetime | None) -> datetime | None:
         return _as_utc_datetime(value)
 
+    @field_validator("label")
+    @classmethod
+    def label_must_be_redacted(cls, value: str) -> str:
+        return redact_sensitive_values(value.strip())
+
 
 class AuthTokenRotateRequest(BaseModel):
     label: str | None = Field(default=None, max_length=120)
@@ -146,6 +152,13 @@ class AuthTokenRotateRequest(BaseModel):
     @classmethod
     def expires_at_must_be_utc(cls, value: datetime | None) -> datetime | None:
         return _as_utc_datetime(value)
+
+    @field_validator("label")
+    @classmethod
+    def label_must_be_redacted(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return redact_sensitive_values(value.strip())
 
 
 class OperatorRequest(BaseModel):
@@ -170,7 +183,7 @@ class OperatorRequest(BaseModel):
     @field_validator("display_name", "role")
     @classmethod
     def text_fields_must_be_stripped(cls, value: str) -> str:
-        return value.strip()
+        return redact_sensitive_values(value.strip())
 
 
 class OperatorUpdateRequest(BaseModel):
@@ -194,7 +207,7 @@ class OperatorUpdateRequest(BaseModel):
     def text_fields_must_be_stripped(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return value.strip()
+        return redact_sensitive_values(value.strip())
 
 
 class OperatorRecord(BaseModel):
@@ -216,6 +229,11 @@ class OperatorRecord(BaseModel):
     @classmethod
     def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
         return list(_normalize_capabilities(value, validate_known=True))
+
+    @field_validator("display_name", "role")
+    @classmethod
+    def text_fields_must_be_redacted(cls, value: str) -> str:
+        return _redact_auth_metadata_text(value)
 
     @field_validator("created_at", "updated_at", "deactivated_at")
     @classmethod
@@ -257,6 +275,11 @@ class AuthTokenRecord(BaseModel):
         if not stripped:
             raise ValueError("operator_id must not be blank.")
         return stripped
+
+    @field_validator("label")
+    @classmethod
+    def label_must_be_redacted(cls, value: str) -> str:
+        return _redact_auth_metadata_text(value)
 
     @field_validator("created_at", "updated_at", "expires_at", "revoked_at", "last_used_at")
     @classmethod
@@ -685,7 +708,7 @@ def _token_view(record: AuthTokenRecord) -> AuthTokenView:
     return AuthTokenView(
         id=record.id,
         operator_id=record.operator_id,
-        label=record.label,
+        label=_redact_auth_metadata_text(record.label),
         capabilities=list(_normalize_capabilities(record.capabilities)),
         status=record.status,
         created_at=record.created_at,
@@ -701,8 +724,8 @@ def _token_view(record: AuthTokenRecord) -> AuthTokenView:
 def _operator_view(record: OperatorRecord) -> OperatorView:
     return OperatorView(
         id=record.id,
-        display_name=record.display_name,
-        role=record.role,
+        display_name=_redact_auth_metadata_text(record.display_name),
+        role=_redact_auth_metadata_text(record.role),
         capabilities=list(_normalize_capabilities(record.capabilities)),
         status=record.status,
         created_at=record.created_at,
@@ -774,6 +797,10 @@ def _normalize_operator_id(value: str) -> str:
     return stripped
 
 
+def _redact_auth_metadata_text(value: str) -> str:
+    return redact_sensitive_values(value.strip())
+
+
 def _as_utc_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -824,7 +851,7 @@ def _record_auth_event(
         subject_id=record.id,
         metadata={
             "operator_id": record.operator_id,
-            "label": record.label,
+            "label": _redact_auth_metadata_text(record.label),
             "capabilities": list(_normalize_capabilities(record.capabilities)),
             "status": record.status,
             "expires_at": record.expires_at.isoformat() if record.expires_at else None,
@@ -847,8 +874,8 @@ def _record_operator_event(
         subject_id=record.id,
         metadata={
             "operator_id": record.id,
-            "display_name": record.display_name,
-            "role": record.role,
+            "display_name": _redact_auth_metadata_text(record.display_name),
+            "role": _redact_auth_metadata_text(record.role),
             "capabilities": list(_normalize_capabilities(record.capabilities)),
             "status": record.status,
             "deactivated_at": record.deactivated_at.isoformat() if record.deactivated_at else None,

@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009e Identity And Credential Metadata Redaction
+
+Status: completed for the scoped cross-surface identity, auth-token, and credential-reference metadata redaction slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, and broader audit actor propagation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM kept the work in Full Sprint mode because the slice changes security-sensitive identity, credential, response, audit, and persistence behavior.
+- Completed: Developer added source-only redaction for operator display/role fields, auth-token labels, and credential-reference labels on request validation, record load, view generation, audit metadata, and mutation persistence paths.
+- Completed: QA added tests-only coverage for new metadata writes and legacy JSON state containing secret-shaped operator display/role values, auth-token labels, and credential-reference labels.
+- Completed: Security/Reviewer found and Developer remediated the legacy persisted auth/operator metadata leak where request-only validators were insufficient.
+- Completed: Reviewer confirmed no remaining implementation leak and flagged a P3 test sequencing gap; QA split legacy token list/rotate/revoke/expire checks so each mutation starts from raw legacy state.
+- Completed: PM updated README, developer setup, usage, architecture, refined backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operator display names and roles, generated auth-token labels, and credential-reference labels redact common secret-shaped values before API responses and audit metadata.
+- Implemented in this slice: new writes and mutation rewrites persist redacted metadata for those fields; legacy read-only list/get responses are redacted without requiring a destructive migration.
+- Still out of scope after this slice: encrypted local credential vaulting, external secret-manager adapters beyond environment references, network approval records, non-provider network surfaces, richer user/group identity workflows, and full audit actor propagation.
+
+Validation:
+- Focused metadata gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py -k "legacy_persisted_auth_metadata or legacy_credential_reference_label or credential_reference_label or redacts_secret_shaped_values"` passed with 4 tests and 59 deselected.
+- Focused auth suite: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py` passed with 63 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 875 tests and 2 skipped.
+- Lint/format/diff gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with encrypted local credential vaulting or external secret-manager adapter design unless broader audit actor propagation becomes the higher-risk blocker.
+
 ### Sprint 15 BL-009d Persisted Operator Identity And Assignment
 
 Status: completed for the scoped persisted operator identity and capability-assignment slice; Sprint 15 remains active for richer identity workflows, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, audit propagation, and cross-surface no-secret-response validation.

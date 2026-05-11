@@ -6,6 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from dgentic.events import event_log
+from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import LogEventType
 from dgentic.storage import JsonCollection
 
@@ -28,7 +29,7 @@ class CredentialReferenceRequest(BaseModel):
     @field_validator("label")
     @classmethod
     def label_must_be_trimmed(cls, value: str) -> str:
-        return value.strip()
+        return _redact_credential_label(value)
 
 
 class CredentialReferenceRecord(BaseModel):
@@ -52,7 +53,7 @@ class CredentialReferenceRecord(BaseModel):
     @field_validator("label")
     @classmethod
     def label_must_be_trimmed(cls, value: str) -> str:
-        return value.strip()
+        return _redact_credential_label(value)
 
     @field_validator("created_at", "updated_at", "revoked_at")
     @classmethod
@@ -149,7 +150,7 @@ def _credential_reference_view(record: CredentialReferenceRecord) -> CredentialR
     return CredentialReferenceView(
         id=record.id,
         env_var=record.env_var,
-        label=record.label,
+        label=_redact_credential_label(record.label),
         purpose=record.purpose,
         status=record.status,
         created_at=record.created_at,
@@ -171,8 +172,12 @@ def _record_credential_event(
         subject_id=record.id,
         metadata={
             "env_var": record.env_var,
-            "label": record.label,
+            "label": _redact_credential_label(record.label),
             "purpose": record.purpose,
             "status": record.status,
         },
     )
+
+
+def _redact_credential_label(value: str) -> str:
+    return redact_sensitive_values(value.strip())

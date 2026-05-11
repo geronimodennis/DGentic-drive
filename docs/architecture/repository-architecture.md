@@ -68,7 +68,7 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
-- `auth.py`: Production/staging bearer-token authentication, route capability mapping, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, operator assignment checks for token issuance/authentication, and startup fail-closed configuration validation.
+- `auth.py`: Production/staging bearer-token authentication, route capability mapping, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, operator assignment checks for token issuance/authentication, startup fail-closed configuration validation, and secret-shaped metadata redaction for operator display/role fields plus generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
 - `api/routes.py`: HTTP routes for health checks, persisted operator/auth-token and credential-reference management, tasks, orchestration runs and detached orchestration execution polling, filesystem/command/network guardrails, CLI policy and approvals, provider approvals, providers, routing, owner-scoped orchestration agent reads, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`, including service-authored orchestration shared-memory metadata protections and owner/admin read scoping when auth is enabled.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, detached orchestration execution records, explicit orchestration shared-memory tags and reuse policy, guardrails, network policy decisions, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, logs, auth/operator audit events, and credential audit events.
@@ -86,7 +86,7 @@ Current modules:
 - `provider_transport.py`: Shared provider JSON and streaming transport with bounded retry/backoff before response streaming starts, safe upstream error types, retry metadata, and no-retry health-probe support.
 - `providers.py`: Provider registry, policy-validated Ollama/LM Studio health and model probes, disabled external placeholder, config-only OpenAI-compatible external provider status through configured credential references or env-var fallback, pricing-aware provider estimates, role-aware provider/model routing, and scored routing decisions.
 - `provider_runtime.py`: Ollama, LM Studio, and OpenAI-compatible external chat/completion request execution with provider endpoint and network-domain policy enforcement, Ollama/OpenAI-compatible streaming, bounded retry/backoff, in-process circuit breakers, deferred credential-safe headers for external fail-fast paths, external credential-reference resolution at transport time, model allowlist checks, single-use bound external provider approvals, advisory usage-based cost estimates, and safe response telemetry.
-- `credentials.py`: Persisted references to externally managed credential locations, currently environment variables, with lifecycle/audit helpers and no raw secret-value storage.
+- `credentials.py`: Persisted references to externally managed credential locations, currently environment variables, with lifecycle/audit helpers, no raw secret-value storage, and secret-shaped label redaction before responses, credential audit metadata, and new or mutated JSON persistence.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD/upsert service, lifecycle policy service, deterministic compression service, optional embedding service, vector backend contract/default SQLite implementation, and retrieval service contracts.
@@ -275,6 +275,7 @@ Current collections:
 
 - `task-plans.json`
 - `task-runs.json`
+- `operators.json`
 - `auth-tokens.json`
 - `credential-references.json`
 - `orchestrations.json`

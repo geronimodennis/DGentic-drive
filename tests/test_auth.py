@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -301,6 +302,210 @@ def test_operator_identity_lifecycle_is_persisted_and_safe(
     assert "token_hash" not in create_response.text
     assert "bootstrap-token" not in state_text
     assert "bootstrap-token" not in json.dumps([event.model_dump(mode="json") for event in logs])
+
+
+def test_auth_operator_and_token_metadata_redacts_secret_shaped_values(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+
+    operator_response = client.post(
+        "/auth/operators",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "display_name": "TOKEN=operator-display-secret",
+            "role": "password=operator-role-secret",
+            "capabilities": ["tasks"],
+        },
+    )
+    token_response = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "label": "api_key=token-label-secret",
+            "capabilities": ["tasks"],
+        },
+    )
+    list_response = client.get("/auth/tokens", headers=bearer("bootstrap-token"))
+    state_text = (tmp_path / "state" / "auth-tokens.json").read_text(encoding="utf-8")
+    operator_state_text = (tmp_path / "state" / "operators.json").read_text(encoding="utf-8")
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.auth)]
+    )
+
+    serialized = "\n".join(
+        [
+            operator_response.text,
+            token_response.text,
+            list_response.text,
+            state_text,
+            operator_state_text,
+            logs,
+        ]
+    )
+
+    assert operator_response.status_code == 201
+    assert token_response.status_code == 201
+    assert "operator-display-secret" not in serialized
+    assert "operator-role-secret" not in serialized
+    assert "token-label-secret" not in serialized
+    assert "[REDACTED]" in serialized
+
+
+def test_legacy_persisted_auth_metadata_is_redacted_on_load_and_mutation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def seeded_client(
+        scenario: str,
+        *,
+        token_id: str,
+        raw_token: str,
+        label: str,
+    ) -> tuple[TestClient, Path]:
+        root_dir = tmp_path / scenario / "workspace"
+        data_dir = tmp_path / scenario / "state"
+        root_dir.mkdir(parents=True)
+        data_dir.mkdir(parents=True)
+        now = datetime.now(UTC).isoformat()
+        (data_dir / "operators.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "operator-legacy",
+                        "display_name": "TOKEN=legacy-display-secret",
+                        "role": "password=legacy-role-secret",
+                        "capabilities": ["tasks"],
+                        "status": "active",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (data_dir / "auth-tokens.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": token_id,
+                        "operator_id": "operator-legacy",
+                        "label": label,
+                        "token_hash": f"sha256:{sha256(raw_token.encode('utf-8')).hexdigest()}",
+                        "capabilities": ["tasks"],
+                        "operator_profile_required": True,
+                        "status": "active",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+        monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+        monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "bootstrap-token=admin")
+        get_settings.cache_clear()
+        return TestClient(create_app()), data_dir
+
+    read_client, _read_data_dir = seeded_client(
+        "read",
+        token_id="auth-token-list",
+        raw_token="legacy-list-token",
+        label="api_key=legacy-list-secret",
+    )
+    token_list_response = read_client.get("/auth/tokens", headers=bearer("bootstrap-token"))
+    operator_get_response = read_client.get(
+        "/auth/operators/operator-legacy",
+        headers=bearer("bootstrap-token"),
+    )
+    operator_list_response = read_client.get("/auth/operators", headers=bearer("bootstrap-token"))
+    read_serialized = "\n".join(
+        [token_list_response.text, operator_get_response.text, operator_list_response.text]
+    )
+
+    assert token_list_response.status_code == 200
+    assert operator_get_response.status_code == 200
+    assert operator_list_response.status_code == 200
+    assert "legacy-list-secret" not in read_serialized
+    assert "legacy-display-secret" not in read_serialized
+    assert "legacy-role-secret" not in read_serialized
+    assert "[REDACTED]" in read_serialized
+
+    for scenario, endpoint, expected_label, leaked_value in [
+        (
+            "rotate",
+            "/auth/tokens/auth-token-rotate/rotate",
+            "api_key=[REDACTED]",
+            "legacy-rotate-secret",
+        ),
+        (
+            "revoke",
+            "/auth/tokens/auth-token-revoke/revoke",
+            "TOKEN=[REDACTED]",
+            "legacy-revoke-secret",
+        ),
+        (
+            "expire",
+            "/auth/tokens/auth-token-expire/expire",
+            "password=[REDACTED]",
+            "legacy-expire-secret",
+        ),
+    ]:
+        client, data_dir = seeded_client(
+            scenario,
+            token_id=f"auth-token-{scenario}",
+            raw_token=f"legacy-{scenario}-token",
+            label=expected_label.replace("[REDACTED]", leaked_value),
+        )
+        if scenario == "rotate":
+            response = client.post(
+                endpoint,
+                headers=bearer("bootstrap-token"),
+                json={"capabilities": ["tasks"]},
+            )
+            response_label = response.json()["record"]["label"]
+        else:
+            response = client.post(endpoint, headers=bearer("bootstrap-token"))
+            response_label = response.json()["label"]
+        state_text = data_dir.joinpath("auth-tokens.json").read_text(encoding="utf-8")
+        logs = json.dumps(
+            [event.model_dump(mode="json") for event in event_log.list(LogEventType.auth)]
+        )
+        serialized = "\n".join([response.text, state_text, logs])
+
+        assert response.status_code == 200
+        assert response_label == expected_label
+        assert leaked_value not in serialized
+        assert "[REDACTED]" in serialized
+
+    patch_client, patch_data_dir = seeded_client(
+        "operator-patch",
+        token_id="auth-token-operator-patch",
+        raw_token="legacy-operator-patch-token",
+        label="tasks",
+    )
+    operator_patch_response = patch_client.patch(
+        "/auth/operators/operator-legacy",
+        headers=bearer("bootstrap-token"),
+        json={"status": "inactive"},
+    )
+    patch_state_text = patch_data_dir.joinpath("operators.json").read_text(encoding="utf-8")
+    patch_logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.auth)]
+    )
+    patch_serialized = "\n".join([operator_patch_response.text, patch_state_text, patch_logs])
+
+    assert operator_patch_response.status_code == 200
+    assert operator_patch_response.json()["display_name"] == "TOKEN=[REDACTED]"
+    assert operator_patch_response.json()["role"] == "password=[REDACTED]"
+    assert "legacy-display-secret" not in patch_serialized
+    assert "legacy-role-secret" not in patch_serialized
+    assert "[REDACTED]" in patch_serialized
 
 
 def test_operator_assignment_limits_token_issuance(
@@ -814,6 +1019,92 @@ def test_credential_reference_lifecycle_requires_capability_and_never_stores_sec
     assert "external-api-key-secret" not in json.dumps(
         [event.model_dump(mode="json") for event in logs]
     )
+
+
+def test_credential_reference_label_redacts_secret_shaped_values(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_TEST_EXTERNAL_KEY", "external-api-key-secret")
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    create_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "env_var": "DGENTIC_TEST_EXTERNAL_KEY",
+            "label": "api_key=credential-label-secret",
+        },
+    )
+    list_response = client.get(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+    )
+    state_text = (tmp_path / "state" / "credential-references.json").read_text(encoding="utf-8")
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+    serialized = "\n".join([create_response.text, list_response.text, state_text, logs])
+
+    assert create_response.status_code == 201
+    assert "credential-label-secret" not in serialized
+    assert "external-api-key-secret" not in serialized
+    assert "[REDACTED]" in serialized
+
+
+def test_legacy_credential_reference_label_is_redacted_on_load_and_mutation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    data_dir.mkdir()
+    now = datetime.now(UTC).isoformat()
+    monkeypatch.setenv("DGENTIC_LEGACY_EXTERNAL_KEY", "legacy-env-secret")
+    (data_dir / "credential-references.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "credential-ref-legacy",
+                    "env_var": "DGENTIC_LEGACY_EXTERNAL_KEY",
+                    "label": "api_key=legacy-credential-secret",
+                    "purpose": "provider",
+                    "status": "active",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "bootstrap-token=admin")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    list_response = client.get("/credentials/references", headers=bearer("bootstrap-token"))
+    revoke_response = client.post(
+        "/credentials/references/credential-ref-legacy/revoke",
+        headers=bearer("bootstrap-token"),
+    )
+    state_text = (data_dir / "credential-references.json").read_text(encoding="utf-8")
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+    serialized = "\n".join([list_response.text, revoke_response.text, state_text, logs])
+
+    assert list_response.status_code == 200
+    assert revoke_response.status_code == 200
+    assert list_response.json()[0]["label"] == "api_key=[REDACTED]"
+    assert revoke_response.json()["label"] == "api_key=[REDACTED]"
+    assert "legacy-credential-secret" not in serialized
+    assert "legacy-env-secret" not in serialized
+    assert "[REDACTED]" in serialized
 
 
 def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(

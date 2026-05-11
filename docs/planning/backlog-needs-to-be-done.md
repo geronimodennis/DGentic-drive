@@ -233,7 +233,8 @@ Current implementation status:
 - Completed: BL-005a generated-tool SQL registry integration and execution permission hardening, including generated-tool duplicate preflight against SQL registry rows/interface signatures, generated-tool auto-registration in the SQLAlchemy registry, one registry row per generated tool name, no file writes on SQL duplicate conflicts, execution-time SQL registry deprecation blocking, permission conflict fail-closed behavior, and a reduced inherited subprocess environment.
 - Completed: BL-005b tool execution output and audit redaction, including stdout/stderr/parsed-output redaction for common secret-shaped values, safer flag redaction after other secret assignments, and tool execution audit events that avoid raw output and payload content.
 - Completed: BL-005c bound tool approval records, including redacted payload review records, payload/full-artifact-tree/approval HMAC digests, single-use approval IDs for approval-required tools outside development/test mode, approved-boolean rejection in production/staging, payload/context/artifact binding, decision reason and identity/context redaction, separate `approvals` capability for approve/deny when auth is enabled, and API review/approve/deny/list endpoints.
-- Remaining: stronger OS/process sandbox isolation, per-tool dependency isolation, richer version migration policy beyond one registry row per tool name, and reliability-score policy automation.
+- Completed: BL-005d runtime reliability policy automation, including SQL registry usage counter sync on actual generated-tool execution, warning events after enough low-reliability evidence, automatic disabling for repeatedly weak tools, automatic deprecation for very low-reliability tools, and no counter increments for pre-execution approval/permission blocks.
+- Remaining: stronger OS/process sandbox isolation, per-tool dependency isolation, and richer version migration policy beyond one registry row per tool name.
 
 ### BL-006: Provider System Productionization
 
@@ -529,7 +530,8 @@ Current Sprint 11 status:
 - Completed: generated-tool SQL registry auto-registration, duplicate preflight, no file writes on SQL duplicate conflicts, deprecated registry row blocking, permission conflict fail-closed behavior, and reduced inherited subprocess environment.
 - Completed: tool execution stdout/stderr/parsed-output redaction and execution audit events without raw output or payload content.
 - Completed: bound approval records for approval-required generated tools outside development/test mode, including payload/context/full-artifact-tree binding, safe review endpoints, and a separate `approvals` capability for approval decisions when auth is enabled.
-- Remaining: stronger OS/process sandbox isolation, per-tool dependency isolation, and reliability-score policy automation.
+- Completed: runtime reliability policy automation for actual generated-tool execution, including SQL usage sync, warning events, auto-disable, and auto-deprecation.
+- Remaining: stronger OS/process sandbox isolation, per-tool dependency isolation, and richer version migration policy.
 
 ### Sprint 12: Provider Productionization
 

@@ -4,9 +4,59 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005d Runtime Reliability Policy Automation
+
+Status: completed for the scoped runtime reliability policy slice; Sprint 11 remains open for sandboxing, dependency isolation, and richer version migration policy.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected reliability-score policy automation as the next Sprint 11 slice after the pushed BL-005c checkpoint.
+- Completed: Architect explorer reviewed current JSON/SQL reliability tracking and recommended evidence-gated policy thresholds plus SQL registry usage sync for actual tool executions.
+- Completed: Developer updated production source only for runtime reliability policy actions, SQL registry usage sync, SQL deprecation sync for very low-reliability generated tools, and reliability policy audit metadata.
+- Completed: QA updated tests only for warning, automatic disable, automatic deprecation, SQL usage sync, and SQL deprecation sync behavior.
+- Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
+- Pending: Checkpoint commit and push for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: actual generated-tool executions sync usage, success, failure, and reliability score into the SQL registry row when one exists.
+- Implemented in this slice: reliability policy waits for at least five runtime attempts before warning or disabling a tool, so a single bad run does not trigger governance automation.
+- Implemented in this slice: tools with low but still usable reliability emit warning audit events while remaining active.
+- Implemented in this slice: repeatedly weak tools are automatically disabled in the JSON manifest and rejected on later execution.
+- Implemented in this slice: very low-reliability tools with enough history are automatically deprecated in the JSON manifest and the SQL registry row is marked deprecated when present.
+- Implemented in this slice: pre-execution blocks such as rejected approvals, deprecated tools, permission conflicts, and missing tools still do not increment reliability counters.
+
+Validation:
+- Focused reliability gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py::test_reliability_policy_warns_without_disabling_low_score_tool tests\test_tool_runtime.py::test_reliability_policy_deprecates_consistently_weak_tool tests\test_tool_runtime.py::test_reliability_policy_disables_repeatedly_failing_tool tests\test_tool_runtime.py::test_execute_tool_syncs_sql_registry_usage_and_deprecation` passed with 4 tests.
+- Focused tool/API/registry gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "tool or approval or reliability"` passed with 39 tests and 25 deselected; `uv --cache-dir .uv-cache run pytest -q tests\test_tool_registry.py` passed with 19 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\tool_runtime.py tests\test_tool_runtime.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\tool_runtime.py tests\test_tool_runtime.py` passed.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 476 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Diff hygiene gate: `git diff --check` passed with Windows line-ending warnings only.
+
+Residual risks:
+- Runtime reliability automation is scoped to actual generated-tool execution; manual SQL registry `/usage` calls still record counters without applying the same JSON tool governance action.
+- Tool execution is still a local Python subprocess without OS/process sandboxing or per-tool dependency isolation.
+- SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/tool_runtime.py`.
+- QA-owned files: `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with sandbox hardening, dependency isolation, or richer version migration policy.
+
 ### Sprint 11 BL-005c Bound Tool Approval Records
 
-Status: completed for the scoped bound-approval slice; Sprint 11 remains open for sandboxing, dependency isolation, and reliability policy automation.
+Status: completed for the scoped bound-approval slice; Sprint 11 remained open for sandboxing, dependency isolation, and reliability policy automation, with reliability policy automation completed later in BL-005d.
 
 Current story:
 - BL-005: Tool Runtime Safety And Registry Integration.
@@ -18,7 +68,7 @@ Checklist:
 - Completed: QA updated tests only for production rejection of caller-supplied approval, bound approval creation/review/approval/execution, payload mismatch rejection, single-use execution in the local JSON runtime, redacted persisted payloads and decision reasons, denied/expired approval rejection, and generated helper artifact drift invalidation.
 - Completed: Final read-only reviewer found helper/import artifact drift, missing reviewer capability boundary, unredacted identity/context fields, and a multi-process JSON claim caveat; Developer and QA resolved the first three and recorded the multi-process caveat as residual risk.
 - Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
-- Pending: Checkpoint commit and push for this Sprint 11 slice.
+- Completed: Checkpoint commit and push for this Sprint 11 slice.
 
 Feature tracking:
 - Implemented in this slice: approval-required generated tools need an approved `approval_id` outside development/test mode.
@@ -57,11 +107,11 @@ Workspace hygiene:
 - Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
 
 Next:
-- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with sandbox hardening, dependency isolation, or reliability-score policy automation.
+- Continue Sprint 11 with runtime reliability policy automation, sandbox hardening, dependency isolation, or richer version migration policy.
 
 ### Sprint 11 BL-005b Tool Execution Redaction And Audit Events
 
-Status: completed for the scoped tool-output redaction and audit slice; Sprint 11 remains open for bound approvals, sandboxing, dependency isolation, and reliability policy automation.
+Status: completed for the scoped tool-output redaction and audit slice; Sprint 11 remained open for bound approvals, sandboxing, dependency isolation, and reliability policy automation.
 
 Current story:
 - BL-005: Tool Runtime Safety And Registry Integration.

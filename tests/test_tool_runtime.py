@@ -435,6 +435,186 @@ def test_failed_tool_execution_tracks_failure_and_captured_output(
         assert raw_secret not in serialized_event
 
 
+def test_reliability_policy_warns_without_disabling_low_score_tool(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "flaky-warning",
+        tool_source=(
+            "def run(payload):\n"
+            "    if payload.get('fail'):\n"
+            "        raise RuntimeError('expected failure')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="flaky-warning",
+            description="Warns after low reliability but remains active.",
+            entrypoint="localmcp/flaky-warning/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    events_before = event_log.list(LogEventType.tool)
+
+    for should_fail in [False, False, False, True, True]:
+        execute_tool("flaky-warning", {"fail": should_fail})
+
+    stored = get_tool("flaky-warning")
+    events_after = event_log.list(LogEventType.tool)
+    policy_events = [
+        event
+        for event in events_after[len(events_before) :]
+        if event.message == "Applied generated tool reliability policy."
+    ]
+    assert stored is not None
+    assert stored.status == ToolStatus.active
+    assert stored.usage_count == 5
+    assert stored.success_count == 3
+    assert stored.failure_count == 2
+    assert stored.reliability_score == pytest.approx(0.6)
+    assert policy_events[-1].metadata["policy"] == "warn"
+
+
+def test_reliability_policy_deprecates_consistently_weak_tool(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "mostly-failing",
+        tool_source=(
+            "def run(payload):\n"
+            "    if payload.get('fail'):\n"
+            "        raise RuntimeError('expected failure')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="mostly-failing",
+            description="Should be deprecated after enough weak results.",
+            entrypoint="localmcp/mostly-failing/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+            usage_count=9,
+            failure_count=9,
+            reliability_score=0.0,
+        )
+    )
+
+    execute_tool("mostly-failing", {"fail": True})
+
+    stored = get_tool("mostly-failing")
+    assert stored is not None
+    assert stored.status == ToolStatus.deprecated
+    assert stored.usage_count == 10
+    assert stored.failure_count == 10
+    assert stored.reliability_score == 0.0
+    assert stored.deprecated_reason == "Auto-deprecated: reliability score 0.00 after 10 runs."
+
+    with pytest.raises(PermissionError, match="deprecated"):
+        execute_tool("mostly-failing", {"fail": False})
+
+
+def test_reliability_policy_disables_repeatedly_failing_tool(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "always-failing",
+        tool_source="def run(payload):\n    raise RuntimeError('expected failure')\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="always-failing",
+            description="Should be disabled after repeated failures.",
+            entrypoint="localmcp/always-failing/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    for _ in range(5):
+        execute_tool("always-failing", {})
+
+    stored = get_tool("always-failing")
+    assert stored is not None
+    assert stored.status == ToolStatus.disabled
+    assert stored.usage_count == 5
+    assert stored.success_count == 0
+    assert stored.failure_count == 5
+    assert stored.reliability_score == 0.0
+    assert stored.deprecated_reason == "Auto-disabled: reliability score 0.00 after 5 runs."
+
+    with pytest.raises(PermissionError, match="disabled"):
+        execute_tool("always-failing", {})
+
+
+def test_execute_tool_syncs_sql_registry_usage_and_deprecation(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "sql-reliability-tool",
+        tool_source=(
+            "def run(payload):\n"
+            "    if payload.get('fail'):\n"
+            "        raise RuntimeError('expected failure')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="sql-reliability-tool",
+            description="Syncs runtime usage into the SQL registry.",
+            entrypoint="localmcp/sql-reliability-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    _register_sql_registry_tool(
+        "sql-reliability-tool",
+        permission_level="autopilot_safe",
+    )
+
+    execute_tool("sql-reliability-tool", {"fail": False})
+
+    sql_tool = _get_sql_registry_tool("sql-reliability-tool")
+    assert sql_tool is not None
+    assert sql_tool.usage_count == 1
+    assert sql_tool.success_count == 1
+    assert sql_tool.failure_count == 0
+    assert sql_tool.reliability_score == 1.0
+    assert sql_tool.deprecated is False
+
+    stored_before_deprecation = get_tool("sql-reliability-tool")
+    assert stored_before_deprecation is not None
+    register_tool(
+        stored_before_deprecation.model_copy(
+            update={
+                "usage_count": 9,
+                "success_count": 0,
+                "failure_count": 9,
+                "reliability_score": 0.0,
+            }
+        )
+    )
+
+    execute_tool("sql-reliability-tool", {"fail": True})
+
+    stored = get_tool("sql-reliability-tool")
+    deprecated_sql_tool = _get_sql_registry_tool("sql-reliability-tool")
+    assert stored is not None
+    assert stored.status == ToolStatus.deprecated
+    assert deprecated_sql_tool is not None
+    assert deprecated_sql_tool.usage_count == 2
+    assert deprecated_sql_tool.success_count == 1
+    assert deprecated_sql_tool.failure_count == 1
+    assert deprecated_sql_tool.deprecated is True
+
+
 def test_execute_tool_redacts_secret_outputs_and_records_audit_event(
     local_tool_state: tuple[Path, Path],
 ) -> None:
@@ -686,6 +866,18 @@ def _register_sql_registry_tool(
         )
         if deprecated:
             service.deprecate_tool(tool.id)
+    finally:
+        session.close()
+
+
+def _get_sql_registry_tool(name: str):
+    session = get_db_session()
+    try:
+        service = ToolRegistryService(session)
+        tool = service.get_tool_by_name(name)
+        if tool is not None:
+            session.expunge(tool)
+        return tool
     finally:
         session.close()
 

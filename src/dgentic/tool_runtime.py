@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from dgentic.database import get_db_session
 from dgentic.events import event_log
 from dgentic.memory.models import ToolManifest as RegistryToolManifest
+from dgentic.memory.schemas import ToolUsageRequest
 from dgentic.redaction import redact_metadata, redact_sensitive_values
 from dgentic.schemas import (
     LogEventType,
@@ -29,9 +30,16 @@ from dgentic.schemas import (
 from dgentic.settings import get_settings
 from dgentic.storage import JsonCollection
 from dgentic.tools import get_tool, save_tool_manifest
+from dgentic.tools.registry_service import ToolRegistryService
 
 DEFAULT_TOOL_TIMEOUT_SECONDS = 30
 DEFAULT_TOOL_APPROVAL_TTL_MINUTES = 30
+RELIABILITY_POLICY_MIN_RUNS = 5
+RELIABILITY_WARNING_THRESHOLD = 0.8
+RELIABILITY_DEPRECATE_MIN_RUNS = 10
+RELIABILITY_DEPRECATE_THRESHOLD = 0.25
+RELIABILITY_DISABLE_MIN_RUNS = 5
+RELIABILITY_DISABLE_THRESHOLD = 0.6
 TIMEOUT_EXIT_CODE = -1
 ENTRYPOINT_FILENAMES = ("wrapper.py", "tool.py")
 TOOL_APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
@@ -276,7 +284,11 @@ def execute_tool(
     redacted_output = redact_metadata(parsed_output) if parsed_output is not None else None
     stdout = _redact_stdout(stdout, redacted_output)
     stderr = redact_sensitive_values(stderr)
-    updated_manifest = _record_run(manifest, succeeded=exit_code == 0)
+    updated_manifest, reliability_policy = _record_run(
+        manifest,
+        succeeded=exit_code == 0,
+        duration_ms=duration_ms,
+    )
     _record_execution_event(
         updated_manifest,
         approval_id=bound_approval_id,
@@ -284,6 +296,7 @@ def execute_tool(
         duration_ms=duration_ms,
         stdout=stdout,
         stderr=stderr,
+        reliability_policy=reliability_policy,
         requested_by=requested_by,
         agent_id=agent_id,
         agent_role=agent_role,
@@ -900,11 +913,27 @@ def _redact_stdout(stdout: str, parsed_output: Any | None) -> str:
     return redact_sensitive_values(stdout)
 
 
-def _record_run(manifest: ToolManifest, *, succeeded: bool) -> ToolManifest:
+def _record_run(
+    manifest: ToolManifest,
+    *,
+    succeeded: bool,
+    duration_ms: int,
+) -> tuple[ToolManifest, str]:
     usage_count = manifest.usage_count + 1
     success_count = manifest.success_count + (1 if succeeded else 0)
     failure_count = manifest.failure_count + (0 if succeeded else 1)
     reliability_score = success_count / usage_count if usage_count else 1.0
+    reliability_policy = _reliability_policy_for(
+        usage_count=usage_count,
+        failure_count=failure_count,
+        reliability_score=reliability_score,
+    )
+    governance_update = _reliability_governance_update(
+        manifest,
+        policy=reliability_policy,
+        usage_count=usage_count,
+        reliability_score=reliability_score,
+    )
 
     updated = manifest.model_copy(
         update={
@@ -913,9 +942,133 @@ def _record_run(manifest: ToolManifest, *, succeeded: bool) -> ToolManifest:
             "failure_count": failure_count,
             "last_used_at": datetime.now(UTC),
             "reliability_score": reliability_score,
+            **governance_update,
         }
     )
-    return save_tool_manifest(updated)
+    saved = save_tool_manifest(updated)
+    _record_sql_registry_usage(
+        saved,
+        succeeded=succeeded,
+        duration_ms=duration_ms,
+        reliability_policy=reliability_policy,
+    )
+    if reliability_policy != "allow":
+        _record_reliability_policy_event(
+            saved,
+            policy=reliability_policy,
+            usage_count=usage_count,
+            reliability_score=reliability_score,
+        )
+    return saved, reliability_policy
+
+
+def _reliability_policy_for(
+    *,
+    usage_count: int,
+    failure_count: int,
+    reliability_score: float,
+) -> str:
+    if (
+        usage_count >= RELIABILITY_DEPRECATE_MIN_RUNS
+        and reliability_score < RELIABILITY_DEPRECATE_THRESHOLD
+    ):
+        return "deprecate"
+    if usage_count < RELIABILITY_POLICY_MIN_RUNS:
+        return "allow"
+    if failure_count >= 3 and reliability_score < RELIABILITY_DISABLE_THRESHOLD:
+        return "disable"
+    if reliability_score < RELIABILITY_WARNING_THRESHOLD:
+        return "warn"
+    return "allow"
+
+
+def _reliability_governance_update(
+    manifest: ToolManifest,
+    *,
+    policy: str,
+    usage_count: int,
+    reliability_score: float,
+) -> dict[str, Any]:
+    if manifest.status != ToolStatus.active:
+        return {}
+    if policy == "disable":
+        return {
+            "status": ToolStatus.disabled,
+            "deprecated_reason": _reliability_reason(
+                "Auto-disabled",
+                usage_count=usage_count,
+                reliability_score=reliability_score,
+            ),
+        }
+    if policy == "deprecate":
+        return {
+            "status": ToolStatus.deprecated,
+            "deprecated_reason": _reliability_reason(
+                "Auto-deprecated",
+                usage_count=usage_count,
+                reliability_score=reliability_score,
+            ),
+        }
+    return {}
+
+
+def _reliability_reason(
+    prefix: str,
+    *,
+    usage_count: int,
+    reliability_score: float,
+) -> str:
+    return f"{prefix}: reliability score {reliability_score:.2f} after {usage_count} runs."
+
+
+def _record_sql_registry_usage(
+    manifest: ToolManifest,
+    *,
+    succeeded: bool,
+    duration_ms: int,
+    reliability_policy: str,
+) -> None:
+    session = get_db_session()
+    try:
+        service = ToolRegistryService(session)
+        registry_tool = service.get_tool_by_name(manifest.name)
+        if registry_tool is None:
+            return
+        updated = service.record_usage(
+            registry_tool.id,
+            ToolUsageRequest(
+                status="success" if succeeded else "failure",
+                execution_time_ms=duration_ms,
+            ),
+        )
+        if updated is not None and reliability_policy == "deprecate":
+            service.deprecate_tool(updated.id)
+    finally:
+        session.close()
+
+
+def _record_reliability_policy_event(
+    manifest: ToolManifest,
+    *,
+    policy: str,
+    usage_count: int,
+    reliability_score: float,
+) -> None:
+    event_log.record(
+        LogEventType.tool,
+        "Applied generated tool reliability policy.",
+        subject_id=manifest.name,
+        metadata={
+            "tool_name": manifest.name,
+            "policy": policy,
+            "status": manifest.status,
+            "usage_count": usage_count,
+            "success_count": manifest.success_count,
+            "failure_count": manifest.failure_count,
+            "reliability_score": reliability_score,
+            "deprecated_reason": manifest.deprecated_reason,
+        },
+    )
 
 
 def _record_execution_event(
@@ -926,6 +1079,7 @@ def _record_execution_event(
     duration_ms: int,
     stdout: str,
     stderr: str,
+    reliability_policy: str,
     requested_by: str | None,
     agent_id: str | None,
     agent_role: str | None,
@@ -943,6 +1097,8 @@ def _record_execution_event(
             "exit_code": exit_code,
             "succeeded": exit_code == 0,
             "duration_ms": duration_ms,
+            "reliability_policy_action": reliability_policy,
+            "reliability_policy_reason": manifest.deprecated_reason,
             "requested_by": requested_by,
             "agent_id": agent_id,
             "agent_role": agent_role,

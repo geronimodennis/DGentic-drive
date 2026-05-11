@@ -435,6 +435,73 @@ def test_orchestration_api_cycle_reconciles_agent_completion(
     assert get_response.json()["tasks"][1]["status"] == "running"
 
 
+def test_orchestration_api_exposes_dependency_context_on_spawned_agent(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Coordinate TOKEN=objective-secret dependency context.",
+            "tasks": [
+                {
+                    "id": "developer-implementation",
+                    "title": "Implement SECRET=title-secret dependency context.",
+                    "description": "Produce source changes.",
+                    "role": "Developer",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "Developer work complete.",
+                },
+                {
+                    "id": "qa-validation",
+                    "title": "Validate TOKEN=qa-title-secret dependency context.",
+                    "description": "Validate source changes.",
+                    "role": "QA",
+                    "dependencies": ["developer-implementation"],
+                    "declared_write_paths": ["tests/test_orchestration.py"],
+                    "validation": "QA receives PASSWORD=validation-secret context.",
+                },
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/developer-implementation",
+        json={
+            "status": "completed",
+            "output": {
+                "summary": "plain-secret-value",
+                "credential": "SECRET=dependency-secret",
+            },
+        },
+    )
+    body = completed_response.json()
+    qa_agent_id = body["tasks"][1]["agent_id"]
+    agent_response = client.get(f"/agents/{qa_agent_id}")
+
+    assert create_response.status_code == 201
+    assert completed_response.status_code == 200
+    assert body["scheduled_task_ids"] == ["qa-validation"]
+    assert agent_response.status_code == 200
+    agent = agent_response.json()
+    serialized_context = "\n".join(agent["context"])
+    serialized_agent = json.dumps(agent)
+    assert agent["context"][0] == "Coordinate TOKEN=[REDACTED] dependency context."
+    assert agent["task"] == "Validate TOKEN=[REDACTED] dependency context."
+    assert agent["expected_output"] == "QA receives PASSWORD=[REDACTED] context."
+    assert "Dependency developer-implementation (Developer) completed" in serialized_context
+    assert "Implement SECRET=[REDACTED] dependency context" in serialized_context
+    assert '"summary": "[REDACTED]"' in serialized_context
+    assert '"credential": "[REDACTED]"' in serialized_context
+    assert "qa-title-secret" not in serialized_agent
+    assert "validation-secret" not in serialized_agent
+    assert "objective-secret" not in serialized_context
+    assert "title-secret" not in serialized_context
+    assert "dependency-secret" not in serialized_context
+    assert "plain-secret-value" not in serialized_context
+    assert agent_response.json()["required_data"] == ["developer-implementation"]
+
+
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv(

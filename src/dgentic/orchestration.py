@@ -1,12 +1,14 @@
 """Backend orchestration control plane for autonomous sprint task graphs."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from typing import Any
 from uuid import uuid4
 
 from dgentic.agents import get_agent, spawn_agent, update_agent_status
 from dgentic.events import event_log
-from dgentic.redaction import redact_sensitive_values
+from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
 from dgentic.schemas import (
     AgentBrief,
     AgentStatus,
@@ -30,6 +32,10 @@ from dgentic.schemas import (
 from dgentic.storage import JsonCollection
 
 MAX_READY_TASKS_PER_ADVANCE = 20
+MAX_DEPENDENCY_CONTEXT_CHARS = 1200
+MAX_CONTEXT_FIELD_CHARS = 1200
+MAX_CONTEXT_OUTPUT_ITEMS = 20
+MAX_CONTEXT_OUTPUT_DEPTH = 4
 TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
 RECOVERABLE_TASK_BLOCKER_SEVERITIES = {"role_boundary", "retry_exhausted"}
@@ -746,19 +752,7 @@ class OrchestrationService:
                 updated_tasks.append(task)
                 continue
 
-            agent = spawn_agent(
-                AgentBrief(
-                    role=task.role,
-                    task=task.title,
-                    task_id=task.id,
-                    context=[run.objective],
-                    constraints=[
-                        f"Declared write paths: {task.declared_write_paths or ['read-only']}"
-                    ],
-                    required_data=task.dependencies,
-                    expected_output=task.expected_output or task.validation,
-                )
-            )
+            agent = spawn_agent(_agent_brief_for_task(run, task, tasks_by_id))
             updated_tasks.append(
                 task.model_copy(update={"status": StepStatus.running, "agent_id": agent.id})
             )
@@ -833,6 +827,97 @@ def _task_from_spec(task: OrchestrationTaskSpec) -> OrchestrationTask:
         validation=task.validation,
         retry_limit=task.retry_limit,
     )
+
+
+def _agent_context_for_task(
+    run: OrchestrationRun,
+    task: OrchestrationTask,
+    tasks_by_id: dict[str, OrchestrationTask],
+) -> list[str]:
+    context = [_redacted_context_text(run.objective)]
+    for dependency_id in task.dependencies:
+        dependency = tasks_by_id[dependency_id]
+        context.append(_dependency_context(dependency))
+    return context
+
+
+def _agent_brief_for_task(
+    run: OrchestrationRun,
+    task: OrchestrationTask,
+    tasks_by_id: dict[str, OrchestrationTask],
+) -> AgentBrief:
+    return AgentBrief(
+        role=_redacted_context_text(task.role),
+        task=_redacted_context_text(task.title),
+        task_id=_redacted_context_text(task.id),
+        context=_agent_context_for_task(run, task, tasks_by_id),
+        constraints=[
+            _redacted_context_text(
+                f"Declared write paths: {task.declared_write_paths or ['read-only']}"
+            )
+        ],
+        required_data=[_redacted_context_text(dependency) for dependency in task.dependencies],
+        expected_output=_redacted_context_text(task.expected_output or task.validation),
+    )
+
+
+def _dependency_context(task: OrchestrationTask) -> str:
+    output = _redacted_json(task.output)
+    return _redacted_context_text(
+        f"Dependency {task.id} ({task.role}) completed: {task.title}. Output: {output}"
+    )
+
+
+def _redacted_json(value: dict[str, Any]) -> str:
+    rendered = json.dumps(_context_value_summary(value), sort_keys=True, default=str)
+    redacted = redact_sensitive_values(rendered)
+    if len(redacted) <= MAX_DEPENDENCY_CONTEXT_CHARS:
+        return redacted
+    return redacted[: MAX_DEPENDENCY_CONTEXT_CHARS - 3] + "..."
+
+
+def _context_value_summary(value: Any, *, depth: int = 0) -> Any:
+    if depth >= MAX_CONTEXT_OUTPUT_DEPTH:
+        return "<truncated>"
+    if isinstance(value, dict):
+        summary: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_CONTEXT_OUTPUT_ITEMS:
+                summary["_truncated_items"] = len(value) - MAX_CONTEXT_OUTPUT_ITEMS
+                break
+            summary[_redacted_context_text(str(key), max_chars=120)] = _context_value_summary(
+                item,
+                depth=depth + 1,
+            )
+        return summary
+    if isinstance(value, list):
+        summary = [
+            _context_value_summary(item, depth=depth + 1)
+            for item in value[:MAX_CONTEXT_OUTPUT_ITEMS]
+        ]
+        if len(value) > MAX_CONTEXT_OUTPUT_ITEMS:
+            summary.append({"_truncated_items": len(value) - MAX_CONTEXT_OUTPUT_ITEMS})
+        return summary
+    if isinstance(value, str):
+        return REDACTED_SECRET_MARKER
+    if isinstance(value, bool):
+        return "<bool>"
+    if isinstance(value, int | float):
+        return "<number>"
+    if value is None:
+        return None
+    return f"<{type(value).__name__}>"
+
+
+def _redacted_context_text(
+    value: str,
+    *,
+    max_chars: int = MAX_CONTEXT_FIELD_CHARS,
+) -> str:
+    redacted = redact_sensitive_values(value)
+    if len(redacted) <= max_chars:
+        return redacted
+    return redacted[: max_chars - 3] + "..."
 
 
 def _ensure_run_open(run: OrchestrationRun) -> None:

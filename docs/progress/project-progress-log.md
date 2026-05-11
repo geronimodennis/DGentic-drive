@@ -4,6 +4,50 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008h Shared Dependency Context Handoff
+
+Status: completed for the scoped dependency context handoff slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, durable shared memory coordination, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected shared dependency context handoff as the next contained Sprint 14 slice after manual/security blocker resolution.
+- Completed: Developer updated production source only for orchestration scheduling context construction, objective redaction, dependency-output summary redaction, bounded dependency context rendering, and sanitized spawned `AgentBrief` fields before persistence/API exposure.
+- Completed: QA updated tests only for service-level dependent agent context, API-visible spawned agent context, preserved dependency ids, redacted sibling fields, value-suppressed dependency output, and raw secret non-exposure.
+- Completed: Reviewer/Security found blocker risk where spawned `AgentBrief` sibling fields and raw scalar dependency output could leak through `/agents/{id}`.
+- Completed: Developer remediated by creating sanitized agent briefs, bounding text fields, redacting sibling fields, and summarizing output scalar values as redacted/type placeholders.
+- Completed: Security re-review found no blockers.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: spawned dependent agent briefs include the run objective plus completed dependency output summaries in `context`.
+- Implemented in this slice: objective, task title, task id, role, constraints, expected output, dependency ids, and dependency output summaries are redacted and bounded before spawned agent persistence or API exposure through agent detail endpoints.
+- Implemented in this slice: dependency output scalar values are suppressed into redacted/type placeholders so unlabeled secrets are not copied into spawned agent context.
+- Implemented in this slice: dependency output context is bounded to prevent oversized spawned-agent briefs.
+- Implemented in this slice: dependency ids remain in `required_data` so downstream agents keep machine-readable traceability.
+
+Remaining Sprint 14 work:
+- Add a fully autonomous background execution loop beyond explicit cycle calls.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add durable shared memory coordination across runs and agents.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused context service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_context or dependency_agent or schedules_parallel or cycle"` passed with 8 tests.
+- Focused context API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "dependency_context or orchestration_api_cycle"` passed with 3 tests.
+- Focused reviewer/security remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_context or dependency_agent"` passed with 1 test and `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "dependency_context"` passed with 1 test.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 184 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py tests\test_orchestration.py tests\test_api.py` passed with 3 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 768 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+
+Next:
+- Continue Sprint 14 with background execution or project document mutation.
+
 ### Sprint 14 BL-008g Manual/Security Blocker Resolution
 
 Status: completed for the scoped manual/security blocker resolution slice; Sprint 14 remains active for fully autonomous background execution, project-document mutation, shared context/memory coordination, and production scheduling hardening.

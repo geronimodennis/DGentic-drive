@@ -82,6 +82,67 @@ def test_orchestration_schedules_parallel_ready_tasks_and_unblocks_dependencies(
     assert _task_by_id(run, "pm-closeout").agent_id
 
 
+def test_orchestration_schedules_dependency_agent_with_redacted_shared_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Coordinate PASSWORD=objective-secret context handoff.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="dev-implementation",
+                    title="Implement API_KEY=title-secret source",
+                    description="Implement source changes.",
+                    role="Developer",
+                    declared_write_paths=["src/dgentic/tools.py"],
+                    expected_output="Source changes are ready.",
+                    validation="Developer work complete.",
+                ),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["tests/test_orchestration.py"],
+                    expected_output="",
+                    title="Validate TOKEN=qa-title-secret source",
+                    validation="QA receives PASSWORD=validation-secret context.",
+                ),
+            ],
+        )
+    )
+
+    updated = service.update_task(
+        run.id,
+        "dev-implementation",
+        OrchestrationTaskUpdate(
+            status=StepStatus.completed,
+            output={"summary": "plain-secret-value", "credential": "API_KEY=implementation-secret"},
+        ),
+    )
+    qa_task = _task_by_id(updated, "qa-validation")
+    assert qa_task.agent_id
+    qa_agent = get_agent(qa_task.agent_id)
+    assert qa_agent is not None
+
+    serialized_context = "\n".join(qa_agent.context)
+    serialized_agent = qa_agent.model_dump_json()
+    assert qa_agent.context[0] == "Coordinate PASSWORD=[REDACTED] context handoff."
+    assert qa_agent.task == "Validate TOKEN=[REDACTED] source"
+    assert qa_agent.expected_output == "QA receives PASSWORD=[REDACTED] context."
+    assert "Dependency dev-implementation (Developer) completed" in serialized_context
+    assert "Implement API_KEY=[REDACTED] source" in serialized_context
+    assert '"summary": "[REDACTED]"' in serialized_context
+    assert '"credential": "[REDACTED]"' in serialized_context
+    assert "qa-title-secret" not in serialized_agent
+    assert "validation-secret" not in serialized_agent
+    assert "objective-secret" not in serialized_context
+    assert "title-secret" not in serialized_context
+    assert "implementation-secret" not in serialized_context
+    assert "plain-secret-value" not in serialized_context
+    assert qa_agent.required_data == ["dev-implementation"]
+
+
 def test_orchestration_cycle_reconciles_completed_agent_and_schedules_dependency(
     orchestration_state,
 ) -> None:
@@ -1428,16 +1489,19 @@ def _task(
     dependencies: list[str] | None = None,
     paths: list[str] | None = None,
     retry_limit: int = 0,
+    expected_output: str | None = None,
+    title: str | None = None,
+    validation: str | None = None,
 ) -> OrchestrationTaskSpec:
     return OrchestrationTaskSpec(
         id=task_id,
-        title=f"{task_id} title",
+        title=title or f"{task_id} title",
         description=f"{task_id} description",
         role=role,
         dependencies=dependencies or [],
         declared_write_paths=paths or [],
-        expected_output=f"{task_id} output",
-        validation=f"{task_id} validation",
+        expected_output=expected_output if expected_output is not None else f"{task_id} output",
+        validation=validation or f"{task_id} validation",
         retry_limit=retry_limit,
     )
 

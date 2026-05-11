@@ -37,6 +37,7 @@ Default settings:
 - `DGENTIC_AUTH_TOKENS` empty by default
 - `DGENTIC_OLLAMA_BASE_URL=http://127.0.0.1:11434`
 - `DGENTIC_LM_STUDIO_BASE_URL=http://127.0.0.1:1234`
+- `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` empty by default; add comma-separated exact provider base URLs only when an additional trusted provider endpoint is configured
 
 ## Configure API Authentication
 
@@ -339,6 +340,8 @@ Invoke-RestMethod `
   -Body '{"provider_id":"ollama","model":"llama3.1","messages":[{"role":"user","content":"Say hello."}]}'
 ```
 
+Provider generation and health probes only use exact allowlisted base URLs. The default allowlist is the configured Ollama and LM Studio base URLs, plus any trusted URLs in `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`. Provider redirects are blocked, malformed upstream JSON is returned to API callers as a generic provider failure, and provider logs store safe metadata rather than raw completion content.
+
 ## Generate A Local Tool
 
 ```powershell
@@ -460,6 +463,6 @@ uv run ruff format .
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
-- Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
+- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking and safe telemetry, but external adapters, retries/rate limits, and streaming are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

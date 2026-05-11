@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
+    provider_allowed_base_urls: str = ""
 
     @property
     def effective_auth_enabled(self) -> bool:

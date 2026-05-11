@@ -7,6 +7,7 @@ from hashlib import sha256
 import pytest
 from fastapi.testclient import TestClient
 
+from dgentic import provider_runtime, providers
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
 from dgentic.database import reset_database_state
@@ -362,18 +363,79 @@ def test_guarded_filesystem_rejects_large_payloads_and_missing_files(tmp_path, m
     get_settings.cache_clear()
 
 
-def test_provider_routing_prefers_local_when_privacy_is_required() -> None:
+def test_provider_routing_prefers_local_when_privacy_is_required(monkeypatch) -> None:
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
     client = TestClient(create_app())
 
     providers_response = client.get("/providers")
     route_response = client.post("/routing/decide", json={"privacy_required": True})
+    external_route_response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
 
     assert providers_response.status_code == 200
     assert len(providers_response.json()) >= 2
     assert {provider["id"] for provider in providers_response.json()} >= {"ollama", "lm-studio"}
+    external_provider = next(
+        provider
+        for provider in providers_response.json()
+        if provider["id"] == "external-placeholder"
+    )
+    assert external_provider["enabled"] is False
+    assert external_provider["model_names"] == []
+    assert external_provider["supports_streaming"] is False
     assert route_response.status_code == 200
     assert route_response.json()["provider_id"] in {"ollama", "lm-studio"}
     assert route_response.json()["candidate_scores"]
+    assert external_route_response.status_code == 404
+    assert "No provider satisfies" in external_route_response.text
+
+
+def test_provider_listing_and_health_do_not_leak_invalid_configured_base_url(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_OLLAMA_BASE_URL",
+        "http://operator:provider-password-secret@127.0.0.1:11434",
+    )
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        return {"models": [{"name": "llama3.1"}]}
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    providers_response = client.get("/providers")
+    health_response = client.get("/providers/ollama/health")
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert providers_response.status_code == 200
+    assert health_response.status_code == 200
+    assert calls == []
+    ollama_config = next(
+        provider for provider in providers_response.json() if provider["id"] == "ollama"
+    )
+    assert ollama_config["base_url"] is None
+    assert health_response.json()["available"] is False
+    serialized = providers_response.text + health_response.text + logs_response.text
+    assert "provider-password-secret" not in serialized
+    get_settings.cache_clear()
 
 
 def test_guarded_cli_execution_requires_policy_approval(tmp_path, monkeypatch) -> None:
@@ -1926,6 +1988,195 @@ def test_provider_generate_api_rejects_unsupported_provider() -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_provider_generate_api_rejects_disallowed_base_url_before_post(
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return {}
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "ollama",
+            "model": "llama3.1",
+            "base_url": "http://169.254.169.254/latest",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 403
+    assert calls == []
+    assert "169.254.169.254" not in response.text
+
+
+def test_provider_generate_api_rejects_streaming_before_post(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return {}
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 501
+    assert calls == []
+
+
+def test_provider_generate_api_rejects_external_placeholder_before_post(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return {}
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "external-placeholder",
+            "model": "external-default",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 501
+    assert calls == []
+
+
+def test_provider_generate_api_maps_malformed_upstream_json_to_bad_gateway(monkeypatch) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"not": "valid"'
+
+    def fake_open_provider_request(request, *, timeout_seconds: float) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(provider_runtime, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+
+
+def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    raw_secrets = [
+        "upstream-response-token-secret",
+        "upstream-response-authorization-secret",
+    ]
+    calls: list[dict] = []
+    raw_response = {
+        "id": "chatcmpl-safe-api",
+        "model": "local-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello from provider API."},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        "token": raw_secrets[0],
+        "authorization": f"Bearer {raw_secrets[1]}",
+    }
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return raw_response
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.2,
+            "max_tokens": 32,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:1234/v1/chat/completions",
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.2,
+                "max_tokens": 32,
+                "stream": False,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    body = response.json()
+    assert body["content"] == "Hello from provider API."
+    assert body["raw_response_metadata"] == {
+        "id": "chatcmpl-safe-api",
+        "model": "local-model",
+        "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        "choice_count": 1,
+        "finish_reasons": ["stop"],
+    }
+    serialized_response = response.text
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_response
+
+    assert logs_response.status_code == 200
+    provider_events = logs_response.json()
+    assert provider_events[-1]["message"] == "Completed provider generation."
+    assert "content" not in provider_events[-1]["metadata"]
+    serialized_logs = json.dumps(provider_events, sort_keys=True)
+    assert "Hello from provider API." not in serialized_logs
+    for raw_secret in raw_secrets:
+        assert raw_secret not in serialized_logs
+    get_settings.cache_clear()
 
 
 def test_logs_capture_new_backend_activity() -> None:

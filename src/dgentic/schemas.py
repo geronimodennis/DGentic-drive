@@ -177,6 +177,7 @@ class ProviderConfig(BaseModel):
     estimated_cost_usd: float | None = None
     permission_mode: PermissionMode = PermissionMode.approval_required
     enabled: bool = True
+    supports_streaming: bool = False
 
 
 class ProviderHealth(BaseModel):

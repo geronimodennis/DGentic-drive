@@ -42,11 +42,18 @@ from dgentic.guardrails import (
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_runtime import (
+    ProviderEgressPolicyError,
+    ProviderFeatureNotSupportedError,
     ProviderGenerationRequest,
     ProviderGenerationResult,
     generate_provider_completion,
 )
-from dgentic.providers import check_provider_health, choose_provider, list_providers
+from dgentic.providers import (
+    ProviderRoutingError,
+    check_provider_health,
+    choose_provider,
+    list_providers,
+)
 from dgentic.schemas import (
     AgentBrief,
     AgentOutput,
@@ -479,17 +486,24 @@ def get_provider_health(provider_id: str) -> ProviderHealth:
 
 @router.post("/routing/decide", response_model=RoutingDecision)
 def decide_route(request: RoutingRequest) -> RoutingDecision:
-    return choose_provider(request)
+    try:
+        return choose_provider(request)
+    except ProviderRoutingError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/providers/generate", response_model=ProviderGenerationResult)
 def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenerationResult:
     try:
         return generate_provider_completion(request)
+    except ProviderEgressPolicyError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProviderFeatureNotSupportedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Provider request failed.") from exc
 
 
 @router.post("/agents", response_model=AgentBrief, status_code=201)

@@ -36,6 +36,7 @@ dgentic/
         retrieval_service.py
         schemas.py
       planner.py
+      provider_policy.py
       provider_runtime.py
       providers.py
       schemas.py
@@ -71,8 +72,9 @@ Current modules:
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
 - `execution.py`: Deterministic plan execution run service for MVP workflow validation.
 - `guardrails.py`: Filesystem policy evaluation plus guarded text, binary, directory, metadata, delete, move, copy, rename, and command execution compatibility wrappers.
-- `providers.py`: Provider registry, Ollama/LM Studio health and model probes, external provider contract placeholder, and scored routing decisions.
-- `provider_runtime.py`: Ollama and LM Studio chat/completion request execution.
+- `provider_policy.py`: Shared provider endpoint policy, exact base URL normalization, allowlist validation, and redirect-blocking HTTP opener.
+- `providers.py`: Provider registry, policy-validated Ollama/LM Studio health and model probes, disabled external provider contract placeholder, and scored routing decisions.
+- `provider_runtime.py`: Ollama and LM Studio chat/completion request execution with provider endpoint policy enforcement and safe response telemetry.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
@@ -171,9 +173,9 @@ Current endpoints:
 - `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command with an optional redacted decision reason.
 - `POST /cli/approvals/{approval_id}/execute`: Executes an approved CLI command once when no environment override is required.
 - `GET /cli/runs`: Lists persisted CLI command run history.
-- `GET /providers`: Lists configured providers with discovered local model names when reachable.
-- `GET /providers/{provider_id}/health`: Returns provider configuration health.
-- `POST /providers/generate`: Runs an Ollama or LM Studio chat/completion request.
+- `GET /providers`: Lists configured providers with safe display base URLs and discovered local model names when reachable.
+- `GET /providers/{provider_id}/health`: Returns provider configuration health after endpoint policy validation.
+- `POST /providers/generate`: Runs an Ollama or LM Studio chat/completion request against an allowlisted base URL and returns whitelisted response metadata.
 - `POST /routing/decide`: Returns a scored provider routing decision with candidate scores.
 - `POST /agents`: Registers a running sub-agent brief.
 - `GET /agents`: Lists registered sub-agent briefs.
@@ -305,8 +307,8 @@ Architect handoff:
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, scheduled backup automation, and vector storage remain follow-up work.
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.
-- Probe Ollama and LM Studio through lightweight local HTTP health/model discovery; keep external providers as contract placeholders until credential and rate-limit handling are ready.
-- Execute Ollama and LM Studio chat requests through provider runtime contracts; streaming and external providers remain follow-up work.
+- Probe Ollama and LM Studio through lightweight local HTTP health/model discovery after exact provider base URL allowlist validation; keep external providers disabled contract placeholders until credential and rate-limit handling are ready.
+- Execute Ollama and LM Studio chat requests through provider runtime contracts using the shared provider egress policy, redirect blocking, safe response metadata, and generic upstream failure details; streaming and external providers remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support includes text and base64 binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`, with protected state-file blocking, symlink escape checks, size limits, and audit logging.
 - Execute CLI commands only through configurable command policy evaluation, root-bound and cwd-aware working directories, controlled inherited environments plus explicit non-sensitive overrides, single-use approval records for approval-required commands outside development/test mode, sanitized output capture, persisted run history, and audit logging.
 - Support asynchronous CLI runs through persisted run records, redacted output chunks, supervision metadata, auditable lifecycle states, stale-running reconciliation, timeout handling, process-local cancellation, and conservative post-restart orphan termination when the persisted process identity still matches the live process. Full process adoption/resumable output after restart and production multi-worker supervision with durable leases remain follow-up work.

@@ -267,7 +267,8 @@ Definition of Done:
 
 Current implementation status:
 - Partially implemented: Ollama and LM Studio health checks, local generation calls, and scored routing are available for the backend MVP.
-- Remaining: external provider adapters remain placeholders, provider requests still accept broad caller-controlled runtime endpoints, outbound network policy is not enforced yet, and provider response logging/return contracts still need production-oriented secret and data-retention hardening.
+- Completed: BL-006a provider egress policy and safe telemetry, including exact provider base URL allowlist enforcement for generation and health probes, redirect blocking, safe display of configured base URLs, disabled/non-routable external placeholder behavior, generic malformed-upstream API failures, provider completion logs without raw content, and whitelisted response metadata with preserved numeric usage counters.
+- Remaining: production external provider adapters, secure credential storage or secret-manager integration, retry/backoff/rate-limit handling, circuit breaker behavior, streaming generation, cost metadata, and broader provider payload shape validation.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -551,6 +552,7 @@ Exit criteria:
 - External provider adapter works through shared provider contracts.
 - Credentials are protected.
 - Streaming, retry, rate-limit, and routing tests pass.
+- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced.
 
 ### Sprint 13: Memory Production Lifecycle
 

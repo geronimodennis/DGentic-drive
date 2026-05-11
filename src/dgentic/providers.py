@@ -1,8 +1,14 @@
 import json
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from dgentic.events import event_log
+from dgentic.provider_policy import (
+    ProviderEgressPolicyError,
+    normalize_provider_base_url,
+    open_provider_request,
+    validate_provider_base_url,
+)
 from dgentic.schemas import (
     LogEventType,
     PermissionMode,
@@ -17,6 +23,10 @@ from dgentic.settings import get_settings
 MODEL_PROBE_TIMEOUT_SECONDS = 1.5
 
 
+class ProviderRoutingError(ValueError):
+    """Raised when no provider can satisfy the requested routing policy."""
+
+
 def default_providers() -> list[ProviderConfig]:
     settings = get_settings()
     return [
@@ -24,33 +34,37 @@ def default_providers() -> list[ProviderConfig]:
             id="ollama",
             name="Ollama",
             kind=ProviderKind.local,
-            base_url=settings.ollama_base_url,
+            base_url=_safe_provider_base_url_for_display(settings.ollama_base_url),
             model_names=[],
             capabilities=["chat", "local", "private"],
             estimated_latency_ms=250,
             estimated_cost_usd=0.0,
             permission_mode=PermissionMode.autopilot_safe,
+            supports_streaming=False,
         ),
         ProviderConfig(
             id="lm-studio",
             name="LM Studio",
             kind=ProviderKind.local,
-            base_url=settings.lm_studio_base_url,
+            base_url=_safe_provider_base_url_for_display(settings.lm_studio_base_url),
             model_names=[],
             capabilities=["chat", "local", "openai-compatible", "private"],
             estimated_latency_ms=300,
             estimated_cost_usd=0.0,
             permission_mode=PermissionMode.autopilot_safe,
+            supports_streaming=False,
         ),
         ProviderConfig(
             id="external-placeholder",
             name="External Provider Placeholder",
             kind=ProviderKind.external,
-            model_names=["external-default"],
+            model_names=[],
             capabilities=["chat", "external", "high-capability"],
             estimated_latency_ms=800,
             estimated_cost_usd=0.01,
             permission_mode=PermissionMode.approval_required,
+            enabled=False,
+            supports_streaming=False,
         ),
     ]
 
@@ -78,9 +92,9 @@ def check_provider_health(provider_id: str) -> ProviderHealth:
     else:
         health = ProviderHealth(
             provider_id=provider.id,
-            available=provider.enabled,
-            message="Provider contract is configured; live adapter is not implemented yet.",
-            model_names=provider.model_names,
+            available=False,
+            message="Provider adapter is not implemented yet and is not routable.",
+            model_names=[],
         )
     event_log.record(
         LogEventType.provider,
@@ -94,6 +108,8 @@ def check_provider_health(provider_id: str) -> ProviderHealth:
 def choose_provider(policy: RoutingRequest) -> RoutingDecision:
     providers = list_providers()
     scored = {provider.id: _score_provider(provider, policy) for provider in providers}
+    if not any(score > 0 for score in scored.values()):
+        raise ProviderRoutingError("No provider satisfies the requested routing policy.")
     preferred = max(providers, key=lambda provider: scored[provider.id])
     score = scored[preferred.id]
 
@@ -122,12 +138,17 @@ def choose_provider(policy: RoutingRequest) -> RoutingDecision:
 
 
 def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
+    if not provider.enabled:
+        return 0.0
+
     score = 0.0
     capabilities = set(provider.capabilities)
     required = set(policy.required_capabilities)
 
-    if provider.enabled:
-        score += 0.2
+    if required and not required.issubset(capabilities):
+        return 0.0
+
+    score += 0.2
     if provider.model_names:
         score += 0.2
     if policy.privacy_required and provider.kind == ProviderKind.local:
@@ -150,7 +171,12 @@ def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
 
 def _probe_ollama(provider: ProviderConfig) -> ProviderHealth:
     try:
-        payload = _get_json(f"{provider.base_url}/api/tags")
+        settings = get_settings()
+        base_url = validate_provider_base_url(
+            provider_id=provider.id,
+            base_url=settings.ollama_base_url,
+        )
+        payload = _get_json(f"{base_url}/api/tags")
         model_names = [model["name"] for model in payload.get("models", []) if "name" in model]
         return ProviderHealth(
             provider_id=provider.id,
@@ -168,7 +194,12 @@ def _probe_ollama(provider: ProviderConfig) -> ProviderHealth:
 
 def _probe_lm_studio(provider: ProviderConfig) -> ProviderHealth:
     try:
-        payload = _get_json(f"{provider.base_url}/v1/models")
+        settings = get_settings()
+        base_url = validate_provider_base_url(
+            provider_id=provider.id,
+            base_url=settings.lm_studio_base_url,
+        )
+        payload = _get_json(f"{base_url}/v1/models")
         model_names = [model["id"] for model in payload.get("data", []) if "id" in model]
         return ProviderHealth(
             provider_id=provider.id,
@@ -186,5 +217,15 @@ def _probe_lm_studio(provider: ProviderConfig) -> ProviderHealth:
 
 def _get_json(url: str) -> dict:
     request = Request(url, headers={"Accept": "application/json"})
-    with urlopen(request, timeout=MODEL_PROBE_TIMEOUT_SECONDS) as response:
+    with open_provider_request(
+        request,
+        timeout_seconds=MODEL_PROBE_TIMEOUT_SECONDS,
+    ) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _safe_provider_base_url_for_display(base_url: str) -> str | None:
+    try:
+        return normalize_provider_base_url(base_url)
+    except ProviderEgressPolicyError:
+        return None

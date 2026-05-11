@@ -4,6 +4,53 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006a Provider Egress Policy And Safe Telemetry
+
+Status: completed for the scoped provider endpoint-policy and telemetry-hardening slice; Sprint 12 remains open for production external adapters, credentials, retry/rate-limit handling, and streaming generation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected a Full Sprint security/API slice because provider endpoints, outbound network behavior, and logs are security-sensitive.
+- Completed: Architect and QA read-only explorers recommended starting with provider egress policy, disabled external placeholder routing, and safe telemetry before adding real external credentials.
+- Completed: Developer updated production source only for shared provider endpoint policy, redirect blocking, generation/health allowlist enforcement, safe configured URL display, disabled external placeholder behavior, safe provider metadata, and generic upstream JSON failure mapping.
+- Completed: QA updated tests only for provider allowlist rejection before network calls, unsupported streaming, external placeholder rejection, safe metadata/log behavior, redirect blocking, health-probe policy enforcement, no configured URL credential leaks, malformed upstream JSON mapping, and no-capable-provider routing.
+- Completed: Reviewer/Security found initial blockers for redirect egress, health probes outside policy, and malformed JSON status mapping; these were routed back through Dev and QA.
+- Completed: Final Reviewer/Security read-only pass found no blockers.
+
+Feature tracking:
+- Implemented in this slice: provider generation accepts only exact configured or explicitly allowlisted base URLs, strips query/fragment/userinfo, blocks disallowed overrides before network calls, and rejects redirects through a shared provider opener.
+- Implemented in this slice: provider health/model discovery uses the same endpoint policy path as generation.
+- Implemented in this slice: `/providers` displays only normalized safe base URLs, suppressing malformed or credential-bearing configured URLs.
+- Implemented in this slice: `external-placeholder` is disabled, non-routable, and returns an explicit not-implemented response if generation is requested.
+- Implemented in this slice: provider completion events omit raw prompt/completion content and persist only safe metadata such as duration, content length, finish reasons, and numeric usage counters.
+- Implemented in this slice: malformed upstream JSON is wrapped as a provider failure and mapped to generic `502` API detail instead of a client `400`.
+
+Validation:
+- Focused provider gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "provider"` passed with 16 tests and 45 deselected.
+- Broad touched-surface regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py tests\test_tool_runtime.py tests\test_auth.py` passed with 123 tests.
+- Focused source lint/format gates passed for provider policy/runtime/catalog/API/schema/settings/redaction files.
+- Focused QA lint/format gates passed for provider/API tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 498 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 46 files already formatted.
+
+Residual risks:
+- This slice does not add production external provider adapters or credentials.
+- Retry, backoff, rate-limit, circuit-breaker, cost accounting, and streaming support remain future Sprint 12 work.
+- Provider response shape validation is still lightweight beyond malformed JSON handling.
+- The allowlist is exact and conservative; misconfigured provider base URLs fail closed.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/provider_policy.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/providers.py`, `src/dgentic/redaction.py`, `src/dgentic/schemas.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Commit/push the stable BL-006a checkpoint, then continue Sprint 12 with retry/backoff and provider adapter-boundary work.
+
 ### Sprint 11 BL-005g Generated-Tool Version Migration Policy
 
 Status: completed for the scoped no-migration version policy slice; Sprint 11 remains open for full OS/filesystem/network sandbox isolation and production package/dependency lifecycle management.

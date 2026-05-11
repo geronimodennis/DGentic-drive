@@ -81,6 +81,12 @@ _SENSITIVE_METADATA_KEY_MARKERS = {
     "credential",
     "credentials",
 }
+_SAFE_NUMERIC_METADATA_KEYS = {
+    "completiontokens",
+    "evalcount",
+    "prompttokens",
+    "totaltokens",
+}
 
 
 def redact_sensitive_values(text: str) -> str:
@@ -106,6 +112,8 @@ def redact_sensitive_values(text: str) -> str:
 
 def redact_metadata(value: Any, *, key: str | None = None) -> Any:
     if key is not None and is_sensitive_metadata_key(key):
+        if _is_safe_numeric_metadata_value(key, value):
+            return value
         return REDACTED_SECRET_MARKER
     if isinstance(value, str):
         return redact_sensitive_values(value)
@@ -121,6 +129,15 @@ def redact_metadata(value: Any, *, key: str | None = None) -> Any:
 def is_sensitive_metadata_key(key: str) -> bool:
     compact_key = re.sub(r"[^a-z0-9]", "", key.lower())
     return any(marker in compact_key for marker in _SENSITIVE_METADATA_KEY_MARKERS)
+
+
+def _is_safe_numeric_metadata_value(key: str, value: Any) -> bool:
+    compact_key = re.sub(r"[^a-z0-9]", "", key.lower())
+    return (
+        compact_key in _SAFE_NUMERIC_METADATA_KEYS
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    )
 
 
 def _redact_substitution_secret_values(text: str) -> str:

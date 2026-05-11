@@ -1,15 +1,18 @@
-import json
 from time import perf_counter
 from typing import Any
-from urllib.request import Request
 
 from pydantic import BaseModel, Field
 
 from dgentic.events import event_log
-from dgentic.provider_policy import (
-    ProviderEgressPolicyError,
-    open_provider_request,
-    validate_provider_base_url,
+from dgentic.provider_policy import ProviderEgressPolicyError, validate_provider_base_url
+from dgentic.provider_transport import (
+    ProviderRateLimitError,
+    ProviderRetryPolicy,
+    ProviderTransportRequest,
+    ProviderTransportResult,
+    ProviderUpstreamResponseError,
+    send_provider_json_request,
+    transport_error_metadata,
 )
 from dgentic.redaction import redact_metadata
 from dgentic.schemas import LogEventType
@@ -23,10 +26,6 @@ EXTERNAL_PLACEHOLDER_PROVIDER_ID = "external-placeholder"
 
 class ProviderFeatureNotSupportedError(NotImplementedError):
     """Raised when a requested provider capability is intentionally unavailable."""
-
-
-class ProviderUpstreamResponseError(OSError):
-    """Raised when an upstream provider response cannot be decoded safely."""
 
 
 class ProviderChatMessage(BaseModel):
@@ -71,7 +70,8 @@ def generate_provider_completion(
 
     try:
         url, payload = _build_provider_request(request)
-        raw_response = _post_json(url, payload, request.timeout_seconds)
+        transport_result = _post_json(url, payload, request.timeout_seconds)
+        raw_response, retry_metadata = _transport_payload_and_metadata(transport_result)
         duration_ms = _duration_ms(started_at)
         result = ProviderGenerationResult(
             provider_id=request.provider_id,
@@ -84,7 +84,7 @@ def generate_provider_completion(
             LogEventType.provider,
             "Completed provider generation.",
             subject_id=request.provider_id,
-            metadata=_completion_event_metadata(result),
+            metadata=_completion_event_metadata(result, retry_metadata=retry_metadata),
         )
         return result
     except Exception as exc:
@@ -98,6 +98,7 @@ def generate_provider_completion(
                 "duration_ms": _duration_ms(started_at),
                 "error_type": type(exc).__name__,
                 "error": _safe_error_message(exc),
+                **transport_error_metadata(exc),
             },
         )
         raise
@@ -148,13 +149,17 @@ def _build_provider_request(request: ProviderGenerationRequest) -> tuple[str, di
 def _extract_content(provider_id: str, response: dict[str, Any]) -> str:
     if provider_id == OLLAMA_PROVIDER_ID:
         message = response.get("message", {})
+        if not isinstance(message, dict):
+            return ""
         return str(message.get("content", ""))
 
     if provider_id == LM_STUDIO_PROVIDER_ID:
         choices = response.get("choices", [])
-        if not choices:
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             return ""
         message = choices[0].get("message", {})
+        if not isinstance(message, dict):
+            return ""
         return str(message.get("content", ""))
 
     raise ValueError(f"Unsupported provider_id: {provider_id}")
@@ -229,13 +234,18 @@ def _safe_response_metadata(provider_id: str, response: dict[str, Any]) -> dict[
     return redact_metadata({"response_keys": sorted(str(key) for key in response)})
 
 
-def _completion_event_metadata(result: ProviderGenerationResult) -> dict[str, Any]:
+def _completion_event_metadata(
+    result: ProviderGenerationResult,
+    *,
+    retry_metadata: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "provider_id": result.provider_id,
         "model": result.model,
         "duration_ms": result.duration_ms,
         "content_length": len(result.content),
         "raw_response_metadata": result.raw_response_metadata,
+        **retry_metadata,
     }
 
 
@@ -248,22 +258,51 @@ def _safe_error_message(exc: Exception) -> str:
     return "Provider request failed."
 
 
-def _post_json(url: str, payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    http_request = Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+) -> ProviderTransportResult:
+    return send_provider_json_request(
+        ProviderTransportRequest(
+            url=url,
+            method="POST",
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+            retry_policy=_generation_retry_policy(),
+        )
     )
-    with open_provider_request(http_request, timeout_seconds=timeout_seconds) as response:
-        try:
-            return json.loads(response.read().decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ProviderUpstreamResponseError("Provider returned malformed JSON.") from exc
+
+
+def _generation_retry_policy() -> ProviderRetryPolicy:
+    settings = get_settings()
+    return ProviderRetryPolicy(
+        max_attempts=settings.provider_retry_max_attempts,
+        initial_delay_seconds=settings.provider_retry_initial_delay_seconds,
+        max_delay_seconds=settings.provider_retry_max_delay_seconds,
+        backoff_multiplier=settings.provider_retry_backoff_multiplier,
+    )
+
+
+def _transport_payload_and_metadata(
+    transport_result: ProviderTransportResult | dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if isinstance(transport_result, ProviderTransportResult):
+        return (
+            transport_result.payload,
+            {
+                "attempt_count": transport_result.attempt_count,
+                "retry_count": transport_result.retry_count,
+                "final_status_code": transport_result.final_status_code,
+                "retry_delays_seconds": transport_result.retry_delays_seconds,
+            },
+        )
+    return transport_result, {
+        "attempt_count": 1,
+        "retry_count": 0,
+        "final_status_code": None,
+        "retry_delays_seconds": [],
+    }
 
 
 def _duration_ms(started_at: float) -> int:
@@ -276,6 +315,7 @@ __all__ = [
     "OLLAMA_PROVIDER_ID",
     "ProviderEgressPolicyError",
     "ProviderFeatureNotSupportedError",
+    "ProviderRateLimitError",
     "ProviderUpstreamResponseError",
     "ProviderChatMessage",
     "ProviderGenerationRequest",

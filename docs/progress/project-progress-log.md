@@ -4,6 +4,53 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006b Provider Transport Retry And Backoff
+
+Status: completed for the scoped non-streaming provider transport/retry slice; Sprint 12 remains open for production external adapters, credential handling, circuit breakers, cost accounting, and streaming generation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected a bounded follow-up after BL-006a to add shared transport and deterministic retry/backoff without introducing external credentials or public retry controls.
+- Completed: Architect read-only explorer recommended `provider_transport.py`, shared JSON transport contracts, retry metadata in event logs only, and single-attempt health probes.
+- Completed: QA read-only explorer recommended fake transport/sleep tests for `429`, upstream `5xx`, exhausted retries, retry-after handling, non-retry 4xx, safe logs, and API status mapping.
+- Completed: Developer updated production source only for shared transport contracts, bounded generation retry/backoff settings, safe transport error metadata, API `429` mapping for exhausted provider rate limits, non-retry health probes, and safer provider response shape handling.
+- Completed: QA updated tests only for retry success, retry exhaustion, `Retry-After` capping/invalid/non-finite cases, no retry for ordinary 4xx including `408`, no retry for malformed JSON, API `429`/`502` mappings, health no-retry behavior, and no real sleeps/network.
+- Completed: Reviewer/Security found blockers for `408` retry and non-finite `Retry-After`; fixes were routed through Dev and QA.
+- Completed: Final remediation review found no blockers.
+
+Feature tracking:
+- Implemented in this slice: `ProviderRetryPolicy`, `ProviderTransportRequest`, `ProviderTransportResult`, and `send_provider_json_request` centralize JSON provider transport behavior.
+- Implemented in this slice: generation retries bounded retryable failures, currently `429` and upstream `500/502/503/504`, with default delays of `0.2s`, `0.4s`, capped at `2.0s`.
+- Implemented in this slice: numeric `Retry-After` is honored and capped; invalid, `NaN`, and infinity values fall back to deterministic backoff.
+- Implemented in this slice: provider `400/401/403/404/408`, policy failures, unsupported features, and malformed upstream JSON are not retried.
+- Implemented in this slice: provider health/model probes use the shared transport with `max_attempts=1`.
+- Implemented in this slice: provider completion/failure logs expose safe attempt/retry/status metadata without raw upstream response bodies or prompt/completion content.
+
+Validation:
+- Focused provider retry gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "provider"` passed with 38 tests and 45 deselected.
+- Broad touched-surface regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py tests\test_tool_runtime.py tests\test_auth.py` passed with 145 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_transport.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_transport.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_provider_runtime.py tests\test_api.py` passed with 7 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 520 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+
+Residual risks:
+- Retry amplification is bounded but still per-request; global retry budgets, jitter, and circuit breakers remain future production work.
+- This slice does not add external provider adapters, credential storage, cost accounting, or streaming.
+- Negative `Retry-After` clamps to immediate retry, safely bounded by max attempts.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/provider_transport.py`, `src/dgentic/providers.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Commit/push the stable BL-006b checkpoint, then continue Sprint 12 with the provider adapter boundary and credential strategy.
+
 ### Sprint 12 BL-006a Provider Egress Policy And Safe Telemetry
 
 Status: completed for the scoped provider endpoint-policy and telemetry-hardening slice; Sprint 12 remains open for production external adapters, credentials, retry/rate-limit handling, and streaming generation.

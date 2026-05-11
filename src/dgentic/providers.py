@@ -1,13 +1,15 @@
-import json
 from urllib.error import URLError
-from urllib.request import Request
 
 from dgentic.events import event_log
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
     normalize_provider_base_url,
-    open_provider_request,
     validate_provider_base_url,
+)
+from dgentic.provider_transport import (
+    ProviderRetryPolicy,
+    ProviderTransportRequest,
+    send_provider_json_request,
 )
 from dgentic.schemas import (
     LogEventType,
@@ -184,7 +186,7 @@ def _probe_ollama(provider: ProviderConfig) -> ProviderHealth:
             message="Ollama is reachable.",
             model_names=model_names,
         )
-    except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (OSError, URLError, TimeoutError) as exc:
         return ProviderHealth(
             provider_id=provider.id,
             available=False,
@@ -207,7 +209,7 @@ def _probe_lm_studio(provider: ProviderConfig) -> ProviderHealth:
             message="LM Studio is reachable.",
             model_names=model_names,
         )
-    except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (OSError, URLError, TimeoutError) as exc:
         return ProviderHealth(
             provider_id=provider.id,
             available=False,
@@ -216,12 +218,15 @@ def _probe_lm_studio(provider: ProviderConfig) -> ProviderHealth:
 
 
 def _get_json(url: str) -> dict:
-    request = Request(url, headers={"Accept": "application/json"})
-    with open_provider_request(
-        request,
-        timeout_seconds=MODEL_PROBE_TIMEOUT_SECONDS,
-    ) as response:
-        return json.loads(response.read().decode("utf-8"))
+    result = send_provider_json_request(
+        ProviderTransportRequest(
+            url=url,
+            method="GET",
+            timeout_seconds=MODEL_PROBE_TIMEOUT_SECONDS,
+            retry_policy=ProviderRetryPolicy(max_attempts=1),
+        )
+    )
+    return result.payload
 
 
 def _safe_provider_base_url_for_display(base_url: str) -> str | None:

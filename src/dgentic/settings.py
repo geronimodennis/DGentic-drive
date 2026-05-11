@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
     provider_allowed_base_urls: str = ""
+    provider_retry_max_attempts: int = Field(default=3, ge=1, le=10)
+    provider_retry_initial_delay_seconds: float = Field(default=0.2, ge=0.0, le=30.0)
+    provider_retry_max_delay_seconds: float = Field(default=2.0, ge=0.0, le=120.0)
+    provider_retry_backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
 
     @property
     def effective_auth_enabled(self) -> bool:

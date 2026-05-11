@@ -46,6 +46,7 @@ from dgentic.provider_runtime import (
     ProviderFeatureNotSupportedError,
     ProviderGenerationRequest,
     ProviderGenerationResult,
+    ProviderRateLimitError,
     generate_provider_completion,
 )
 from dgentic.providers import (
@@ -500,6 +501,8 @@ def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenera
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderFeatureNotSupportedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ProviderRateLimitError as exc:
+        raise HTTPException(status_code=429, detail="Provider request failed.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:

@@ -223,7 +223,7 @@ curl -X POST http://127.0.0.1:8000/providers/generate `
   -d '{"provider_id":"ollama","model":"llama3.1","messages":[{"role":"user","content":"Say hello."}]}'
 ```
 
-Provider calls must target exact allowlisted base URLs. By default, DGentic allows only the configured Ollama and LM Studio endpoints; add trusted extra endpoints with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` when needed. Redirects are blocked, configured URLs with embedded credentials are not displayed, and logs keep provider usage metadata without persisting raw completion content.
+Provider calls must target exact allowlisted base URLs. By default, DGentic allows only the configured Ollama and LM Studio endpoints; add trusted extra endpoints with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` when needed. Redirects are blocked, configured URLs with embedded credentials are not displayed, and logs keep provider usage metadata without persisting raw completion content. Generation uses bounded retry/backoff for retryable `429` and upstream `5xx` failures; health probes stay single-attempt.
 
 Generate a reusable local tool:
 
@@ -363,7 +363,7 @@ DGentic should persist session state so future sessions can resume with context,
 - DGentic has backend MVP contracts, not production autonomy.
 - Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
-- Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking and safe telemetry, but streaming is not implemented yet.
+- Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry, but streaming is not implemented yet.
 - External provider adapters are still disabled contract placeholders.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.

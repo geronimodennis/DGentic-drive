@@ -3,11 +3,13 @@ import json
 import time
 from datetime import UTC, datetime
 from hashlib import sha256
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
 from fastapi.testclient import TestClient
 
-from dgentic import provider_runtime, providers
+from dgentic import provider_runtime, provider_transport, providers
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
 from dgentic.database import reset_database_state
@@ -436,6 +438,33 @@ def test_provider_listing_and_health_do_not_leak_invalid_configured_base_url(
     serialized = providers_response.text + health_response.text + logs_response.text
     assert "provider-password-secret" not in serialized
     get_settings.cache_clear()
+
+
+def test_provider_health_uses_shared_transport_without_retry(monkeypatch) -> None:
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Unavailable",
+            {},
+            BytesIO(b'{"token":"health-error-secret"}'),
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+    client = TestClient(create_app())
+
+    response = client.get("/providers/ollama/health")
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert calls == ["http://127.0.0.1:11434/api/tags"]
+    assert sleeps == []
+    assert "health-error-secret" not in response.text
 
 
 def test_guarded_cli_execution_requires_policy_approval(tmp_path, monkeypatch) -> None:
@@ -2064,21 +2093,67 @@ def test_provider_generate_api_rejects_external_placeholder_before_post(monkeypa
     assert calls == []
 
 
-def test_provider_generate_api_maps_malformed_upstream_json_to_bad_gateway(monkeypatch) -> None:
-    class FakeResponse:
-        def __enter__(self):
-            return self
+def test_provider_generate_api_maps_exhausted_429_to_too_many_requests(monkeypatch) -> None:
+    calls: list[str] = []
+    sleeps: list[float] = []
 
-        def __exit__(self, *args: object) -> None:
-            return None
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise HTTPError(
+            request.full_url,
+            429,
+            "Too Many Requests",
+            {"Retry-After": "1"},
+            BytesIO(b'{"token":"rate-limit-secret"}'),
+        )
 
-        def read(self) -> bytes:
-            return b'{"not": "valid"'
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=2),
+    )
+    client = TestClient(create_app())
 
-    def fake_open_provider_request(request, *, timeout_seconds: float) -> FakeResponse:
-        return FakeResponse()
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
 
-    monkeypatch.setattr(provider_runtime, "open_provider_request", fake_open_provider_request)
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Provider request failed."
+    assert len(calls) == 2
+    assert sleeps == [1.0]
+    assert "rate-limit-secret" not in response.text
+
+
+def test_provider_generate_api_maps_exhausted_5xx_to_bad_gateway(monkeypatch) -> None:
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Unavailable",
+            {},
+            BytesIO(b'{"token":"server-error-secret"}'),
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=2),
+    )
     client = TestClient(create_app())
 
     response = client.post(
@@ -2093,6 +2168,80 @@ def test_provider_generate_api_maps_malformed_upstream_json_to_bad_gateway(monke
 
     assert response.status_code == 502
     assert response.json()["detail"] == "Provider request failed."
+    assert len(calls) == 2
+    assert sleeps == [0.2]
+    assert "server-error-secret" not in response.text
+
+
+@pytest.mark.parametrize("status_code", [401, 408])
+def test_provider_generate_api_maps_provider_4xx_without_retry(status_code, monkeypatch) -> None:
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise HTTPError(
+            request.full_url,
+            status_code,
+            "Provider client error.",
+            {"Authorization": "Bearer upstream-auth-secret"},
+            BytesIO(b'{"token":"auth-error-secret"}'),
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    assert len(calls) == 1
+    assert sleeps == []
+    assert "upstream-auth-secret" not in response.text
+    assert "auth-error-secret" not in response.text
+
+
+def test_provider_generate_api_maps_malformed_upstream_json_to_bad_gateway(monkeypatch) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"not": "valid"'
+
+    def fake_open_provider_request(request, *, timeout_seconds: float) -> FakeResponse:
+        return FakeResponse()
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    assert sleeps == []
 
 
 def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypatch) -> None:

@@ -4,9 +4,48 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008o Shared-Memory Reuse Policy And Exposure Hardening
+
+Status: completed for the scoped shared-memory reuse policy and API exposure hardening slice; Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected shared-memory reuse policy hardening as the next bounded Sprint 14 slice after operations summary surfacing.
+- Completed: Developer added `shared_memory_policy` to orchestration create/run contracts with backward-compatible default `owner` behavior and stricter `run` behavior.
+- Completed: Developer preserved same-run shared-memory reuse under `run` policy while blocking cross-run reuse if either the source run or consumer run is run-scoped.
+- Completed: Security review found shared-memory context exposure through unscoped agent/memory reads and public `orchestration_context` metadata writes; Developer remediated with owner/admin-scoped orchestration agent and shared-memory metadata reads, public create/patch/delete blocking for `orchestration_context`, tampered service-row exclusion, and bulk mutation guardrails for non-admin callers.
+- Completed: QA added service/API tests for source-side and consumer-side run-policy blocking, default/explicit API contract behavior, invalid policy validation, tampered metadata exclusion, public metadata write blocking, owner-scoped agent reads, and owner-scoped shared-memory metadata reads.
+- Completed: Reviewer reported no implementation blockers after reviewing default compatibility, persistence defaults, same-run in-flight reuse, and missing-source fail-closed behavior.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `shared_memory_policy="owner"` remains the default and preserves same-owner cross-run reuse after provenance, lifecycle, tag, and owner checks pass.
+- Implemented in this slice: `shared_memory_policy="run"` confines reuse to the same orchestration run when either the producer or consumer run chooses that policy.
+- Implemented in this slice: same-run memory reuse works against the current in-flight run state instead of a stale persisted run snapshot.
+- Implemented in this slice: shared-memory provenance validation now rejects tampered rows whose tags or description no longer match the completed source task.
+- Implemented in this slice: public metadata create/patch/delete routes reject `category="orchestration_context"` so orchestration shared-memory rows remain service-authored.
+- Implemented in this slice: when auth is enabled, non-admin `/agents` and `/api/v1/memory/*` reads only expose orchestration agent/shared-memory context owned by the authenticated actor; admin tokens retain all-run visibility.
+
+Remaining Sprint 14 work:
+- Add detached worker restart adoption/resume.
+- Harden production multi-agent scheduling and lease semantics.
+
+Validation:
+- Focused shared-memory service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 9 tests.
+- Focused shared-memory/security API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "shared_memory or orchestration_metadata or agent_reads"` passed with 8 tests.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 96 tests.
+- Broader API memory/orchestration/agent gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration or shared_memory or memory or agent"` passed with 38 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 823 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
+
 ### Sprint 14 BL-008n Orchestration Operations Summary
 
-Status: completed for the scoped operations summary slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
+Status: completed for the scoped operations summary slice; BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -24,9 +63,9 @@ Feature tracking:
 - Implemented in this slice: the summary route is registered before `{run_id}` lookup to avoid path capture by the dynamic route.
 
 Remaining Sprint 14 work:
-- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
+- Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
 
 Validation:
 - Focused summary service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "operations_summary"` passed with 2 tests.
@@ -37,11 +76,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume, shared-memory ACL policy refinement, or production scheduling/lease hardening.
+- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
 
 ### Sprint 14 BL-008m Detached Orchestration Execution Cancellation
 
-Status: completed for the scoped detached-execution cancellation slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
+Status: completed for the scoped detached-execution cancellation slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -60,10 +99,10 @@ Feature tracking:
 - Implemented in this slice: cancelling a detached execution stops only the detached orchestration loop; it does not cancel spawned tasks or agents.
 
 Remaining Sprint 14 work:
-- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Operations summary surfacing was completed later in BL-008n.
+- Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
 
 Validation:
 - Focused cancellation service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "background_execution_cancel"` passed with 5 tests.
@@ -74,11 +113,11 @@ Validation:
 - Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or shared-memory ACL policy refinement.
+- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
 
 ### Sprint 14 BL-008l Opt-In Orchestration Shared Memory
 
-Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; BL-008n later completed operations summary surfacing, and Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, and production scheduling/lease hardening.
+Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; BL-008n later completed operations summary surfacing, BL-008o later completed shared-memory reuse policy and API exposure hardening, and Sprint 14 remains active for detached worker restart adoption/resume and production scheduling/lease hardening.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -100,10 +139,10 @@ Feature tracking:
 - Implemented in this slice: the metadata list API accepts `tags` query parameters for tag-filter verification and consumers.
 
 Remaining Sprint 14 work:
-- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
 - Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Operations summary surfacing was completed later in BL-008n.
+- Shared-memory reuse policy and API exposure hardening was completed later in BL-008o.
 
 Validation:
 - Focused shared-memory gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "shared_memory"` passed with 6 tests.
@@ -115,7 +154,7 @@ Validation:
 - Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 803 tests and 2 skipped.
 
 Next:
-- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or shared-memory ACL policy refinement.
+- Continue Sprint 14 with detached worker restart adoption/resume or production scheduling/lease hardening.
 
 ### Sprint 14 BL-008k Detached Background Orchestration Execution
 

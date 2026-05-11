@@ -387,6 +387,51 @@ def test_orchestration_shared_memory_requires_all_tags_and_valid_provenance(
     assert completed.id not in broad_context
 
 
+def test_orchestration_shared_memory_rejects_tampered_service_metadata(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    producer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce service-authored QA memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-producer", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    service.update_task(
+        producer.id,
+        "qa-producer",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"summary": "Original."}),
+    )
+    session = get_db_session()
+    try:
+        items, _total = MetadataService(session).list_by_filters(
+            entity_type="memory",
+            category="orchestration_context",
+            tags=["qa-context"],
+        )
+        metadata = next(item for item in items if item.entity_id.endswith(":qa-producer"))
+        MetadataService(session).update(
+            metadata.id,
+            description="Forged exact orchestration memory.",
+        )
+    finally:
+        session.close()
+
+    consumer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Consume only service-authored memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-consumer", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    context = "\n".join(get_agent(_task_by_id(consumer, "qa-consumer").agent_id or "").context)
+
+    assert f"orchestration:{producer.id}:qa-producer" not in context
+    assert "Forged exact orchestration memory" not in context
+    assert "Original." not in context
+
+
 def test_orchestration_shared_memory_owner_scope_blocks_cross_actor_context(
     orchestration_state,
 ) -> None:
@@ -430,6 +475,84 @@ def test_orchestration_shared_memory_owner_scope_blocks_cross_actor_context(
     assert f"orchestration:{alpha.id}:qa-alpha" not in beta_context
     assert "Shared memory" in alpha_context
     assert f"orchestration:{alpha.id}:qa-alpha" in alpha_context
+
+
+def test_orchestration_shared_memory_run_policy_blocks_cross_run_reuse(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run_scoped = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep shared memory inside one run.",
+            shared_memory_tags=["qa-context"],
+            shared_memory_policy="run",
+            tasks=[
+                _task("qa-producer", role="QA", paths=["tests/test_orchestration.py"]),
+                _task(
+                    "qa-consumer",
+                    role="QA",
+                    dependencies=["qa-producer"],
+                    paths=["tests/test_orchestration.py"],
+                ),
+            ],
+        )
+    )
+    updated = service.update_task(
+        run_scoped.id,
+        "qa-producer",
+        OrchestrationTaskUpdate(
+            status=StepStatus.completed, output={"summary": "Run-only memory."}
+        ),
+    )
+    separate_owner_run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Try to reuse run-scoped memory from another run.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-other", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    same_run_context = "\n".join(
+        get_agent(_task_by_id(updated, "qa-consumer").agent_id or "").context
+    )
+    separate_context = "\n".join(
+        get_agent(_task_by_id(separate_owner_run, "qa-other").agent_id or "").context
+    )
+
+    assert f"orchestration:{run_scoped.id}:qa-producer" in same_run_context
+    assert f"orchestration:{run_scoped.id}:qa-producer" not in separate_context
+    assert "Run-only memory" not in separate_context
+
+
+def test_orchestration_shared_memory_consumer_run_policy_blocks_owner_reuse(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    producer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Produce owner reusable memory.",
+            shared_memory_tags=["qa-context"],
+            tasks=[_task("qa-producer", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    service.update_task(
+        producer.id,
+        "qa-producer",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"summary": "Owner memory."}),
+    )
+    run_scoped_consumer = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Run-scoped consumer should not import owner memory.",
+            shared_memory_tags=["qa-context"],
+            shared_memory_policy="run",
+            tasks=[_task("qa-consumer", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    context = "\n".join(
+        get_agent(_task_by_id(run_scoped_consumer, "qa-consumer").agent_id or "").context
+    )
+
+    assert f"orchestration:{producer.id}:qa-producer" not in context
+    assert "Owner memory" not in context
 
 
 def test_orchestration_shared_memory_retrieval_failure_is_fail_soft_and_redacted(

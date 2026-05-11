@@ -504,6 +504,24 @@ def _require_orchestration_admin(request: Request) -> None:
         )
 
 
+def _visible_agent_briefs(agents: list[AgentBrief], request: Request) -> list[AgentBrief]:
+    (
+        visible_agent_ids,
+        orchestration_agent_ids,
+    ) = orchestration_service.orchestration_agent_visibility(
+        actor=_orchestration_actor(request), include_all=_orchestration_include_all(request)
+    )
+    return [
+        agent
+        for agent in agents
+        if agent.id not in orchestration_agent_ids or agent.id in visible_agent_ids
+    ]
+
+
+def _agent_brief_is_visible(agent: AgentBrief, request: Request) -> bool:
+    return agent in _visible_agent_briefs([agent], request)
+
+
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)
 def check_filesystem_access(request: FileAccessRequest) -> FileAccessDecision:
     return evaluate_file_access(request)
@@ -954,25 +972,32 @@ def create_agent(brief: AgentBrief) -> AgentBrief:
 
 
 @router.get("/agents", response_model=list[AgentBrief])
-def get_agents() -> list[AgentBrief]:
-    return list_agents()
+def get_agents(request: Request) -> list[AgentBrief]:
+    return _visible_agent_briefs(list_agents(), request)
 
 
 @router.get("/agents/{agent_id}", response_model=AgentBrief)
-def get_agent_detail(agent_id: str) -> AgentBrief:
+def get_agent_detail(agent_id: str, request: Request) -> AgentBrief:
     agent = get_agent(agent_id)
-    if agent is None:
+    if agent is None or not _agent_brief_is_visible(agent, request):
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     return agent
 
 
 @router.get("/agents/{agent_id}/children", response_model=list[AgentBrief])
-def get_child_agents(agent_id: str) -> list[AgentBrief]:
-    return list_child_agents(agent_id)
+def get_child_agents(agent_id: str, request: Request) -> list[AgentBrief]:
+    return _visible_agent_briefs(list_child_agents(agent_id), request)
 
 
 @router.patch("/agents/{agent_id}/status", response_model=AgentBrief)
-def update_agent_lifecycle_status(agent_id: str, update: AgentStatusUpdate) -> AgentBrief:
+def update_agent_lifecycle_status(
+    agent_id: str,
+    update: AgentStatusUpdate,
+    request: Request,
+) -> AgentBrief:
+    current = get_agent(agent_id)
+    if current is None or not _agent_brief_is_visible(current, request):
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     agent = update_agent_status(agent_id, update)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")

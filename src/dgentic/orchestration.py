@@ -161,6 +161,7 @@ class OrchestrationService:
             tasks=list(tasks_by_id.values()),
             required_dod_evidence=request.required_dod_evidence,
             shared_memory_tags=_normalize_shared_memory_tags(request.shared_memory_tags),
+            shared_memory_policy=request.shared_memory_policy,
             role_boundary_decisions=decisions,
             blockers=blockers,
             follow_ups=follow_ups,
@@ -265,6 +266,21 @@ class OrchestrationService:
         if run is None or actor is None or include_all or run.requested_by == actor:
             return run
         return None
+
+    def orchestration_agent_visibility(
+        self,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> tuple[set[str], set[str]]:
+        visible_agent_ids: set[str] = set()
+        orchestration_agent_ids: set[str] = set()
+        for run in self._runs.list():
+            run_agent_ids = {task.agent_id for task in run.tasks if task.agent_id}
+            orchestration_agent_ids.update(run_agent_ids)
+            if actor is None or include_all or run.requested_by == actor:
+                visible_agent_ids.update(run_agent_ids)
+        return visible_agent_ids, orchestration_agent_ids
 
     @_locked_mutation
     def advance_run(
@@ -1666,10 +1682,12 @@ class OrchestrationService:
         if source_ids is None:
             return False
         source_run_id, source_task_id = source_ids
-        source_run = self._runs.get(source_run_id)
+        source_run = (
+            consumer_run if source_run_id == consumer_run.id else self._runs.get(source_run_id)
+        )
         if source_run is None:
             return False
-        if _shared_memory_owner(source_run) != _shared_memory_owner(consumer_run):
+        if not _shared_memory_policy_allows_source(consumer_run, source_run):
             return False
         if metadata.owner_agent != _shared_memory_owner(source_run):
             return False
@@ -1677,9 +1695,14 @@ class OrchestrationService:
             source_task = _task_by_id(source_run, source_task_id)
         except OrchestrationError:
             return False
+        metadata_tags = set(_normalize_shared_memory_tags(metadata.tags or []))
+        source_tags = set(_shared_memory_tags(source_run, source_task))
         return (
             source_task.status == StepStatus.completed
             and metadata.entity_id == _task_memory_entity_id(source_run, source_task)
+            and bool(metadata_tags)
+            and metadata_tags.issubset(source_tags)
+            and metadata.description == _completed_task_memory_description(source_run, source_task)
         )
 
 
@@ -1808,6 +1831,17 @@ def _shared_memory_owner(run: OrchestrationRun) -> str:
         run.requested_by or SHARED_MEMORY_SYSTEM_OWNER,
         max_chars=100,
     )
+
+
+def _shared_memory_policy_allows_source(
+    consumer_run: OrchestrationRun,
+    source_run: OrchestrationRun,
+) -> bool:
+    if _shared_memory_owner(source_run) != _shared_memory_owner(consumer_run):
+        return False
+    if source_run.shared_memory_policy == "run" or consumer_run.shared_memory_policy == "run":
+        return source_run.id == consumer_run.id
+    return True
 
 
 def _memory_context(metadata: MemoryMetadata) -> str:

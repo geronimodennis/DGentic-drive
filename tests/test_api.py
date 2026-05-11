@@ -46,6 +46,20 @@ def _configure_production_task_api_state(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def _configure_production_shared_memory_api_state(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        ("alpha-token=tasks,agents,memory;beta-token=tasks,agents,memory;admin-token=admin"),
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    reset_database_state()
+
+
 def test_health_returns_service_status() -> None:
     client = TestClient(create_app())
 
@@ -868,18 +882,89 @@ def test_orchestration_api_exposes_shared_memory_context_on_spawned_agent(
     agent_response = client.get(f"/agents/{agent_id}")
     list_response = client.get("/api/v1/memory/metadata?category=orchestration_context&tags=qa")
 
-    assert spoofed_memory_response.status_code == 201
+    assert spoofed_memory_response.status_code == 403
     assert producer_response.status_code == 201
     assert completed_response.status_code == 200
     assert create_response.status_code == 201
     assert agent_response.status_code == 200
     assert list_response.status_code == 200
-    assert list_response.json()["total"] == 2
+    assert list_response.json()["total"] == 1
     serialized_context = "\n".join(agent_response.json()["context"])
     assert f"Shared memory orchestration:{producer_id}:qa-producer" in serialized_context
     assert '"password": "[REDACTED]"' in serialized_context
     assert "api-spoofed-shared-memory" not in serialized_context
     assert "memory-secret" not in serialized_context
+
+
+def test_orchestration_api_blocks_public_orchestration_metadata_writes(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_blocked = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "public-orchestration-context",
+            "category": "orchestration_context",
+            "description": "Caller-supplied orchestration memory.",
+            "tags": ["qa-context"],
+        },
+    )
+    planning_create = client.post(
+        "/api/v1/memory/metadata",
+        json={
+            "entity_type": "memory",
+            "entity_id": "planning-memory",
+            "category": "planning",
+            "description": "Normal metadata remains caller writable.",
+            "tags": ["qa-context"],
+        },
+    )
+    promote_to_context = client.patch(
+        f"/api/v1/memory/metadata/{planning_create.json()['id']}",
+        json={"category": "orchestration_context"},
+    )
+    producer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Publish service-authored shared memory.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [
+                {
+                    "id": "qa-producer",
+                    "title": "QA producer",
+                    "description": "Publish memory context.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Shared memory is published by orchestration.",
+                }
+            ],
+        },
+    )
+    producer_id = producer_response.json()["id"]
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{producer_id}/tasks/qa-producer",
+        json={"status": "completed", "output": {"summary": "Service-authored memory."}},
+    )
+    list_response = client.get(
+        "/api/v1/memory/metadata?category=orchestration_context&tags=qa-context"
+    )
+    metadata_id = list_response.json()["items"][0]["id"]
+    patch_context = client.patch(
+        f"/api/v1/memory/metadata/{metadata_id}",
+        json={"description": "Caller should not rewrite service-authored context."},
+    )
+    delete_context = client.delete(f"/api/v1/memory/metadata/{metadata_id}")
+
+    assert create_blocked.status_code == 403
+    assert planning_create.status_code == 201
+    assert promote_to_context.status_code == 403
+    assert producer_response.status_code == 201
+    assert completed_response.status_code == 200
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+    assert patch_context.status_code == 403
+    assert delete_context.status_code == 403
 
 
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
@@ -1079,6 +1164,255 @@ def test_orchestration_api_shared_memory_respects_authenticated_task_owner(
     assert f"orchestration:{alpha_run_id}:qa-producer" not in beta_context
     assert f"orchestration:{alpha_run_id}:qa-producer" in alpha_context
     get_settings.cache_clear()
+
+
+def test_orchestration_api_agent_reads_respect_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure_production_shared_memory_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    alpha_headers = {"Authorization": "Bearer alpha-token"}
+    beta_headers = {"Authorization": "Bearer beta-token"}
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers=alpha_headers,
+        json={
+            "objective": "Alpha private agent context.",
+            "tasks": [
+                {
+                    "id": "qa-alpha",
+                    "title": "QA alpha",
+                    "description": "Keep alpha context owner scoped.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Alpha agent is visible to alpha and admin.",
+                }
+            ],
+        },
+    )
+    alpha_agent_id = alpha_create.json()["tasks"][0]["agent_id"]
+    alpha_get = client.get(f"/agents/{alpha_agent_id}", headers=alpha_headers)
+    beta_get = client.get(f"/agents/{alpha_agent_id}", headers=beta_headers)
+    beta_list = client.get("/agents", headers=beta_headers)
+    admin_get = client.get(f"/agents/{alpha_agent_id}", headers=admin_headers)
+
+    assert alpha_create.status_code == 201
+    assert alpha_get.status_code == 200
+    assert beta_get.status_code == 404
+    assert beta_list.status_code == 200
+    assert alpha_agent_id not in {agent["id"] for agent in beta_list.json()}
+    assert admin_get.status_code == 200
+    get_settings.cache_clear()
+    reset_database_state()
+
+
+def test_orchestration_api_shared_memory_metadata_reads_are_owner_scoped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure_production_shared_memory_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    alpha_headers = {"Authorization": "Bearer alpha-token"}
+    beta_headers = {"Authorization": "Bearer beta-token"}
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers=alpha_headers,
+        json={
+            "objective": "Alpha produces private shared memory.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [
+                {
+                    "id": "qa-producer",
+                    "title": "QA producer",
+                    "description": "Publish alpha memory.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Shared memory is owner scoped.",
+                }
+            ],
+        },
+    )
+    alpha_run_id = alpha_create.json()["id"]
+    alpha_complete = client.patch(
+        f"/tasks/orchestrations/{alpha_run_id}/tasks/qa-producer",
+        headers=alpha_headers,
+        json={"status": "completed", "output": {"summary": "Alpha private memory."}},
+    )
+    alpha_list = client.get(
+        "/api/v1/memory/metadata?category=orchestration_context&tags=qa-context",
+        headers=alpha_headers,
+    )
+    metadata_id = alpha_list.json()["items"][0]["id"]
+    beta_list = client.get(
+        "/api/v1/memory/metadata?category=orchestration_context&tags=qa-context",
+        headers=beta_headers,
+    )
+    beta_get = client.get(f"/api/v1/memory/metadata/{metadata_id}", headers=beta_headers)
+    beta_retrieve = client.get(
+        "/api/v1/memory/retrieve/metadata?category=orchestration_context",
+        headers=beta_headers,
+    )
+    admin_get = client.get(f"/api/v1/memory/metadata/{metadata_id}", headers=admin_headers)
+
+    assert alpha_create.status_code == 201
+    assert alpha_complete.status_code == 200
+    assert alpha_list.status_code == 200
+    assert alpha_list.json()["total"] == 1
+    assert beta_list.status_code == 200
+    assert beta_list.json()["total"] == 0
+    assert beta_get.status_code == 404
+    assert beta_retrieve.status_code == 200
+    assert beta_retrieve.json()["total"] == 0
+    assert admin_get.status_code == 200
+    assert admin_get.json()["entity_id"] == f"orchestration:{alpha_run_id}:qa-producer"
+    get_settings.cache_clear()
+    reset_database_state()
+
+
+def test_orchestration_api_shared_memory_run_policy_blocks_cross_run_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    producer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Produce run-scoped API memory.",
+            "shared_memory_tags": ["qa-context"],
+            "shared_memory_policy": "run",
+            "tasks": [
+                {
+                    "id": "qa-producer",
+                    "title": "QA producer",
+                    "description": "Publish run-scoped memory.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Memory is run scoped.",
+                }
+            ],
+        },
+    )
+    producer_id = producer_response.json()["id"]
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{producer_id}/tasks/qa-producer",
+        json={"status": "completed", "output": {"summary": "Run-scoped API memory."}},
+    )
+    consumer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Try cross-run memory reuse.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [
+                {
+                    "id": "qa-consumer",
+                    "title": "QA consumer",
+                    "description": "Try run-scoped memory.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Memory is not imported.",
+                }
+            ],
+        },
+    )
+    agent_response = client.get(f"/agents/{consumer_response.json()['tasks'][0]['agent_id']}")
+    context = "\n".join(agent_response.json()["context"])
+
+    assert producer_response.status_code == 201
+    assert completed_response.status_code == 200
+    assert consumer_response.status_code == 201
+    assert agent_response.status_code == 200
+    assert producer_response.json()["shared_memory_policy"] == "run"
+    assert consumer_response.json()["shared_memory_policy"] == "owner"
+    assert f"orchestration:{producer_id}:qa-producer" not in context
+    assert "Run-scoped API memory" not in context
+
+
+def test_orchestration_api_shared_memory_consumer_run_policy_blocks_owner_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    producer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Produce owner-scoped API memory.",
+            "shared_memory_tags": ["qa-context"],
+            "tasks": [
+                {
+                    "id": "qa-producer",
+                    "title": "QA producer",
+                    "description": "Publish owner-scoped memory.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Memory uses the default owner policy.",
+                }
+            ],
+        },
+    )
+    producer_id = producer_response.json()["id"]
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{producer_id}/tasks/qa-producer",
+        json={"status": "completed", "output": {"summary": "Owner-scoped API memory."}},
+    )
+    consumer_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Run-scoped consumer should not import owner memory.",
+            "shared_memory_tags": ["qa-context"],
+            "shared_memory_policy": "run",
+            "tasks": [
+                {
+                    "id": "qa-consumer",
+                    "title": "QA consumer",
+                    "description": "Reject cross-run owner memory.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Memory is not imported.",
+                }
+            ],
+        },
+    )
+    agent_response = client.get(f"/agents/{consumer_response.json()['tasks'][0]['agent_id']}")
+    context = "\n".join(agent_response.json()["context"])
+
+    assert producer_response.status_code == 201
+    assert completed_response.status_code == 200
+    assert consumer_response.status_code == 201
+    assert agent_response.status_code == 200
+    assert producer_response.json()["shared_memory_policy"] == "owner"
+    assert consumer_response.json()["shared_memory_policy"] == "run"
+    assert f"orchestration:{producer_id}:qa-producer" not in context
+    assert "Owner-scoped API memory" not in context
+
+
+def test_orchestration_api_shared_memory_policy_rejects_invalid_value(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject invalid shared memory policy.",
+            "shared_memory_tags": ["qa-context"],
+            "shared_memory_policy": "workspace",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate shared memory policy contract.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Invalid policy is rejected.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "shared_memory_policy"]
 
 
 def test_orchestration_api_background_execution_respects_authenticated_task_owner(

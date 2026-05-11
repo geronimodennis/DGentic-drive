@@ -97,11 +97,16 @@ class MetadataService:
         metadata.pruned_at = None
         metadata.updated_at = datetime.now(UTC)
 
-    def get_by_id(self, metadata_id: UUID | str) -> MemoryMetadata | None:
+    def get_by_id(
+        self,
+        metadata_id: UUID | str,
+        *,
+        update_access: bool = True,
+    ) -> MemoryMetadata | None:
         metadata = (
             self.session.query(MemoryMetadata).filter(MemoryMetadata.id == str(metadata_id)).first()
         )
-        if metadata:
+        if metadata and update_access:
             metadata.increment_access()
             self.session.commit()
             self.session.refresh(metadata)

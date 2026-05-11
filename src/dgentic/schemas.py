@@ -328,6 +328,7 @@ class OrchestrationCreateRequest(BaseModel):
     tasks: list[OrchestrationTaskSpec] = Field(min_length=1, max_length=50)
     required_dod_evidence: list[str] = Field(default_factory=lambda: ["tests", "docs", "review"])
     shared_memory_tags: list[str] = Field(default_factory=list, max_length=20)
+    shared_memory_policy: Literal["owner", "run"] = "owner"
     requested_by: str | None = None
 
 
@@ -399,6 +400,7 @@ class OrchestrationRun(BaseModel):
     follow_ups: list[OrchestrationFollowUp] = Field(default_factory=list)
     scheduled_task_ids: list[str] = Field(default_factory=list)
     shared_memory_tags: list[str] = Field(default_factory=list)
+    shared_memory_policy: Literal["owner", "run"] = "owner"
     requested_by: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

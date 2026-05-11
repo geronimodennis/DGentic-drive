@@ -413,9 +413,9 @@ Definition of Done:
 - README, setup docs, architecture docs, usage docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, and principal attachment on request state.
+- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, persisted-token startup bootstrap after env-token removal, and operator-id actor binding for persisted-token approval decisions.
 - Risk updated after Sprint 9 hardening: built-in read-only CLI path operands now receive cwd-aware rootDir checks, symlink escape checks, shell expansion checks, and Windows/POSIX path-shape regressions; broader host-boundary risks remain for trusted custom policy rules, non-built-in exfiltration commands, and time-of-check/time-of-use workspace changes.
-- Not yet implemented: persisted identities, hashed/rotating expiring tokens, actor-bound approval identities, encrypted credential storage, external secret manager integration, broader CLI host-boundary enforcement beyond the current built-in read-only command set, and network/domain guardrails.
+- Remaining: broader persisted operator identity profiles and assignment workflows, encrypted credential storage, external secret manager integration, broader audit actor propagation beyond the current approval/orchestration surfaces, broader CLI host-boundary enforcement beyond the current built-in read-only command set, and network/domain guardrails.
 
 ### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
 
@@ -669,6 +669,10 @@ Goal:
 
 Stories:
 - BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Current Sprint 15 status:
+- Completed checkpoint: BL-009a persisted auth-token lifecycle is implemented and validated. This slice covers salted hash storage, create/list/rotate/revoke/expire APIs, one-time raw token return, active persisted-token startup bootstrap, env-token compatibility, safe auth audit events, inactive-token rotation rejection, expiry preservation on rotation, nonblank operator ids, and operator-id actor binding for persisted-token approval requesters and decisions.
+- Remaining after BL-009a: broader persisted identity records and assignment workflows, encrypted credential storage or external secret-manager integration, network/domain guardrail policy, broader audit actor propagation, and cross-surface no-secret-response validation.
 
 Exit criteria:
 - Tokens are hashed at rest and support rotation, expiry, and revocation.

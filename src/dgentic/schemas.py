@@ -65,6 +65,7 @@ class OrchestrationExecutionStatus(StrEnum):
 
 
 class LogEventType(StrEnum):
+    auth = "auth"
     task = "task"
     agent = "agent"
     provider = "provider"

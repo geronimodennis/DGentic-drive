@@ -13,6 +13,17 @@ from dgentic.agents import (
     spawn_agent,
     update_agent_status,
 )
+from dgentic.auth import (
+    AuthTokenCreateResponse,
+    AuthTokenRequest,
+    AuthTokenRotateRequest,
+    AuthTokenView,
+    create_auth_token,
+    expire_auth_token,
+    list_auth_tokens,
+    revoke_auth_token,
+    rotate_auth_token,
+)
 from dgentic.cli_runtime import (
     CommandApproval,
     CommandApprovalReview,
@@ -165,8 +176,19 @@ router = APIRouter()
 def _approval_decider(http_request: Request, requested_decider: str | None) -> str | None:
     principal = getattr(http_request.state, "principal", None)
     if principal is not None:
-        return principal.token_id
+        return principal.actor_id
     return requested_decider
+
+
+def _principal_actor(request: Request) -> str | None:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return None
+    return principal.actor_id
+
+
+def _approval_requester(http_request: Request, requested_by: str | None) -> str | None:
+    return _principal_actor(http_request) or requested_by
 
 
 @router.get("/", response_model=HealthResponse)
@@ -187,6 +209,49 @@ def health() -> HealthResponse:
         service=settings.app_name,
         environment=settings.environment,
     )
+
+
+@router.post("/auth/tokens", response_model=AuthTokenCreateResponse, status_code=201)
+def create_persisted_auth_token(
+    payload: AuthTokenRequest,
+    request: Request,
+) -> AuthTokenCreateResponse:
+    return create_auth_token(payload, actor=_principal_actor(request))
+
+
+@router.get("/auth/tokens", response_model=list[AuthTokenView])
+def get_persisted_auth_tokens() -> list[AuthTokenView]:
+    return list_auth_tokens()
+
+
+@router.post("/auth/tokens/{token_id}/rotate", response_model=AuthTokenCreateResponse)
+def rotate_persisted_auth_token(
+    token_id: str,
+    payload: AuthTokenRotateRequest,
+    request: Request,
+) -> AuthTokenCreateResponse:
+    try:
+        return rotate_auth_token(token_id, payload, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/auth/tokens/{token_id}/revoke", response_model=AuthTokenView)
+def revoke_persisted_auth_token(token_id: str, request: Request) -> AuthTokenView:
+    try:
+        return revoke_auth_token(token_id, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/auth/tokens/{token_id}/expire", response_model=AuthTokenView)
+def expire_persisted_auth_token(token_id: str, request: Request) -> AuthTokenView:
+    try:
+        return expire_auth_token(token_id, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/tasks/plan", response_model=TaskPlan, status_code=201)
@@ -489,7 +554,7 @@ def _orchestration_actor(request: Request) -> str | None:
     principal = getattr(request.state, "principal", None)
     if principal is None:
         return None
-    return principal.token_id
+    return principal.actor_id
 
 
 def _orchestration_include_all(request: Request) -> bool:
@@ -745,11 +810,15 @@ def cancel_cli_run(run_id: str) -> CommandRun:
 
 @router.post("/cli/approvals", response_model=CommandApproval, status_code=201)
 def create_cli_approval(
-    request: CommandExecutionRequest,
+    payload: CommandExecutionRequest,
+    http_request: Request,
     requested_by: str | None = None,
 ) -> CommandApproval:
     try:
-        return cli_runtime_service.create_approval(request, requested_by=requested_by)
+        return cli_runtime_service.create_approval(
+            payload,
+            requested_by=_approval_requester(http_request, requested_by),
+        )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
@@ -841,11 +910,16 @@ def get_provider_health(provider_id: str) -> ProviderHealth:
 @router.post("/providers/{provider_id}/approvals", response_model=ProviderApproval, status_code=201)
 def create_external_provider_approval(
     provider_id: str,
-    request: ProviderGenerationRequest,
+    payload: ProviderGenerationRequest,
+    http_request: Request,
     requested_by: str | None = None,
 ) -> ProviderApproval:
     try:
-        return create_provider_approval(provider_id, request, requested_by=requested_by)
+        return create_provider_approval(
+            provider_id,
+            payload,
+            requested_by=_approval_requester(http_request, requested_by),
+        )
     except ProviderEgressPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderConfigurationError as exc:
@@ -1048,11 +1122,16 @@ def get_tools() -> list[ToolManifest]:
 @router.post("/tools/{name}/approvals", response_model=ToolApproval, status_code=201)
 def create_local_tool_approval(
     name: str,
-    request: ToolExecutionRequest,
+    payload: ToolExecutionRequest,
+    http_request: Request,
     requested_by: str | None = None,
 ) -> ToolApproval:
     try:
-        return create_tool_approval(name, request, requested_by=requested_by)
+        return create_tool_approval(
+            name,
+            payload,
+            requested_by=_approval_requester(http_request, requested_by),
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileNotFoundError as exc:

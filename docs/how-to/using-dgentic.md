@@ -51,7 +51,7 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
-In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens configured with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`. When authentication is enabled, startup fails closed if no usable token map is configured.
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then issue persisted generated tokens through the auth-token API. Persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, store salted PBKDF2 hashes instead of raw token values, and return the raw token only in the create or rotate response. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
 
 Example protected request in production mode:
 
@@ -60,6 +60,20 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
   -H "Authorization: Bearer task-token" `
   -H "Content-Type: application/json" `
   -d '{"objective":"Create a guarded task plan for indexing project memory."}'
+```
+
+Create and rotate a persisted token with a bootstrap admin token:
+
+```powershell
+$created = curl -X POST http://127.0.0.1:8000/auth/tokens `
+  -H "Authorization: Bearer admin-token" `
+  -H "Content-Type: application/json" `
+  -d '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks"]}'
+
+curl -X POST "http://127.0.0.1:8000/auth/tokens/$($created.record.id)/rotate" `
+  -H "Authorization: Bearer admin-token" `
+  -H "Content-Type: application/json" `
+  -d '{"label":"rotated task automation","capabilities":["tasks"]}'
 ```
 
 SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. Ordered schema migrations are tracked in `schema_migrations`, and file-backed SQLite state can be backed up or restored with the local `backup_sqlite_database` and `restore_sqlite_database` helpers.
@@ -490,7 +504,7 @@ Configure local model providers first:
 Configure strict operating boundaries before running autonomous tasks:
 
 - Workspace `rootDir`
-- Bearer-token authentication, route capabilities, and startup token validation for production/staging APIs
+- Bearer-token authentication, route capabilities, persisted generated token lifecycle APIs, and startup token validation for production/staging APIs
 - Filesystem text, binary, directory, metadata, delete, move, copy, and rename permissions
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
@@ -542,7 +556,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, and persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, but broader persisted identity profiles, encrypted credential storage, network/domain guardrails, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while encrypted credential storage, provider billing reconciliation, and provider-specific external adapters remain future work.

@@ -1,3 +1,6 @@
+import json
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +10,9 @@ from dgentic.auth import (
     parse_token_map,
     validate_auth_configuration,
 )
+from dgentic.events import event_log
 from dgentic.main import create_app
+from dgentic.schemas import LogEventType
 from dgentic.settings import Settings, get_settings
 
 TASK_REQUEST = {"objective": "Verify production auth baseline."}
@@ -34,6 +39,22 @@ def client_with_auth_env(
         monkeypatch.delenv("DGENTIC_AUTH_ENABLED", raising=False)
     else:
         monkeypatch.setenv("DGENTIC_AUTH_ENABLED", auth_enabled)
+    get_settings.cache_clear()
+    return TestClient(create_app())
+
+
+def production_client_with_state(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    auth_tokens: str = "bootstrap-token=admin",
+) -> TestClient:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", auth_tokens)
     get_settings.cache_clear()
     return TestClient(create_app())
 
@@ -179,12 +200,424 @@ def test_create_app_fails_closed_when_production_auth_has_no_tokens(
         create_app()
 
 
+def test_persisted_auth_token_is_hashed_returned_once_and_survives_restart(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_response = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "label": "tasks", "capabilities": ["tasks"]},
+    )
+    raw_token = create_response.json()["token"]
+    token_id = create_response.json()["record"]["id"]
+    state_text = (tmp_path / "state" / "auth-tokens.json").read_text(encoding="utf-8")
+
+    task_response = client.post("/tasks/plan", headers=bearer(raw_token), json=TASK_REQUEST)
+    list_response = client.get("/auth/tokens", headers=bearer("bootstrap-token"))
+    get_settings.cache_clear()
+    restarted = TestClient(create_app())
+    restarted_task_response = restarted.post(
+        "/tasks/plan",
+        headers=bearer(raw_token),
+        json=TASK_REQUEST,
+    )
+
+    assert create_response.status_code == 201
+    assert raw_token
+    assert create_response.json()["record"]["operator_id"] == "operator-alpha"
+    assert "token_hash" not in create_response.json()["record"]
+    assert raw_token not in state_text
+    assert "pbkdf2-sha256$" in state_text
+    assert task_response.status_code == 201
+    assert list_response.status_code == 200
+    assert raw_token not in list_response.text
+    assert token_id in list_response.text
+    assert restarted_task_response.status_code == 201
+
+
+def test_persisted_auth_token_can_bootstrap_production_without_env_tokens(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_response = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    )
+    raw_token = create_response.json()["token"]
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "")
+    get_settings.cache_clear()
+
+    restarted = TestClient(create_app())
+    response = restarted.post("/tasks/plan", headers=bearer(raw_token), json=TASK_REQUEST)
+
+    assert create_response.status_code == 201
+    assert response.status_code == 201
+
+
+def test_persisted_auth_token_rejects_blank_operator_id(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "   ", "capabilities": ["tasks"]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_persisted_token_rotation_revokes_old_token_without_secret_echo(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    ).json()
+    raw_token = created["token"]
+    token_id = created["record"]["id"]
+
+    rotate_response = client.post(
+        f"/auth/tokens/{token_id}/rotate",
+        headers=bearer("bootstrap-token"),
+        json={"label": "rotated", "capabilities": ["tasks"]},
+    )
+    rotated = rotate_response.json()
+    old_response = client.post("/tasks/plan", headers=bearer(raw_token), json=TASK_REQUEST)
+    new_response = client.post(
+        "/tasks/plan",
+        headers=bearer(rotated["token"]),
+        json=TASK_REQUEST,
+    )
+    logs = event_log.list(LogEventType.auth)
+
+    assert rotate_response.status_code == 200
+    assert rotated["record"]["rotated_from_token_id"] == token_id
+    assert old_response.status_code == 401
+    assert new_response.status_code == 201
+    serialized_logs = json.dumps([event.model_dump(mode="json") for event in logs])
+    assert raw_token not in serialized_logs
+    assert rotated["token"] not in serialized_logs
+
+
+def test_persisted_token_rotation_preserves_existing_expiry_by_default(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "capabilities": ["tasks"],
+            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        },
+    ).json()
+
+    rotate_response = client.post(
+        f"/auth/tokens/{created['record']['id']}/rotate",
+        headers=bearer("bootstrap-token"),
+        json={"capabilities": ["tasks"]},
+    )
+
+    assert rotate_response.status_code == 200
+    assert rotate_response.json()["record"]["expires_at"] == created["record"]["expires_at"]
+
+
+def test_persisted_token_rotation_rejects_inactive_records(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    revoked = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    ).json()
+    expired = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "capabilities": ["tasks"],
+            "expires_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        },
+    ).json()
+    client.post(
+        f"/auth/tokens/{revoked['record']['id']}/revoke",
+        headers=bearer("bootstrap-token"),
+    )
+
+    revoked_rotate = client.post(
+        f"/auth/tokens/{revoked['record']['id']}/rotate",
+        headers=bearer("bootstrap-token"),
+        json={"capabilities": ["tasks"]},
+    )
+    expired_rotate = client.post(
+        f"/auth/tokens/{expired['record']['id']}/rotate",
+        headers=bearer("bootstrap-token"),
+        json={"capabilities": ["tasks"]},
+    )
+
+    assert revoked_rotate.status_code == 409
+    assert expired_rotate.status_code == 409
+    assert revoked["token"] not in revoked_rotate.text
+    assert expired["token"] not in expired_rotate.text
+
+
+def test_persisted_revoked_and_expired_tokens_are_rejected_without_secret_echo(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    active = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    ).json()
+    sibling = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    ).json()
+    expired = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "capabilities": ["tasks"],
+            "expires_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        },
+    ).json()
+
+    revoke_response = client.post(
+        f"/auth/tokens/{active['record']['id']}/revoke",
+        headers=bearer("bootstrap-token"),
+    )
+    revoked_response = client.post(
+        "/tasks/plan",
+        headers=bearer(active["token"]),
+        json=TASK_REQUEST,
+    )
+    sibling_response = client.post(
+        "/tasks/plan",
+        headers=bearer(sibling["token"]),
+        json=TASK_REQUEST,
+    )
+    expired_response = client.post(
+        "/tasks/plan",
+        headers=bearer(expired["token"]),
+        json=TASK_REQUEST,
+    )
+
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == "revoked"
+    assert "token" not in revoke_response.json()
+    assert revoked_response.status_code == 401
+    assert active["token"] not in revoked_response.text
+    assert sibling_response.status_code == 201
+    assert expired_response.status_code == 401
+    assert expired["token"] not in expired_response.text
+
+
+def test_persisted_token_expire_endpoint_rejects_token_without_secret_echo(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-alpha", "capabilities": ["tasks"]},
+    ).json()
+
+    expire_response = client.post(
+        f"/auth/tokens/{created['record']['id']}/expire",
+        headers=bearer("bootstrap-token"),
+    )
+    rejected_response = client.post(
+        "/tasks/plan",
+        headers=bearer(created["token"]),
+        json=TASK_REQUEST,
+    )
+
+    assert expire_response.status_code == 200
+    assert expire_response.json()["status"] == "expired"
+    assert "token" not in expire_response.json()
+    assert rejected_response.status_code == 401
+    assert created["token"] not in rejected_response.text
+
+
+def test_persisted_token_expiry_accepts_naive_datetime_as_utc(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    expired_at = (datetime.now(UTC) - timedelta(seconds=1)).replace(tzinfo=None).isoformat()
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-alpha",
+            "capabilities": ["tasks"],
+            "expires_at": expired_at,
+        },
+    ).json()
+
+    expired_response = client.post(
+        "/tasks/plan",
+        headers=bearer(created["token"]),
+        json=TASK_REQUEST,
+    )
+
+    assert expired_response.status_code == 401
+
+
+def test_persisted_token_capabilities_and_env_tokens_can_coexist(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-fs", "capabilities": ["filesystem"]},
+    ).json()
+
+    wrong_capability = client.post(
+        "/tasks/plan",
+        headers=bearer(created["token"]),
+        json=TASK_REQUEST,
+    )
+    env_token_response = client.post(
+        "/tasks/plan",
+        headers=bearer("bootstrap-token"),
+        json=TASK_REQUEST,
+    )
+    state_text = (tmp_path / "state" / "auth-tokens.json").read_text(encoding="utf-8")
+
+    assert wrong_capability.status_code == 403
+    assert env_token_response.status_code == 201
+    assert "bootstrap-token" not in state_text
+
+
+def test_auth_token_management_requires_auth_capability(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    task_token = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-task", "capabilities": ["tasks"]},
+    ).json()
+    auth_token = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-auth", "capabilities": ["auth"]},
+    ).json()
+
+    forbidden_list = client.get("/auth/tokens", headers=bearer(task_token["token"]))
+    allowed_list = client.get("/auth/tokens", headers=bearer(auth_token["token"]))
+    forbidden_create = client.post(
+        "/auth/tokens",
+        headers=bearer(task_token["token"]),
+        json={"operator_id": "operator-new", "capabilities": ["tasks"]},
+    )
+
+    assert forbidden_list.status_code == 403
+    assert allowed_list.status_code == 200
+    assert forbidden_create.status_code == 403
+
+
+def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", "https://api.example.com/v1")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "DGENTIC_TEST_EXTERNAL")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    monkeypatch.setenv("DGENTIC_TEST_EXTERNAL", "secret-value")
+    client = production_client_with_state(tmp_path, monkeypatch)
+    created = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-approver",
+            "capabilities": ["cli", "approvals", "tools"],
+        },
+    ).json()
+    headers = bearer(created["token"])
+    tool_dir = tmp_path / "workspace" / "localmcp" / "auth-approval-tool"
+    tool_dir.mkdir(parents=True)
+    (tool_dir / "wrapper.py").write_text(
+        "def run(payload):\n    return {'ok': True}\n",
+        encoding="utf-8",
+    )
+
+    approval_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        headers=headers,
+        json={"command": "python --version", "timeout_seconds": 10},
+    )
+    approve_response = client.post(
+        f"/cli/approvals/{approval_response.json()['id']}/approve",
+        headers=headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+    provider_approval_response = client.post(
+        "/providers/external-openai-compatible/approvals?requested_by=provider-spoof",
+        headers=headers,
+        json={
+            "provider_id": "external-openai-compatible",
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    create_tool_response = client.post(
+        "/tools",
+        headers=headers,
+        json={
+            "name": "auth-approval-tool",
+            "description": "Approval requester binding test tool.",
+            "entrypoint": "wrapper.py",
+            "permission_mode": "approval_required",
+        },
+    )
+    tool_approval_response = client.post(
+        "/tools/auth-approval-tool/approvals?requested_by=tool-spoof",
+        headers=headers,
+        json={"payload": {"ok": True}, "timeout_seconds": 5},
+    )
+
+    assert approval_response.status_code == 201
+    assert approval_response.json()["requested_by"] == "operator-approver"
+    assert approve_response.status_code == 200
+    assert approve_response.json()["decided_by"] == "operator-approver"
+    assert provider_approval_response.status_code == 201
+    assert provider_approval_response.json()["requested_by"] == "operator-approver"
+    assert create_tool_response.status_code == 201
+    assert tool_approval_response.status_code == 201
+    assert tool_approval_response.json()["requested_by"] == "operator-approver"
+
+
 @pytest.mark.parametrize(
     ("path", "capability"),
     [
         ("/", None),
         ("/health", None),
         ("/tasks/plan", "tasks"),
+        ("/auth/tokens", "auth"),
         ("/filesystem/read", "filesystem"),
         ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),

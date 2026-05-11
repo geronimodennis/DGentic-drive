@@ -46,7 +46,7 @@ Default settings:
 
 Local development is usable without authentication by default. In `staging` and `production`, DGentic enables bearer-token capability checks unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 
-When authentication is enabled, DGentic requires at least one valid `token=capabilities` entry in `DGENTIC_AUTH_TOKENS`. Startup fails closed if auth is enabled without usable tokens.
+When authentication is enabled, DGentic requires either at least one valid bootstrap `token=capabilities` entry in `DGENTIC_AUTH_TOKENS` or at least one active persisted generated token in `auth-tokens.json`. Startup fails closed if auth is enabled without a usable environment token or active persisted token.
 
 Token configuration uses semicolon-separated token entries and comma-separated capabilities:
 
@@ -66,7 +66,25 @@ Invoke-RestMethod `
   -Body '{"objective":"Create a guarded plan for indexing project memory."}'
 ```
 
-Capability groups currently include `admin`, `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
+Persisted generated tokens can be issued and rotated with a bootstrap admin token or another principal that has auth-token management access. The raw token is returned only from create or rotate responses; stored records keep salted PBKDF2 hashes and expose safe metadata when listed:
+
+```powershell
+$created = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/auth/tokens `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks"]}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/auth/tokens/$($created.record.id)/rotate" `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"label":"rotated task automation","capabilities":["tasks"]}'
+```
+
+Capability groups currently include `admin`, `auth`, `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
 
 ## Configure Database Persistence
 
@@ -557,6 +575,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
+- Production/staging auth supports route capability gates, startup fail-closed validation, and persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, but broader persisted identity profiles, encrypted credential storage, network/domain guardrails, and full audit actor propagation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only env-referenced bearer credential and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted credential storage, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.

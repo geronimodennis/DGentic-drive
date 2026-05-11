@@ -52,7 +52,7 @@ def _request_actor(request: Request) -> str | None:
     principal = getattr(request.state, "principal", None)
     if principal is None:
         return None
-    return principal.token_id
+    return principal.actor_id
 
 
 def _request_is_admin(request: Request) -> bool:

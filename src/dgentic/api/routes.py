@@ -44,6 +44,7 @@ from dgentic.guardrails import (
 )
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
+from dgentic.provider_pricing import ProviderPricingConfigurationError
 from dgentic.provider_runtime import (
     ProviderApproval,
     ProviderApprovalRequiredError,
@@ -492,12 +493,18 @@ def get_cli_runs() -> list[CommandRun]:
 
 @router.get("/providers", response_model=list[ProviderConfig])
 def get_providers() -> list[ProviderConfig]:
-    return list_providers()
+    try:
+        return list_providers()
+    except ProviderPricingConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Provider pricing catalog is invalid.") from exc
 
 
 @router.get("/providers/{provider_id}/health", response_model=ProviderHealth)
 def get_provider_health(provider_id: str) -> ProviderHealth:
-    return check_provider_health(provider_id)
+    try:
+        return check_provider_health(provider_id)
+    except ProviderPricingConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Provider pricing catalog is invalid.") from exc
 
 
 @router.post("/providers/{provider_id}/approvals", response_model=ProviderApproval, status_code=201)
@@ -571,6 +578,8 @@ def deny_external_provider_approval(
 def decide_route(request: RoutingRequest) -> RoutingDecision:
     try:
         return choose_provider(request)
+    except ProviderPricingConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Provider pricing catalog is invalid.") from exc
     except ProviderRoutingError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

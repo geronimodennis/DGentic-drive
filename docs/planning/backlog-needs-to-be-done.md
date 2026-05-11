@@ -276,7 +276,8 @@ Current implementation status:
 - Completed: BL-006g provider request and upstream response payload validation, including bounded provider/model/message/options/timeout/token/temperature request shapes, supported chat-role enforcement, JSON-compatible option validation, provider error-object rejection, malformed success-payload rejection for Ollama/OpenAI-compatible responses, and generic no-secret API failure mapping.
 - Completed: BL-006h normalized provider usage and static request-cost metadata, including non-streaming result usage/cost fields, streaming event usage/cost fields, provider completion log usage/cost metadata, and max-cost routing ceilings.
 - Completed: BL-006i in-process provider circuit breaker behavior, including configurable per-provider failure thresholds/cooldowns, retry-exhausted failure counting, fast `503` responses while open, cooldown reset, successful-call reset, provider/base-URL isolation, half-open probe locking/cleanup, and approval-preserving external fail-fast behavior.
-- Remaining: encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, durable multi-worker circuit state, and provider-specific pricing/billing tables beyond static request estimates.
+- Completed: BL-006j provider pricing catalog and advisory cost estimation, including bounded exact provider/model pricing configuration, usage-based external cost estimates for non-streaming and streaming responses, routing request estimates, invalid-catalog fail-closed behavior before transport, and no-content/no-secret log coverage.
+- Remaining: encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, durable multi-worker circuit state, and provider billing reconciliation beyond advisory estimates.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -560,7 +561,7 @@ Exit criteria:
 - External provider adapter works through shared provider contracts.
 - Credentials are protected.
 - Streaming, retry, rate-limit, and routing tests pass.
-- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist; BL-006d adds OpenAI-compatible streaming for LM Studio and the configured external adapter; BL-006e adds bound provider approval records for external generation in staging/production; BL-006f adds Ollama streaming; BL-006g adds provider request and upstream response payload validation; BL-006h adds normalized usage/cost metadata and max-cost routing ceilings; BL-006i adds in-process provider circuit breakers.
+- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist; BL-006d adds OpenAI-compatible streaming for LM Studio and the configured external adapter; BL-006e adds bound provider approval records for external generation in staging/production; BL-006f adds Ollama streaming; BL-006g adds provider request and upstream response payload validation; BL-006h adds normalized usage/cost metadata and max-cost routing ceilings; BL-006i adds in-process provider circuit breakers; BL-006j adds bounded provider/model pricing estimates for external usage and routing.
 
 ### Sprint 13: Memory Production Lifecycle
 

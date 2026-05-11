@@ -20,6 +20,11 @@ from dgentic.provider_policy import (
     allowed_provider_base_urls_for_provider,
     normalize_provider_base_url,
 )
+from dgentic.provider_pricing import (
+    ProviderPricingConfigurationError,
+    estimate_provider_usage_cost_usd,
+    validate_provider_pricing_catalog,
+)
 from dgentic.provider_transport import (
     ProviderRateLimitError,
     ProviderRetryPolicy,
@@ -533,6 +538,7 @@ def generate_provider_completion(
     )
 
     try:
+        _validate_provider_pricing_config()
         url, payload, headers = _build_provider_request(request)
         circuit_key = _provider_circuit_key(request, url)
         _raise_if_provider_circuit_open(circuit_key)
@@ -554,7 +560,11 @@ def generate_provider_completion(
             model=request.model,
             content=_extract_content(request.provider_id, raw_response),
             usage_metadata=usage_metadata,
-            estimated_cost_usd=_estimated_provider_cost_usd(request.provider_id),
+            estimated_cost_usd=_estimated_provider_cost_usd(
+                request.provider_id,
+                request.model,
+                usage_metadata,
+            ),
             raw_response_metadata=_safe_response_metadata(request.provider_id, raw_response),
             duration_ms=duration_ms,
         )
@@ -602,6 +612,7 @@ def stream_provider_completion(
     )
 
     try:
+        _validate_provider_pricing_config()
         url, payload, headers = _build_provider_stream_request(request)
         circuit_key = _provider_circuit_key(request, url)
         _raise_if_provider_circuit_open(circuit_key)
@@ -966,7 +977,22 @@ def _normalized_usage_metadata(
     return {}
 
 
-def _estimated_provider_cost_usd(provider_id: str) -> float | None:
+def _estimated_provider_cost_usd(
+    provider_id: str,
+    model: str,
+    usage_metadata: dict[str, int | float],
+) -> float | None:
+    try:
+        configured_estimate = estimate_provider_usage_cost_usd(
+            get_settings(),
+            provider_id=provider_id,
+            model=model,
+            usage_metadata=usage_metadata,
+        )
+    except ProviderPricingConfigurationError as exc:
+        raise ProviderConfigurationError("Provider pricing catalog is invalid.") from exc
+    if configured_estimate is not None:
+        return configured_estimate
     if provider_id in {OLLAMA_PROVIDER_ID, LM_STUDIO_PROVIDER_ID}:
         return 0.0
     if provider_id in {
@@ -975,6 +1001,13 @@ def _estimated_provider_cost_usd(provider_id: str) -> float | None:
     }:
         return 0.01
     return None
+
+
+def _validate_provider_pricing_config() -> None:
+    try:
+        validate_provider_pricing_catalog(get_settings())
+    except ProviderPricingConfigurationError as exc:
+        raise ProviderConfigurationError("Provider pricing catalog is invalid.") from exc
 
 
 def _safe_provider_finish_reason(value: Any) -> str | None:
@@ -1225,14 +1258,17 @@ def _stream_event_from_ollama_payload(
     finish_reason = _safe_provider_finish_reason(payload.get("done_reason"))
     if not delta and not done and finish_reason is None:
         return None
+    usage_metadata = _normalized_usage_metadata(provider_id, payload)
     return ProviderStreamEvent(
         provider_id=provider_id,
         model=model,
         delta=delta,
         finish_reason=finish_reason,
-        usage_metadata=_normalized_usage_metadata(provider_id, payload),
+        usage_metadata=usage_metadata,
         estimated_cost_usd=(
-            _estimated_provider_cost_usd(provider_id) if finish_reason is not None else None
+            _estimated_provider_cost_usd(provider_id, model, usage_metadata)
+            if finish_reason is not None
+            else None
         ),
         raw_response_metadata=_safe_ollama_stream_response_metadata(payload),
     )
@@ -1255,7 +1291,11 @@ def _stream_events_from_openai_payload(
                 provider_id=provider_id,
                 model=model,
                 usage_metadata=usage_metadata,
-                estimated_cost_usd=_estimated_provider_cost_usd(provider_id),
+                estimated_cost_usd=_estimated_provider_cost_usd(
+                    provider_id,
+                    model,
+                    usage_metadata,
+                ),
                 raw_response_metadata=_safe_stream_response_metadata(payload, {}),
             )
             return
@@ -1284,7 +1324,9 @@ def _stream_events_from_openai_payload(
                 finish_reason=finish_reason_text,
                 usage_metadata=usage_metadata,
                 estimated_cost_usd=(
-                    _estimated_provider_cost_usd(provider_id) if usage_metadata else None
+                    _estimated_provider_cost_usd(provider_id, model, usage_metadata)
+                    if usage_metadata
+                    else None
                 ),
                 raw_response_metadata=_safe_stream_response_metadata(payload, choice),
             )

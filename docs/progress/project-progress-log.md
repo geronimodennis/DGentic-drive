@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006j Provider Pricing Catalog And Cost Estimation
+
+Status: completed for the scoped advisory provider/model pricing contract; checkpoint commit remains pending.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected pricing catalog work after BL-006i because encrypted credential storage overlaps Sprint 15 identity/secrets, provider-specific external adapters expand outbound semantics, and durable circuit state depends on deployment persistence decisions.
+- Completed: Architect/QA read-only explorers recommended a narrow exact provider/model pricing catalog for the configured OpenAI-compatible adapter, with advisory estimates only and no provider billing API calls.
+- Completed: Developer updated production source only for `DGENTIC_PROVIDER_PRICING_CATALOG`, bounded pricing-catalog parsing, exact provider/model request estimates for routing, usage-based generation/streaming estimates, invalid-catalog fail-closed behavior before provider listing/health probes, and invalid-catalog fail-closed behavior before generation request/header construction or outbound transport.
+- Completed: QA updated tests only for configured non-streaming cost, streaming usage-chunk cost using the request model, invalid pricing rejection before transport/probes/listing/health checks, routing max-cost behavior, API cost output, and no-content/no-secret logs.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+- Completed: Reviewer/Security found invalid pricing could still allow provider listing/health probes and that generation validated pricing after request/header construction; Developer remediated both and QA added focused coverage.
+- Pending: Commit and push.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_PROVIDER_PRICING_CATALOG` accepts a bounded JSON object keyed by exact provider id and model, with `prompt_usd_per_1k_tokens`, `completion_usd_per_1k_tokens`, and optional `request_estimate_usd`.
+- Implemented in this slice: configured OpenAI-compatible generation and streaming use normalized prompt/completion usage metadata plus the requested model to calculate advisory `estimated_cost_usd`.
+- Implemented in this slice: routing uses the configured first-model `request_estimate_usd` for external max-cost decisions before provider usage is known.
+- Implemented in this slice: malformed, negative, non-finite, partial, oversized, or unsupported pricing catalog entries fail closed before provider transport, provider listing/health probes, or routing probes.
+
+Validation:
+- Focused pricing gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_external_generation_uses_configured_model_pricing tests\test_provider_runtime.py::test_external_generation_rejects_invalid_pricing_before_transport tests\test_provider_runtime.py::test_external_streaming_uses_request_model_pricing_for_usage_chunk tests\test_api.py::test_routing_uses_configured_external_model_request_price tests\test_api.py::test_routing_rejects_invalid_pricing_catalog_before_probes tests\test_api.py::test_external_provider_generate_stream_api_returns_configured_model_cost tests\test_api.py::test_external_provider_generate_api_returns_configured_model_cost tests\test_api.py::test_external_provider_generate_api_rejects_invalid_pricing_before_transport` passed with 11 tests.
+- Focused remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_provider_listing_and_health_reject_invalid_pricing_before_probes tests\test_api.py::test_routing_rejects_invalid_pricing_catalog_before_probes tests\test_api.py::test_external_provider_generate_api_rejects_invalid_pricing_before_transport tests\test_provider_runtime.py::test_external_generation_rejects_invalid_pricing_before_transport tests\test_provider_runtime.py::test_external_generation_uses_configured_model_pricing tests\test_provider_runtime.py::test_external_streaming_uses_request_model_pricing_for_usage_chunk` passed with 10 tests.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 194 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\settings.py src\dgentic\provider_pricing.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\settings.py src\dgentic\provider_pricing.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py tests\test_provider_runtime.py tests\test_api.py` passed with 7 files already formatted.
+- Reviewer/Security recheck: final read-only review and Security/DevOps recheck reported no blockers after pricing validation ordering remediation.
+- Full test gate: `uv --cache-dir .uv-cache run pytest -q` passed with 635 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 48 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Residual risks:
+- Pricing estimates are advisory controls and telemetry, not authoritative billing records.
+- The current routing request estimate applies to the configured first model; richer model-specific routing remains future work.
+- Encrypted credential storage, provider billing reconciliation, durable multi-worker circuit state, and provider-specific external adapters remain future Sprint 12/15/18 follow-up work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/provider_pricing.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/providers.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Commit/push the stable BL-006j checkpoint, then reassess remaining Sprint 12 encrypted credential strategy and provider-specific adapter scope.
+
 ### Sprint 12 BL-006i Provider Circuit Breaker
 
 Status: completed for the scoped in-process provider circuit-breaker contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, durable multi-worker circuit state, and provider-specific pricing/billing tables.

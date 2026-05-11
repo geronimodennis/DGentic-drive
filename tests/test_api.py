@@ -604,6 +604,100 @@ def test_routing_rejects_provider_above_max_cost(tmp_path, monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_routing_uses_configured_external_model_request_price(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.03,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch, models="gpt-test")
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={
+            "privacy_required": False,
+            "required_capabilities": ["external"],
+            "max_cost_usd": 0.02,
+        },
+    )
+
+    assert response.status_code == 404
+    assert "No provider satisfies" in response.text
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_rejects_invalid_pricing_catalog_before_probes(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_PRICING_CATALOG", "not-json")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        raise AssertionError("provider probes should not run for invalid pricing")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Provider pricing catalog is invalid."
+    assert calls == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("path", ["/providers", "/providers/ollama/health"])
+def test_provider_listing_and_health_reject_invalid_pricing_before_probes(
+    path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "")
+    monkeypatch.setenv("DGENTIC_PROVIDER_PRICING_CATALOG", "not-json")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        raise AssertionError("provider probes should not run for invalid pricing")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.get(path)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Provider pricing catalog is invalid."
+    assert calls == []
+    assert "not-json" not in response.text
+    get_settings.cache_clear()
+
+
 @pytest.mark.parametrize("max_cost_usd", ["NaN", "Infinity", -0.01])
 def test_routing_rejects_invalid_max_cost_before_scoring(
     max_cost_usd,
@@ -2812,6 +2906,77 @@ def test_external_provider_generate_stream_api_sends_authorization_and_redacts_l
     get_settings.cache_clear()
 
 
+def test_external_provider_generate_stream_api_returns_configured_model_cost(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.02,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch)
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-external-stream-api",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Priced"}, "finish_reason": None}
+                    ],
+                },
+                {
+                    "id": "chatcmpl-external-stream-api",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+                {
+                    "id": "chatcmpl-external-stream-api",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert events[-1]["model"] == "gpt-test"
+    assert events[-1]["estimated_cost_usd"] == 0.009
+    serialized = response.text + logs_response.text
+    assert "external-api-key-secret" not in serialized
+    assert "provider-controlled-model-secret" not in logs_response.text
+    assert "Priced" in response.text
+    assert "Priced" not in logs_response.text
+    get_settings.cache_clear()
+
+
 def test_external_provider_generate_stream_api_requires_approval_before_transport(
     monkeypatch,
 ) -> None:
@@ -3190,6 +3355,111 @@ def test_external_provider_generate_api_sends_authorization_and_redacts_logs(
         assert raw_secret not in serialized
     assert "Hello external API." in response.text
     assert "Hello external API." not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_returns_configured_model_cost(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.02,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch)
+    raw_response = {
+        "id": "chatcmpl-external-api",
+        "model": "provider-controlled-model-secret",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Priced external API."},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
+    }
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(raw_response).encode("utf-8")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeResponse()
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert response.json()["estimated_cost_usd"] == 0.009
+    assert "Priced external API." in response.text
+    serialized_logs = logs_response.text
+    assert "external-api-key-secret" not in response.text + serialized_logs
+    assert "provider-controlled-model-secret" not in response.text + serialized_logs
+    assert "Priced external API." not in serialized_logs
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_rejects_invalid_pricing_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_PROVIDER_PRICING_CATALOG", "not-json")
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Provider pricing catalog is invalid."
+    assert calls == []
+    assert "not-json" not in response.text
     get_settings.cache_clear()
 
 

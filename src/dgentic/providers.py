@@ -8,6 +8,10 @@ from dgentic.provider_policy import (
     normalize_provider_base_url,
     validate_provider_base_url,
 )
+from dgentic.provider_pricing import (
+    provider_request_estimate_usd,
+    validate_provider_pricing_catalog,
+)
 from dgentic.provider_runtime import EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
 from dgentic.provider_transport import (
     ProviderRetryPolicy,
@@ -35,6 +39,7 @@ class ProviderRoutingError(ValueError):
 def default_providers() -> list[ProviderConfig]:
     settings = get_settings()
     external_enabled = _external_provider_configured(settings)
+    external_models = _external_model_names(settings) if external_enabled else []
     return [
         ProviderConfig(
             id="ollama",
@@ -65,10 +70,10 @@ def default_providers() -> list[ProviderConfig]:
             name="OpenAI-Compatible External",
             kind=ProviderKind.external,
             base_url=_safe_external_provider_base_url_for_display(settings),
-            model_names=_external_model_names(settings) if external_enabled else [],
+            model_names=external_models,
             capabilities=["chat", "streaming", "external", "openai-compatible", "high-capability"],
             estimated_latency_ms=800,
-            estimated_cost_usd=0.01,
+            estimated_cost_usd=_external_estimated_cost_usd(settings, external_models),
             permission_mode=PermissionMode.approval_required,
             enabled=external_enabled,
             supports_streaming=True,
@@ -89,6 +94,7 @@ def default_providers() -> list[ProviderConfig]:
 
 
 def list_providers() -> list[ProviderConfig]:
+    validate_provider_pricing_catalog(get_settings())
     providers = []
     for provider in default_providers():
         health = check_provider_health(provider.id)
@@ -97,6 +103,7 @@ def list_providers() -> list[ProviderConfig]:
 
 
 def check_provider_health(provider_id: str) -> ProviderHealth:
+    validate_provider_pricing_catalog(get_settings())
     provider = next((item for item in default_providers() if item.id == provider_id), None)
     if provider is None:
         health = ProviderHealth(
@@ -127,6 +134,7 @@ def check_provider_health(provider_id: str) -> ProviderHealth:
 
 
 def choose_provider(policy: RoutingRequest) -> RoutingDecision:
+    validate_provider_pricing_catalog(get_settings())
     providers = list_providers()
     scored = {provider.id: _score_provider(provider, policy) for provider in providers}
     if not any(score > 0 for score in scored.values()):
@@ -196,6 +204,18 @@ def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
         score += 0.1
 
     return round(max(score, 0.0), 3)
+
+
+def _external_estimated_cost_usd(settings: Any, model_names: list[str]) -> float:
+    if model_names:
+        configured_estimate = provider_request_estimate_usd(
+            settings,
+            provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            model=model_names[0],
+        )
+        if configured_estimate is not None:
+            return configured_estimate
+    return 0.01
 
 
 def _probe_ollama(provider: ProviderConfig) -> ProviderHealth:

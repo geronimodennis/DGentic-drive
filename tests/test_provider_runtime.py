@@ -507,6 +507,108 @@ def test_external_openai_compatible_generation_posts_authorized_chat_completion(
     get_settings.cache_clear()
 
 
+def test_external_generation_uses_configured_model_pricing(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "test")
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.02,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider(monkeypatch)
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeResponse(lm_studio_response("Hello with priced usage."))
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    result = generate_provider_completion(
+        ProviderGenerationRequest(
+            provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            model="gpt-test",
+            messages=[{"role": "user", "content": "Say hello."}],
+            approved=True,
+        )
+    )
+
+    assert result.usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert result.estimated_cost_usd == 0.009
+    assert event_log.records[-1]["metadata"]["estimated_cost_usd"] == 0.009
+    assert "Hello with priced usage." not in json.dumps(event_log.records, default=str)
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        "not-json",
+        json.dumps(
+            {
+                EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": -0.1,
+                        "completion_usd_per_1k_tokens": 1.0,
+                    }
+                }
+            }
+        ),
+        json.dumps(
+            {
+                EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {"prompt_usd_per_1k_tokens": 0.5}
+                }
+            }
+        ),
+        (
+            '{"external-openai-compatible":{"gpt-test":'
+            '{"prompt_usd_per_1k_tokens":Infinity,'
+            '"completion_usd_per_1k_tokens":1.0}}}'
+        ),
+    ],
+)
+def test_external_generation_rejects_invalid_pricing_before_transport(
+    catalog,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "test")
+    monkeypatch.setenv("DGENTIC_PROVIDER_PRICING_CATALOG", catalog)
+    configure_external_provider(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError, match="pricing catalog"):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+                approved=True,
+            )
+        )
+
+    assert calls == []
+    get_settings.cache_clear()
+
+
 def test_external_generation_requires_approval_before_transport(monkeypatch) -> None:
     configure_external_provider(monkeypatch)
     calls: list[str] = []
@@ -2112,6 +2214,77 @@ def test_external_streaming_sends_authorization_and_redacts_logs(monkeypatch) ->
     assert "external-api-key-secret" not in serialized
     assert "upstream-stream-secret" not in serialized
     assert "Secretless" not in serialized
+    get_settings.cache_clear()
+
+
+def test_external_streaming_uses_request_model_pricing_for_usage_chunk(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.02,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider(monkeypatch)
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-external-stream",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Priced"}, "finish_reason": None}
+                    ],
+                },
+                {
+                    "id": "chatcmpl-external-stream",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+                {
+                    "id": "chatcmpl-external-stream",
+                    "model": "provider-controlled-model-secret",
+                    "choices": [],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+                approved=True,
+            )
+        )
+    )
+
+    assert events[-1].model == "gpt-test"
+    assert events[-1].usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert events[-1].estimated_cost_usd == 0.009
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "provider-controlled-model-secret" not in serialized
+    assert "Priced" not in serialized
     get_settings.cache_clear()
 
 

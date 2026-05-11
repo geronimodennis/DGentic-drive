@@ -4,9 +4,46 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008m Detached Orchestration Execution Cancellation
+
+Status: completed for the scoped detached-execution cancellation slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected detached execution cancellation as the next bounded Sprint 14 slice after owner/provenance-scoped shared memory.
+- Completed: Developer added `cancelling` and `cancelled` execution states, a cooperative cancel service flow, loop cancellation checks, and a cancel API endpoint.
+- Completed: Developer kept `cancelling` records active until owning-worker finalization so duplicate detached executions and foreground loops remain blocked during cancellation.
+- Completed: QA added service/API coverage for queued cancellation, running cancellation, terminal conflict behavior, owner/admin API scoping, retry after queued cancellation, and preserving task/agent work when the detached execution is cancelled.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: API callers can cancel detached orchestration executions with `POST /tasks/orchestrations/{run_id}/executions/{execution_id}/cancel`.
+- Implemented in this slice: queued `starting` executions can move directly to `cancelled` and allow a retry execution.
+- Implemented in this slice: running executions move to `cancelling`, remain active for conflict checks, and finalize as `cancelled` when the cooperative loop observes the request.
+- Implemented in this slice: cancelling a detached execution stops only the detached orchestration loop; it does not cancel spawned tasks or agents.
+
+Remaining Sprint 14 work:
+- Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
+- Add detached worker restart adoption/resume.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused cancellation service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "background_execution_cancel"` passed with 5 tests.
+- Focused cancellation API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "background_execution_cancel"` passed with 3 tests.
+- Broader orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 91 tests.
+- Broader orchestration API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration"` passed with 27 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 811 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 14 with detached worker restart adoption/resume, production scheduling/lease hardening, or operations surfacing for orchestration runs.
+
 ### Sprint 14 BL-008l Opt-In Orchestration Shared Memory
 
-Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume/cancellation, production scheduling/lease hardening, and operations/UI surfacing.
+Status: completed for the scoped explicit-tag, owner/provenance-scoped shared-memory slice; Sprint 14 remains active for fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping, detached worker restart adoption/resume, production scheduling/lease hardening, and operations/UI surfacing.
 
 Current story:
 - BL-008: Agent Orchestration Autonomy.
@@ -29,7 +66,7 @@ Feature tracking:
 
 Remaining Sprint 14 work:
 - Add fine-grained shared-memory ACLs/policies beyond current owner/provenance/tag scoping.
-- Add detached worker cancellation and restart adoption/resume.
+- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Add UI or operations surfacing for orchestration runs.
 
@@ -71,7 +108,7 @@ Feature tracking:
 
 Remaining Sprint 14 work:
 - Add durable shared-memory coordination across runs and agents.
-- Add detached worker cancellation and restart adoption/resume.
+- Add detached worker restart adoption/resume.
 - Harden production multi-agent scheduling and lease semantics.
 - Add UI or operations surfacing for orchestration runs.
 

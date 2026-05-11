@@ -57,6 +57,8 @@ class AgentStatus(StrEnum):
 class OrchestrationExecutionStatus(StrEnum):
     starting = "starting"
     running = "running"
+    cancelling = "cancelling"
+    cancelled = "cancelled"
     completed = "completed"
     failed = "failed"
     stale = "stale"
@@ -420,6 +422,7 @@ class OrchestrationLoopResult(BaseModel):
         "all_tasks_completed",
         "quiescent",
         "max_iterations",
+        "cancelled",
     ]
     running_task_ids: list[str] = Field(default_factory=list)
     pending_task_ids: list[str] = Field(default_factory=list)

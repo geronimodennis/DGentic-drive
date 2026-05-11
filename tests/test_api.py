@@ -595,6 +595,101 @@ def test_orchestration_api_background_execution_duplicate_active_returns_409(
     assert first_response.json()["id"] in second_response.json()["detail"]
 
 
+def test_orchestration_api_background_execution_cancel_starting(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Cancel detached orchestration from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate detached cancellation.",
+                    "description": "Keep the execution queued.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Detached execution can be cancelled.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+    start_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+    execution_id = start_response.json()["id"]
+    cancel_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}/cancel"
+    )
+    get_response = client.get(f"/tasks/orchestrations/{run_id}/executions/{execution_id}")
+    retry_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+
+    assert create_response.status_code == 201
+    assert start_response.status_code == 202
+    assert start_response.json()["status"] == "starting"
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+    assert cancel_response.json()["completed_at"] is not None
+    assert get_response.status_code == 200
+    assert get_response.json()["status"] == "cancelled"
+    assert retry_response.status_code == 202
+    assert retry_response.json()["id"] != execution_id
+
+
+def test_orchestration_api_background_execution_cancel_completed_returns_409(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Reject terminal detached cancellation from the API.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "Validate terminal detached cancellation.",
+                    "description": "Execution completes before cancellation.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Terminal cancellation returns conflict.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+    start_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        json={"max_iterations": 2},
+    )
+    execution_id = start_response.json()["id"]
+    completed = _poll_api_execution(client, run_id, execution_id)
+    cancel_response = client.post(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}/cancel"
+    )
+
+    assert create_response.status_code == 201
+    assert start_response.status_code == 202
+    assert completed["status"] == "completed"
+    assert cancel_response.status_code == 409
+
+
 def test_orchestration_api_loop_rejects_active_background_execution(
     isolated_tool_api_state,
     monkeypatch,
@@ -980,6 +1075,65 @@ def test_orchestration_api_background_execution_respects_authenticated_task_owne
     assert [execution["id"] for execution in admin_list.json()] == [execution_id]
     assert admin_get.status_code == 200
     assert admin_get.json()["id"] == execution_id
+    get_settings.cache_clear()
+
+
+def test_orchestration_api_background_execution_cancel_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    _configure_production_task_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped detached cancellation.",
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate detached cancel owner filtering.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_api.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = alpha_create.json()["id"]
+    alpha_start = client.post(
+        f"/tasks/orchestrations/{run_id}/executions",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"max_iterations": 2},
+    )
+    execution_id = alpha_start.json()["id"]
+    beta_cancel = client.post(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}/cancel",
+        headers={"Authorization": "Bearer beta-token"},
+    )
+    admin_cancel = client.post(
+        f"/tasks/orchestrations/{run_id}/executions/{execution_id}/cancel",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert alpha_create.status_code == 201
+    assert alpha_start.status_code == 202
+    assert beta_cancel.status_code == 404
+    assert admin_cancel.status_code == 200
+    assert admin_cancel.json()["status"] == "cancelled"
     get_settings.cache_clear()
 
 

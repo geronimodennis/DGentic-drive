@@ -803,6 +803,208 @@ def test_background_execution_heartbeat_keeps_foreign_running_record_fresh(
     assert fetched.completed_at is None
 
 
+def test_background_execution_cancel_starting_record_allows_retry(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    class HoldingThread:
+        def __init__(self, target, args, daemon):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("dgentic.orchestration.Thread", HoldingThread)
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Cancel queued detached execution.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    execution = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+        actor="qa-owner",
+    )
+
+    cancelled = service.cancel_background_execution(
+        run.id,
+        execution.id,
+        actor="qa-owner",
+    )
+    retry = service.start_background_execution(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+        actor="qa-owner",
+    )
+
+    assert cancelled.status == OrchestrationExecutionStatus.cancelled
+    assert cancelled.completed_at is not None
+    assert cancelled.status_reason == "Orchestration background execution cancelled before start."
+    assert retry.status == OrchestrationExecutionStatus.starting
+    assert retry.id != execution.id
+
+
+def test_background_execution_cancel_running_record_blocks_duplicate_until_finalized(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Cancel running detached execution.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    now = datetime.now(UTC)
+    execution = OrchestrationExecution(
+        id="orchexec-running-cancel",
+        run_id=run.id,
+        status=OrchestrationExecutionStatus.running,
+        request=OrchestrationLoopRequest(max_iterations=1),
+        supervisor_id=service.supervisor_id,
+        started_at=now,
+        last_heartbeat_at=now,
+    )
+    service._executions.upsert(execution)
+
+    cancelling = service.cancel_background_execution(run.id, execution.id, actor="qa-owner")
+    assert cancelling.status == OrchestrationExecutionStatus.cancelling
+    assert cancelling.completed_at is None
+    with pytest.raises(OrchestrationError, match=execution.id):
+        service.start_background_execution(run.id, OrchestrationLoopRequest(max_iterations=1))
+    result = service.run_loop(
+        run.id,
+        OrchestrationLoopRequest(max_iterations=1),
+        actor="qa-owner",
+        background_execution_id=execution.id,
+    )
+    cancelled = service._finalize_background_execution(
+        execution.id,
+        status=OrchestrationExecutionStatus.cancelled,
+        status_reason="Orchestration background execution cancelled.",
+        result=result,
+        actor="qa-owner",
+    )
+    assert result.stopped_reason == "cancelled"
+    assert result.iterations == 0
+    assert _task_by_id(result.run, "qa-validation").status == StepStatus.running
+    assert cancelled is not None
+    assert cancelled.status == OrchestrationExecutionStatus.cancelled
+    assert cancelled.result is not None
+    assert cancelled.result.stopped_reason == "cancelled"
+
+
+def test_background_execution_cancel_rejects_terminal_execution(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject terminal detached cancellation.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    completed = OrchestrationExecution(
+        id="orchexec-completed-cancel",
+        run_id=run.id,
+        status=OrchestrationExecutionStatus.completed,
+        request=OrchestrationLoopRequest(max_iterations=1),
+        supervisor_id=service.supervisor_id,
+        status_reason="Already completed.",
+        started_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        last_heartbeat_at=datetime.now(UTC),
+    )
+    service._executions.upsert(completed)
+
+    with pytest.raises(OrchestrationError, match="not active"):
+        service.cancel_background_execution(run.id, completed.id, actor="qa-owner")
+
+
+def test_background_execution_cancel_wins_finalize_race(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Preserve cancellation over stale finalize status.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    now = datetime.now(UTC)
+    execution = OrchestrationExecution(
+        id="orchexec-cancel-finalize-race",
+        run_id=run.id,
+        status=OrchestrationExecutionStatus.cancelling,
+        request=OrchestrationLoopRequest(max_iterations=1),
+        supervisor_id=service.supervisor_id,
+        status_reason="Cancellation requested.",
+        started_at=now,
+        last_heartbeat_at=now,
+    )
+    result = OrchestrationLoopResult(
+        run=run,
+        iterations=1,
+        made_progress=True,
+        stopped_reason="waiting_for_agents",
+    )
+    service._executions.upsert(execution)
+
+    finalized = service._finalize_background_execution(
+        execution.id,
+        status=OrchestrationExecutionStatus.completed,
+        status_reason="Attempted stale completion.",
+        result=result,
+        actor="qa-owner",
+    )
+
+    assert finalized is not None
+    assert finalized.status == OrchestrationExecutionStatus.cancelled
+    assert finalized.status_reason == "Orchestration background execution cancelled."
+    assert finalized.result == result
+    event = next(
+        event
+        for event in reversed(event_log.list(LogEventType.task))
+        if event.subject_id == execution.id
+    )
+    assert event.message == "Cancelled orchestration background execution."
+
+
+def test_background_execution_cancel_losing_finalize_race_reports_conflict(
+    orchestration_state,
+    monkeypatch,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Report terminal cancel race as conflict.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    def losing_cancel(_execution_id):  # noqa: ANN001
+        return None, OrchestrationExecutionStatus.completed
+
+    monkeypatch.setattr(service, "_request_background_execution_cancellation", losing_cancel)
+    service._executions.upsert(
+        OrchestrationExecution(
+            id="orchexec-cancel-lost-race",
+            run_id=run.id,
+            status=OrchestrationExecutionStatus.running,
+            request=OrchestrationLoopRequest(max_iterations=1),
+            supervisor_id=service.supervisor_id,
+            started_at=datetime.now(UTC),
+            last_heartbeat_at=datetime.now(UTC),
+        )
+    )
+
+    with pytest.raises(OrchestrationError, match="not active"):
+        service.cancel_background_execution(run.id, "orchexec-cancel-lost-race", actor="qa-owner")
+
+
 def test_background_execution_finalize_preserves_stale_or_foreign_records(
     orchestration_state,
 ) -> None:

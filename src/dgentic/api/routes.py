@@ -340,6 +340,26 @@ def get_orchestration_background_execution(
         raise _orchestration_http_error(exc) from exc
 
 
+@router.post(
+    "/tasks/orchestrations/{run_id}/executions/{execution_id}/cancel",
+    response_model=OrchestrationExecution,
+)
+def cancel_orchestration_background_execution(
+    run_id: str,
+    execution_id: str,
+    request: Request,
+) -> OrchestrationExecution:
+    try:
+        return orchestration_service.cancel_background_execution(
+            run_id,
+            execution_id,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
 @router.patch(
     "/tasks/orchestrations/{run_id}/tasks/{task_id}",
     response_model=OrchestrationRun,
@@ -440,7 +460,7 @@ def _orchestration_http_error(exc: OrchestrationError) -> HTTPException:
     lowered = message.lower()
     if "not found" in lowered:
         status_code = 404
-    elif "already has active background execution" in lowered:
+    elif "already has active background execution" in lowered or "is not active" in lowered:
         status_code = 409
     else:
         status_code = 400

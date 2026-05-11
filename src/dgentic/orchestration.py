@@ -63,6 +63,7 @@ RESOLVABLE_TASK_BLOCKER_SEVERITIES = {"blocked", "security"}
 ACTIVE_EXECUTION_STATUSES = {
     OrchestrationExecutionStatus.starting,
     OrchestrationExecutionStatus.running,
+    OrchestrationExecutionStatus.cancelling,
 }
 BACKGROUND_EXECUTION_STALE_AFTER_SECONDS = 300
 BACKGROUND_EXECUTION_HEARTBEAT_INTERVAL_SECONDS = 30
@@ -284,6 +285,8 @@ class OrchestrationService:
         iterations = 0
         made_progress = False
         stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
+        if stopped_reason is None:
+            stopped_reason = self._background_execution_cancel_stop_reason(background_execution_id)
 
         while stopped_reason is None and iterations < request.max_iterations:
             before = _progress_signature(run)
@@ -291,7 +294,9 @@ class OrchestrationService:
             iterations += 1
             progressed = _progress_signature(run) != before
             made_progress = made_progress or progressed
-            stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
+            stopped_reason = self._background_execution_cancel_stop_reason(background_execution_id)
+            if stopped_reason is None:
+                stopped_reason = _loop_stop_reason(run, stop_on_blocked=request.stop_on_blocked)
             if stopped_reason is not None:
                 break
             if not progressed:
@@ -411,6 +416,55 @@ class OrchestrationService:
                 f"Orchestration background execution not found: {execution_id}"
             )
         return execution
+
+    def cancel_background_execution(
+        self,
+        run_id: str,
+        execution_id: str,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationExecution:
+        self._require_run(run_id, actor=actor, include_all=include_all)
+        self.reconcile_stale_background_executions()
+        execution = self._executions.get(execution_id)
+        if execution is None or execution.run_id != run_id:
+            raise OrchestrationError(
+                f"Orchestration background execution not found: {execution_id}"
+            )
+        if execution.status == OrchestrationExecutionStatus.cancelled:
+            return execution
+        if execution.status not in ACTIVE_EXECUTION_STATUSES:
+            raise OrchestrationError(
+                f"Orchestration background execution is not active: {execution_id}"
+            )
+
+        saved, previous_status = self._request_background_execution_cancellation(execution_id)
+        if saved is None:
+            if previous_status is not None:
+                raise OrchestrationError(
+                    f"Orchestration background execution is not active: {execution_id}"
+                )
+            raise OrchestrationError(
+                f"Orchestration background execution not found: {execution_id}"
+            )
+        event_log.record(
+            LogEventType.task,
+            (
+                "Cancelled orchestration background execution."
+                if saved.status == OrchestrationExecutionStatus.cancelled
+                else "Requested orchestration background execution cancellation."
+            ),
+            actor=actor or "system",
+            subject_id=saved.id,
+            metadata={
+                "run_id": saved.run_id,
+                "previous_status": previous_status,
+                "status": saved.status,
+                "supervisor_id": saved.supervisor_id,
+            },
+        )
+        return saved
 
     def reconcile_stale_background_executions(self) -> None:
         now = datetime.now(UTC)
@@ -1096,11 +1150,19 @@ class OrchestrationService:
                 actor=actor,
             )
         else:
+            final_status = (
+                OrchestrationExecutionStatus.cancelled
+                if result.stopped_reason == "cancelled"
+                or self._background_execution_cancel_requested(execution_id)
+                else OrchestrationExecutionStatus.completed
+            )
             self._finalize_background_execution(
                 execution_id,
-                status=OrchestrationExecutionStatus.completed,
+                status=final_status,
                 status_reason=(
-                    f"Orchestration background execution stopped: {result.stopped_reason}."
+                    "Orchestration background execution cancelled."
+                    if final_status == OrchestrationExecutionStatus.cancelled
+                    else f"Orchestration background execution stopped: {result.stopped_reason}."
                 ),
                 result=result,
                 actor=actor,
@@ -1142,6 +1204,75 @@ class OrchestrationService:
             return updated_items, saved
 
         return self._executions.transact(heartbeat)
+
+    def _background_execution_cancel_stop_reason(
+        self,
+        execution_id: str | None,
+    ) -> str | None:
+        if execution_id is None:
+            return None
+        return "cancelled" if self._background_execution_cancel_requested(execution_id) else None
+
+    def _background_execution_cancel_requested(
+        self,
+        execution_id: str,
+    ) -> bool:
+        execution = self._executions.get(execution_id)
+        return execution is not None and execution.status in {
+            OrchestrationExecutionStatus.cancelling,
+            OrchestrationExecutionStatus.cancelled,
+        }
+
+    def _request_background_execution_cancellation(
+        self,
+        execution_id: str,
+    ) -> tuple[OrchestrationExecution | None, OrchestrationExecutionStatus | None]:
+        def cancel(
+            items: list[OrchestrationExecution],
+        ) -> tuple[
+            list[OrchestrationExecution],
+            tuple[OrchestrationExecution | None, OrchestrationExecutionStatus | None],
+        ]:
+            now = datetime.now(UTC)
+            updated_items: list[OrchestrationExecution] = []
+            saved: OrchestrationExecution | None = None
+            previous_status: OrchestrationExecutionStatus | None = None
+            for execution in items:
+                if execution.id != execution_id:
+                    updated_items.append(execution)
+                    continue
+                previous_status = execution.status
+                if execution.status == OrchestrationExecutionStatus.starting:
+                    saved = execution.model_copy(
+                        update={
+                            "status": OrchestrationExecutionStatus.cancelled,
+                            "status_reason": (
+                                "Orchestration background execution cancelled before start."
+                            ),
+                            "error": None,
+                            "completed_at": now,
+                            "last_heartbeat_at": now,
+                        }
+                    )
+                elif execution.status == OrchestrationExecutionStatus.running:
+                    saved = execution.model_copy(
+                        update={
+                            "status": OrchestrationExecutionStatus.cancelling,
+                            "status_reason": (
+                                "Orchestration background execution cancellation requested."
+                            ),
+                            "error": None,
+                            "last_heartbeat_at": now,
+                        }
+                    )
+                elif execution.status == OrchestrationExecutionStatus.cancelling:
+                    saved = execution
+                else:
+                    saved = None
+                updated_items.append(saved or execution)
+            return updated_items, (saved, previous_status)
+
+        return self._executions.transact(cancel)
 
     def _mark_background_execution_running(
         self,
@@ -1216,11 +1347,21 @@ class OrchestrationService:
                 ):
                     updated_items.append(execution)
                     continue
+                resolved_status = (
+                    OrchestrationExecutionStatus.cancelled
+                    if execution.status == OrchestrationExecutionStatus.cancelling
+                    else status
+                )
+                resolved_reason = (
+                    "Orchestration background execution cancelled."
+                    if resolved_status == OrchestrationExecutionStatus.cancelled
+                    else status_reason
+                )
                 saved = execution.model_copy(
                     update={
-                        "status": status,
+                        "status": resolved_status,
                         "result": result,
-                        "status_reason": status_reason,
+                        "status_reason": resolved_reason,
                         "error": redact_sensitive_values(error) if error else None,
                         "completed_at": now,
                         "last_heartbeat_at": now,
@@ -1236,7 +1377,9 @@ class OrchestrationService:
             LogEventType.task,
             (
                 "Failed orchestration background execution."
-                if status == OrchestrationExecutionStatus.failed
+                if saved.status == OrchestrationExecutionStatus.failed
+                else "Cancelled orchestration background execution."
+                if saved.status == OrchestrationExecutionStatus.cancelled
                 else "Completed orchestration background execution."
             ),
             actor=actor or "system",

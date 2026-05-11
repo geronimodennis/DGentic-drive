@@ -414,6 +414,14 @@ class OrchestrationLoopResult(BaseModel):
     unresolved_blocker_ids: list[str] = Field(default_factory=list)
 
 
+class OrchestrationDocumentSyncResult(BaseModel):
+    progress_path: str
+    backlog_path: str
+    run_count: int = Field(ge=0)
+    open_follow_up_count: int = Field(ge=0)
+    unresolved_blocker_count: int = Field(ge=0)
+
+
 class ToolManifest(BaseModel):
     name: str
     version: str = "0.2.6"

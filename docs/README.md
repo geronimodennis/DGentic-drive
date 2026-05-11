@@ -8,7 +8,9 @@ This folder contains the source documentation for the DGentic project.
 - [Agentic tasking and workflows](agentic-workflows/README.md): Autonomous multi-agent Agile engineering organization, roles, workflows, role boundaries, governance, and response templates.
 - [Agile task plan](planning/agile-task-plan.md): Implementation backlog organized by Agile epics, stories, acceptance criteria, and milestones.
 - [Backlog list and needs to be done](planning/backlog-needs-to-be-done.md): Refined backlog, completion stories, and sprint sequence for partially implemented feature groups.
+- [Generated orchestration follow-up backlog](planning/orchestration-follow-ups.md): Generated open orchestration follow-up and blocker list.
 - [Project progress log](progress/project-progress-log.md): Running project history, decisions, completed work, blockers, and next steps.
+- [Generated orchestration run status](progress/orchestration-runs.md): Generated orchestration run status from backend state.
 - [How to use DGentic](how-to/using-dgentic.md): Current and future usage guidance for the platform.
 - [Developer setup](how-to/developer-setup.md): Local backend setup, run, test, and lint commands.
 - [Repository architecture](architecture/repository-architecture.md): Current monorepo layout and architecture decisions.

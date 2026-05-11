@@ -15,6 +15,15 @@ Agent autonomy must not blur accountability. Each agent may only edit files owne
 - PM Agents update sprint status, backlog, progress logs, and coordination records.
 - Release Manager Agents update release notes, release artifacts, and release readiness records.
 
+## Runtime-Generated Document Exception
+
+The backend orchestration service may regenerate these PM-owned project documents from persisted orchestration state:
+
+- `docs/progress/orchestration-runs.md`
+- `docs/planning/orchestration-follow-ups.md`
+
+These files are approved runtime artifacts, not role-authored edits by the agent whose task triggered the state change. The service must treat the sync as generated output, redact secret-shaped text, keep paths fixed under `rootDir`, audit successful and failed sync attempts, and avoid failing the orchestration state transition only because project-document sync failed.
+
 ## Write Ownership Matrix
 
 | Role | May Modify | Must Not Modify |

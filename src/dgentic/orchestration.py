@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from dgentic.agents import get_agent, spawn_agent, update_agent_status
 from dgentic.events import event_log
+from dgentic.orchestration_documents import sync_orchestration_documents
 from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
 from dgentic.schemas import (
     AgentBrief,
@@ -105,7 +106,7 @@ class OrchestrationService:
             requested_by=actor or request.requested_by,
         )
         run = self._schedule_ready_tasks(run, actor=actor)
-        self._runs.upsert(run)
+        run = self._persist(run)
         event_log.record(
             LogEventType.task,
             "Created orchestration run.",
@@ -199,7 +200,7 @@ class OrchestrationService:
                 "scheduled": scheduled_task_ids,
             },
         )
-        return run
+        return self._persist(run)
 
     def run_loop(
         self,
@@ -276,6 +277,8 @@ class OrchestrationService:
         }
         blockers = list(run.blockers)
         follow_ups = list(run.follow_ups)
+        previous_blocker_ids = {blocker.id for blocker in blockers}
+        previous_follow_up_ids = {follow_up.id for follow_up in follow_ups}
 
         if update.status == StepStatus.failed:
             retry_count = task.retry_count + 1
@@ -311,6 +314,15 @@ class OrchestrationService:
             _update_agent_for_task(task.agent_id, update.status, update.error)
         if updated_task.status in {StepStatus.completed, StepStatus.pending}:
             run = self._schedule_ready_tasks(run, actor=actor)
+        _record_task_update_event(
+            run,
+            task,
+            updated_task,
+            update,
+            previous_blocker_ids=previous_blocker_ids,
+            previous_follow_up_ids=previous_follow_up_ids,
+            actor=actor,
+        )
         return self._persist(run)
 
     def recover_task(
@@ -781,7 +793,27 @@ class OrchestrationService:
 
     def _persist(self, run: OrchestrationRun) -> OrchestrationRun:
         run = run.model_copy(update={"updated_at": datetime.now(UTC)})
-        return self._runs.upsert(run)
+        saved = self._runs.upsert(run)
+        try:
+            sync_result = sync_orchestration_documents(self._runs.list)
+        except (OSError, ValueError) as exc:
+            event_log.record(
+                LogEventType.task,
+                "Failed to sync orchestration project documents.",
+                subject_id=saved.id,
+                metadata={
+                    "error_type": type(exc).__name__,
+                    "error": redact_sensitive_values(str(exc)),
+                },
+            )
+        else:
+            event_log.record(
+                LogEventType.task,
+                "Synced orchestration project documents.",
+                subject_id=saved.id,
+                metadata=sync_result.model_dump(),
+            )
+        return saved
 
     def _schedule_ready_tasks(
         self,
@@ -1049,6 +1081,47 @@ def _loop_result(
         running_task_ids=_running_task_ids(run),
         pending_task_ids=_pending_task_ids(run),
         unresolved_blocker_ids=[blocker.id for blocker in _unresolved_blockers(run.blockers)],
+    )
+
+
+def _record_task_update_event(
+    run: OrchestrationRun,
+    previous_task: OrchestrationTask,
+    transition_task: OrchestrationTask,
+    update: OrchestrationTaskUpdate,
+    *,
+    previous_blocker_ids: set[str],
+    previous_follow_up_ids: set[str],
+    actor: str | None,
+) -> None:
+    persisted_task = _task_by_id(run, previous_task.id)
+    event_log.record(
+        LogEventType.task,
+        "Updated orchestration task status.",
+        actor=actor or "system",
+        subject_id=run.id,
+        metadata={
+            "task_id": _redact_metadata_value(previous_task.id),
+            "requested_status": update.status,
+            "previous_status": previous_task.status,
+            "transition_status": transition_task.status,
+            "status": persisted_task.status,
+            "previous_retry_count": previous_task.retry_count,
+            "retry_count": persisted_task.retry_count,
+            "new_blocker_ids": [
+                _redact_metadata_value(blocker.id)
+                for blocker in run.blockers
+                if blocker.id not in previous_blocker_ids
+            ],
+            "new_follow_up_ids": [
+                _redact_metadata_value(follow_up.id)
+                for follow_up in run.follow_ups
+                if follow_up.id not in previous_follow_up_ids
+            ],
+            "scheduled_task_ids": _redact_metadata_values(run.scheduled_task_ids),
+            "error": redact_sensitive_values(update.error) if update.error else None,
+            "output_keys": _redact_metadata_values(sorted(str(key) for key in update.output)),
+        },
     )
 
 

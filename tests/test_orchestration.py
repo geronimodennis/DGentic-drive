@@ -569,6 +569,211 @@ def test_orchestration_blocks_role_boundary_violations_with_follow_up_suggestion
     assert run.scheduled_task_ids == ["qa-allowed"]
 
 
+def test_orchestration_create_run_syncs_generated_project_documents(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Publish generated orchestration documents.",
+            tasks=[
+                _task(
+                    "qa-document-check",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    title="Validate generated project documents",
+                ),
+            ],
+        )
+    )
+
+    progress_document, backlog_document = _generated_orchestration_documents()
+    assert "# DGentic Orchestration Run Status" in progress_document
+    assert "# DGentic Orchestration Follow-Up Backlog" in backlog_document
+    assert run.id in progress_document
+    assert "Publish generated orchestration documents." in progress_document
+    assert "`running` `qa-document-check` (QA): Validate generated project documents" in (
+        progress_document
+    )
+    assert "- None." in backlog_document
+
+
+def test_orchestration_generated_documents_list_active_follow_ups_and_blockers(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Track active blocker documents.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(
+            status=StepStatus.blocked,
+            error="Need PM review before continuing.",
+        ),
+    )
+
+    progress_document, backlog_document = _generated_orchestration_documents()
+    assert blocked.status == PlanStatus.running
+    assert "`blocked` `qa-validation`" in progress_document
+    assert "`blocked`" in progress_document
+    assert "Need PM review before continuing." in progress_document
+    assert f"`{blocked.id}` / `qa-validation` -> QA: Need PM review before continuing." in (
+        backlog_document
+    )
+    assert f"`{blocked.id}` / `qa-validation` `blocked`: Need PM review before continuing." in (
+        backlog_document
+    )
+
+
+def test_orchestration_generated_documents_drop_resolved_and_completed_open_items(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Clear resolved blocker documents.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+            required_dod_evidence=["tests"],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Manual review needed."),
+    )
+
+    resolved = service.resolve_blocker(
+        blocked.id,
+        blocked.blockers[0].id,
+        OrchestrationBlockerResolutionRequest(
+            resolution="Manual review accepted.",
+            reschedule=True,
+        ),
+    )
+    progress_document, backlog_document = _generated_orchestration_documents()
+    assert resolved.blockers[0].status == "resolved"
+    assert resolved.follow_ups == []
+    assert "Manual review needed." not in backlog_document
+    assert "Manual review needed." not in progress_document
+    assert progress_document.count("- None.") >= 1
+    assert backlog_document.count("- None.") == 2
+
+    completed = service.update_task(
+        resolved.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+    closed = service.close_run(
+        completed.id,
+        OrchestrationCloseRequest(evidence={"tests": "pytest passed"}),
+    )
+
+    _progress_document, backlog_document = _generated_orchestration_documents()
+    assert closed.status == PlanStatus.completed
+    assert closed.id not in backlog_document
+    assert "Manual review needed." not in backlog_document
+    assert backlog_document.count("- None.") == 2
+
+
+def test_orchestration_generated_documents_redact_secret_shaped_text(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Coordinate TOKEN=objective-secret document sync.",
+            tasks=[
+                _task(
+                    "qa-redaction",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    title="Validate API_KEY=title-secret generated docs",
+                ),
+            ],
+        )
+    )
+    service.update_task(
+        run.id,
+        "qa-redaction",
+        OrchestrationTaskUpdate(
+            status=StepStatus.blocked,
+            error="Blocked by PASSWORD=blocker-secret and --token flag-secret.",
+        ),
+    )
+
+    progress_document, backlog_document = _generated_orchestration_documents()
+    documents = "\n".join([progress_document, backlog_document])
+    assert "TOKEN=[REDACTED]" in documents
+    assert "API_KEY=[REDACTED]" in documents
+    assert "PASSWORD=[REDACTED]" in documents
+    assert "--token [REDACTED]" in documents
+    assert "objective-secret" not in documents
+    assert "title-secret" not in documents
+    assert "blocker-secret" not in documents
+    assert "flag-secret" not in documents
+
+
+@pytest.mark.parametrize("symlink_case", ["parent", "target"])
+def test_orchestration_generated_document_symlink_failures_are_audited_and_non_fatal(
+    orchestration_state,
+    symlink_case: str,
+) -> None:
+    root_dir = get_settings().root_dir
+    outside_dir = root_dir.parent / f"outside-{symlink_case}"
+    outside_dir.mkdir()
+    docs_dir = root_dir / "docs"
+    progress_dir = docs_dir / "progress"
+    outside_progress = outside_dir / "progress"
+
+    docs_dir.mkdir()
+    if symlink_case == "parent":
+        outside_progress.mkdir()
+        try:
+            progress_dir.symlink_to(outside_progress, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"Symlink creation is unavailable on this platform: {exc}")
+        outside_file = outside_progress / "orchestration-runs.md"
+    else:
+        progress_dir.mkdir()
+        outside_file = outside_dir / "orchestration-runs.md"
+        outside_file.write_text("outside sentinel", encoding="utf-8")
+        try:
+            (progress_dir / "orchestration-runs.md").symlink_to(outside_file)
+        except OSError as exc:
+            pytest.skip(f"Symlink creation is unavailable on this platform: {exc}")
+
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective=f"Persist state despite {symlink_case} document sync failure.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    persisted = OrchestrationService().get_run(run.id)
+    failure_event = _latest_task_event(
+        run.id,
+        "Failed to sync orchestration project documents.",
+    )
+
+    assert persisted is not None
+    assert persisted.id == run.id
+    assert failure_event.metadata["error_type"] == "ValueError"
+    assert "must not contain symlinks" in failure_event.metadata["error"]
+    if symlink_case == "parent":
+        assert not outside_file.exists()
+    else:
+        assert outside_file.read_text(encoding="utf-8") == "outside sentinel"
+
+
 @pytest.mark.parametrize(
     ("task_id", "role", "paths", "violating_path"),
     [
@@ -1045,6 +1250,82 @@ def test_orchestration_retry_exhaustion_creates_blocker_and_follow_up(
     assert [(follow_up.task_id, follow_up.assigned_role) for follow_up in run.follow_ups] == [
         ("qa-validation", "QA")
     ]
+
+
+def test_orchestration_task_update_records_redacted_audit_metadata(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Audit direct orchestration task updates.",
+            tasks=[
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    retry_limit=1,
+                ),
+                _task(
+                    "pm-follow-up",
+                    role="PM",
+                    dependencies=["qa-validation"],
+                    paths=["docs/progress/project-progress-log.md"],
+                ),
+            ],
+        )
+    )
+
+    retried = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(
+            status=StepStatus.failed,
+            error="First attempt failed with TOKEN=retry-secret.",
+            output={"API_KEY=output-secret": "value"},
+        ),
+        actor="qa-reviewer",
+    )
+    retry_event = _latest_task_event(retried.id, "Updated orchestration task status.")
+
+    assert retry_event.actor == "qa-reviewer"
+    assert retry_event.metadata["task_id"] == "qa-validation"
+    assert retry_event.metadata["previous_status"] == StepStatus.running
+    assert retry_event.metadata["requested_status"] == StepStatus.failed
+    assert retry_event.metadata["transition_status"] == StepStatus.pending
+    assert retry_event.metadata["status"] == StepStatus.running
+    assert retry_event.metadata["previous_retry_count"] == 0
+    assert retry_event.metadata["retry_count"] == 1
+    assert retry_event.metadata["new_blocker_ids"] == []
+    assert retry_event.metadata["new_follow_up_ids"] == []
+    assert retry_event.metadata["scheduled_task_ids"] == ["qa-validation"]
+    assert retry_event.metadata["error"] == "First attempt failed with TOKEN=[REDACTED]"
+    assert "retry-secret" not in retry_event.metadata["error"]
+    assert retry_event.metadata["output_keys"] == ["API_KEY=[REDACTED]"]
+
+    blocked = service.update_task(
+        retried.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(
+            status=StepStatus.failed,
+            error="Still failing with PASSWORD=blocker-secret.",
+        ),
+        actor="qa-reviewer",
+    )
+    blocked_event = _latest_task_event(blocked.id, "Updated orchestration task status.")
+
+    assert blocked_event.actor == "qa-reviewer"
+    assert blocked_event.metadata["previous_status"] == StepStatus.running
+    assert blocked_event.metadata["requested_status"] == StepStatus.failed
+    assert blocked_event.metadata["transition_status"] == StepStatus.blocked
+    assert blocked_event.metadata["status"] == StepStatus.blocked
+    assert blocked_event.metadata["previous_retry_count"] == 1
+    assert blocked_event.metadata["retry_count"] == 2
+    assert blocked_event.metadata["new_blocker_ids"] == [blocked.blockers[0].id]
+    assert blocked_event.metadata["new_follow_up_ids"] == [blocked.follow_ups[0].id]
+    assert blocked_event.metadata["scheduled_task_ids"] == []
+    assert blocked_event.metadata["error"] == "Still failing with PASSWORD=[REDACTED]"
+    assert "blocker-secret" not in blocked_event.metadata["error"]
 
 
 def test_orchestration_recovers_blocked_task_after_safe_reassignment(
@@ -1691,3 +1972,23 @@ def _task_by_id(run, task_id: str) -> OrchestrationTask:
 
 def _status_by_id(run) -> dict[str, StepStatus]:
     return {task.id: task.status for task in run.tasks}
+
+
+def _generated_orchestration_documents() -> tuple[str, str]:
+    root_dir = get_settings().root_dir
+    progress_path = root_dir / "docs" / "progress" / "orchestration-runs.md"
+    backlog_path = root_dir / "docs" / "planning" / "orchestration-follow-ups.md"
+    assert progress_path.is_file()
+    assert backlog_path.is_file()
+    return (
+        progress_path.read_text(encoding="utf-8"),
+        backlog_path.read_text(encoding="utf-8"),
+    )
+
+
+def _latest_task_event(run_id: str, message: str):
+    return next(
+        event
+        for event in reversed(event_log.list(LogEventType.task))
+        if event.subject_id == run_id and event.message == message
+    )

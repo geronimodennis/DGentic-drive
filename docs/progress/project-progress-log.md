@@ -4,6 +4,48 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008j Generated Orchestration Document Sync
+
+Status: completed for the scoped generated project-document sync slice; Sprint 14 remains active for detached background execution, durable shared-memory coordination, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected a narrow generated-document slice for automatic progress/backlog updates without claiming full autonomous backlog management.
+- Completed: Developer added generated orchestration document sync for `docs/progress/orchestration-runs.md` and `docs/planning/orchestration-follow-ups.md`.
+- Completed: Developer scoped generated docs to fixed repository paths, redacted secret-shaped text, rejected symlinked generated-document paths, used atomic same-directory replacement, added a shared document-sync lock, and made sync failures audited/non-fatal after orchestration state persistence.
+- Completed: Developer added direct task-update audit events for status transitions, retry counts, new blocker/follow-up ids, scheduled task ids, redacted errors, and output keys.
+- Completed: QA added tests for generated docs, open follow-up/blocker filtering, completed/resolved item removal, secret redaction, task-update audit metadata, symlinked parent/target failure audit, persistence after sync failure, and outside-write prevention.
+- Completed: Reviewer/Security found doc-sync failure, audit, concurrency, and role-boundary/governance risks; Developer/PM remediated with non-fatal audit handling, task-update events, a sync lock, symlink hardening, and an explicit runtime-generated document exception in role-boundary governance.
+- Completed: PM updated README, docs index, backlog, architecture docs, usage docs, role-boundary governance, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: every orchestration persistence path attempts to regenerate the run-status and follow-up backlog documents from persisted orchestration state.
+- Implemented in this slice: generated progress docs list run objective, status, timestamps, requester, scheduled tasks, task states, unresolved blockers, and DoD evidence.
+- Implemented in this slice: generated follow-up docs list open follow-ups and unresolved blockers for non-completed runs, while resolved blockers and completed runs are excluded from the open backlog.
+- Implemented in this slice: generated-document content is redacted for common secret-shaped values and strips line breaks from persisted text fields before writing Markdown.
+- Implemented in this slice: generated-document sync uses fixed PM-owned paths, rejects symlinked path components, writes through temporary files, serializes sync through a lock, and audits success or failure.
+- Implemented in this slice: task update transitions now have direct audit events rather than relying on generic document sync records.
+
+Remaining Sprint 14 work:
+- Add detached background worker execution beyond synchronous loop calls.
+- Add durable shared-memory coordination across runs and agents.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused generated-doc/reviewer remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "task_update_records_redacted_audit_metadata or generated_document_symlink_failures or generated_documents or create_run_syncs_generated_project_documents"` passed with 7 tests.
+- Full orchestration gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py` passed with 70 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\orchestration_documents.py src\dgentic\schemas.py tests\test_orchestration.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\orchestration_documents.py src\dgentic\schemas.py tests\test_orchestration.py` passed with 4 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 781 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 58 files already formatted.
+
+Next:
+- Continue Sprint 14 with detached background execution or durable shared-memory coordination.
+
 ### Sprint 14 BL-008i Bounded Autonomous Orchestration Loop
 
 Status: completed for the scoped synchronous loop slice; Sprint 14 remains active for detached background execution, project-document mutation, durable shared memory coordination, and production scheduling hardening.

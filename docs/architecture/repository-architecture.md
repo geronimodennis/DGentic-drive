@@ -43,6 +43,7 @@ dgentic/
       provider_runtime.py
       providers.py
       orchestration.py
+      orchestration_documents.py
       schemas.py
       sessions.py
       settings.py
@@ -71,7 +72,8 @@ Current modules:
 - `api/routes.py`: HTTP routes for health checks, tasks, orchestration runs, guardrails, CLI policy and approvals, provider approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
-- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling with redacted dependency-output context handoff, orchestration-bound filesystem, CLI, and generated-tool action authorization, explicit and bounded loop-based agent lifecycle reconciliation, retry escalation, blocked-task recovery, manual/security blocker resolution with audit history, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, and DoD evidence close gates.
+- `orchestration.py`: Backend orchestration control plane for persisted task graphs, canonical declared-path role-boundary validation, dependency-aware sub-agent scheduling with redacted dependency-output context handoff, orchestration-bound filesystem, CLI, and generated-tool action authorization, explicit and bounded loop-based agent lifecycle reconciliation, retry escalation, blocked-task recovery, manual/security blocker resolution with audit history, blockers, follow-ups, bounded scheduling passes, actor-attributed events when auth is enabled, closed-run immutability, audited generated project-document sync, and DoD evidence close gates.
+- `orchestration_documents.py`: Generated orchestration project-document sync for redacted run status and open follow-up/blocker backlog Markdown files under `docs/progress/` and `docs/planning/`, with fixed paths, symlink rejection, and a shared sync lock.
 - `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, executable, exact-command, contains, and argument-aware command matching, shell-wrapper inspection, cwd-aware evaluation, orchestration-bound CLI action checks when agent context is supplied, and read-only path operand rootDir boundary checks.
 - `cli_runtime.py`: CLI approvals, single-use bound approval IDs, root-bound synchronous and asynchronous command execution, POSIX translation for policy-approved `cmd /c` and `cmd.exe /c` wrappers, chunked output polling, supervision metadata, auditable lifecycle states, stale-running reconciliation, process-local cancellation, controlled environment construction, agent/task context auditing, output redaction/truncation, and command run history.
 - `planner.py`: Deterministic starter planner used until model-backed planning is implemented.
@@ -164,6 +166,7 @@ Current endpoints:
 - `POST /tasks/orchestrations/{run_id}/tasks/{task_id}/recover`: Recovers a task with system-generated role-boundary or retry-exhaustion blockers after a non-blank resolution note, optional role or declared write-path correction, role-boundary revalidation, task-scoped recoverable blocker/follow-up clearing, and dependency-aware rescheduling. Manual blockers remain unresolved for separate review.
 - `POST /tasks/orchestrations/{run_id}/blockers/{blocker_id}/resolve`: Resolves manual or security blockers with a non-blank resolution note, preserves blocker audit history, unblocks the task to pending when no unresolved blockers remain, optionally schedules the task immediately, and requires admin authority when authentication is enabled. Role-boundary and retry-exhaustion blockers stay on the task recovery path.
 - `POST /tasks/orchestrations/{run_id}/close`: Closes a completed orchestration only when every task is complete, blockers are resolved, and required Definition of Done evidence is present.
+- Orchestration state changes synchronize generated Markdown documents at `docs/progress/orchestration-runs.md` and `docs/planning/orchestration-follow-ups.md`. These files are generated from persisted orchestration state and manual edits may be replaced. Successful and failed sync attempts are audited; sync failures do not roll back the already-persisted orchestration state.
 - `POST /guardrails/filesystem`: Evaluates filesystem action policy against `rootDir`.
 - `POST /filesystem/read`: Reads a UTF-8 text file after root boundary policy approval.
 - `POST /filesystem/write`: Writes a UTF-8 text file after root boundary policy approval and payload-size validation.
@@ -274,6 +277,8 @@ Current collections:
 - `dgentic.db`
 
 JSON collections expose `list_quarantined_files()` and `restore_quarantine()` helper methods for operator or test repair workflows when a quarantined file is valid enough to restore. SQLAlchemy schema state is tracked in `schema_migrations`. The current baseline id is `0001_metadata_tool_registry_baseline`. File-backed SQLite local databases can be backed up and restored with `backup_sqlite_database()` and `restore_sqlite_database()` for operator smoke workflows; scheduled, remote, and PostgreSQL-native backup automation remains future production work.
+
+Generated orchestration documents are stored in normal project docs rather than `.dgentic/`: `docs/progress/orchestration-runs.md` summarizes persisted run status, and `docs/planning/orchestration-follow-ups.md` lists open follow-ups and unresolved blockers for non-completed runs.
 
 ## Sprint 9 BL-003 Parser And Approval Review Contract Scope
 

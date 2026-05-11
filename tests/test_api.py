@@ -5472,6 +5472,60 @@ def test_generated_tool_execute_api_redacts_timed_out_tool_outputs_and_audits(
     get_settings.cache_clear()
 
 
+def test_generated_tool_execute_api_enforces_network_domain_policy(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-network-denied-tool",
+            "description": "Attempts outbound network access.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": (
+                "import socket\n\n"
+                "def run(payload):\n"
+                "    socket.create_connection(('blocked.example.test', 443), timeout=1)\n"
+                "    return {'ok': True}\n"
+            ),
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-network-denied-tool/execute",
+        json={"payload": {}, "timeout_seconds": 5},
+    )
+
+    assert generate_response.status_code == 201
+    assert execute_response.status_code == 200
+    body = execute_response.json()
+    assert body["exit_code"] == 1
+    assert body["stdout"] == ""
+    assert body["parsed_output"] is None
+    assert "blocked by DGentic network policy" in body["stderr"]
+    get_settings.cache_clear()
+
+
 def test_provider_generate_api_rejects_unsupported_provider() -> None:
     client = TestClient(create_app())
 

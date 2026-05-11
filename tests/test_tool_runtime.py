@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import signal
+import socket
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1216,6 +1217,573 @@ def test_execute_tool_cannot_import_application_runtime_dependency(
     assert stored.usage_count == 1
     assert stored.success_count == 0
     assert stored.failure_count == 1
+
+
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("deny", "blocked by DGentic network policy"),
+        ("approval_required", "requires DGentic network approval"),
+    ],
+)
+def test_execute_tool_enforces_network_domain_policy_in_subprocess(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+    mode: str,
+    message: str,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": mode,
+                        "reason": "policy token=network-policy-secret",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        f"network-{mode}-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    socket.create_connection(('blocked.example.test', 443), timeout=1)\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name=f"network-{mode}-tool",
+            description="Network policy should stop outbound sockets.",
+            entrypoint=f"localmcp/network-{mode}-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool(f"network-{mode}-tool", {})
+    stored = get_tool(f"network-{mode}-tool")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert message in result.stderr
+    assert "network-policy-secret" not in result.model_dump_json()
+    assert stored is not None
+    assert stored.usage_count == 1
+    assert stored.success_count == 0
+    assert stored.failure_count == 1
+
+
+def test_execute_tool_enforces_network_domain_policy_for_raw_socket_connect(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "raw-socket-network-deny-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    try:\n"
+            "        sock.connect(('blocked.example.test', 443))\n"
+            "    finally:\n"
+            "        sock.close()\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="raw-socket-network-deny-tool",
+            description="Network policy should stop raw socket connect.",
+            entrypoint="localmcp/raw-socket-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("raw-socket-network-deny-tool", {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+def test_execute_tool_enforces_network_domain_policy_before_tool_import(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "import-time-network-deny-tool",
+        tool_source=(
+            "import socket\n\n"
+            "socket.create_connection(('blocked.example.test', 443), timeout=1)\n\n"
+            "def run(payload):\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="import-time-network-deny-tool",
+            description="Network policy should stop import-time sockets.",
+            entrypoint="localmcp/import-time-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("import-time-network-deny-tool", {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+def test_execute_tool_enforces_network_domain_policy_for_connect_ex(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "connect-ex-network-deny-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    try:\n"
+            "        return {'code': sock.connect_ex(('blocked.example.test', 443))}\n"
+            "    finally:\n"
+            "        sock.close()\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="connect-ex-network-deny-tool",
+            description="Network policy should stop connect_ex sockets.",
+            entrypoint="localmcp/connect-ex-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("connect-ex-network-deny-tool", {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "tool_source"),
+    [
+        (
+            "byte-host-connect-network-deny-tool",
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    try:\n"
+            "        sock.connect((b'127.0.0.1', 443))\n"
+            "    finally:\n"
+            "        sock.close()\n"
+            "    return {'ok': True}\n",
+        ),
+        (
+            "byte-host-connect-ex-network-deny-tool",
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    try:\n"
+            "        return {'code': sock.connect_ex((b'127.0.0.1', 443))}\n"
+            "    finally:\n"
+            "        sock.close()\n",
+        ),
+        (
+            "byte-host-getaddrinfo-network-deny-tool",
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    return {'addresses': socket.getaddrinfo(b'127.0.0.1', 443)}\n",
+        ),
+    ],
+)
+def test_execute_tool_normalizes_byte_hosts_for_network_policy(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+    name: str,
+    tool_source: str,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "127.0.0.1",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(root_dir, name, tool_source=tool_source)
+    register_tool(
+        ToolManifest(
+            name=name,
+            description="Network policy should stop byte-string socket hosts.",
+            entrypoint=f"localmcp/{name}/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool(name, {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+def test_execute_tool_blocks_denied_hostname_resolution_before_ip_connect(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "allow",
+                "rules": [
+                    {
+                        "domain": "localhost",
+                        "mode": "deny",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "resolver-network-deny-tool",
+        tool_source=(
+            "import socket\n\n"
+            "ip_address = socket.gethostbyname('localhost')\n\n"
+            "def run(payload):\n"
+            "    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    try:\n"
+            "        return {'code': sock.connect_ex((ip_address, 9))}\n"
+            "    finally:\n"
+            "        sock.close()\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="resolver-network-deny-tool",
+            description="Network policy should stop denied hostname resolution.",
+            entrypoint="localmcp/resolver-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("resolver-network-deny-tool", {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+def test_execute_tool_allows_resolved_address_for_allowed_hostname(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    _host, port = listener.getsockname()
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": "localhost",
+                        "mode": "allow",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "resolver-network-allow-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    ip_address = socket.gethostbyname('localhost')\n"
+            f"    with socket.create_connection((ip_address, {port}), timeout=2):\n"
+            "        return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="resolver-network-allow-tool",
+            description="Network policy should allow resolved approved host addresses.",
+            entrypoint="localmcp/resolver-network-allow-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    try:
+        result = execute_tool("resolver-network-allow-tool", {})
+    finally:
+        listener.close()
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {"ok": True}
+
+
+def test_execute_tool_network_policy_survives_main_original_restore_attempt(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "blocked.example.test",
+                        "mode": "deny",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "main-restore-network-deny-tool",
+        tool_source=(
+            "import __main__\n"
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    original_connect = getattr(__main__, '_ORIGINAL_SOCKET_CONNECT', None)\n"
+            "    original_create = getattr(__main__, '_ORIGINAL_CREATE_CONNECTION', None)\n"
+            "    if original_connect is not None:\n"
+            "        socket.socket.connect = original_connect\n"
+            "    if original_create is not None:\n"
+            "        socket.create_connection = original_create\n"
+            "    socket.create_connection(('blocked.example.test', 443), timeout=1)\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="main-restore-network-deny-tool",
+            description="Network policy should survive trivial restore attempts.",
+            entrypoint="localmcp/main-restore-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("main-restore-network-deny-tool", {})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["allow", "audit"])
+def test_execute_tool_preserves_network_policy_allow_and_audit_modes(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+    mode: str,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": mode,
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        f"network-{mode}-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            f"    with socket.create_connection(({host!r}, {port}), timeout=2):\n"
+            "        return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name=f"network-{mode}-tool",
+            description=f"Network policy {mode} mode should permit sockets.",
+            entrypoint=f"localmcp/network-{mode}-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    try:
+        result = execute_tool(f"network-{mode}-tool", {})
+    finally:
+        listener.close()
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {"ok": True}
+
+
+def test_execute_tool_does_not_expose_network_policy_handoff_to_tool(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "allowed.example.test",
+                        "mode": "allow",
+                        "reason": "policy token=network-policy-secret",
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_TOOL_NETWORK_DOMAIN_POLICY",
+        '{"default_mode":"deny","reason":"hostile inherited policy secret"}',
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "network-policy-env-tool",
+        tool_source=(
+            "import os\n\n"
+            "def run(payload):\n"
+            "    return {'tool_policy': os.environ.get('DGENTIC_TOOL_NETWORK_DOMAIN_POLICY')}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="network-policy-env-tool",
+            description="Tool should not see runner network policy handoff.",
+            entrypoint="localmcp/network-policy-env-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("network-policy-env-tool", {})
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {"tool_policy": None}
+    serialized = result.model_dump_json()
+    assert "network-policy-secret" not in serialized
+    assert "hostile inherited policy secret" not in serialized
+
+
+def test_execute_tool_rejects_invalid_network_policy_before_subprocess_usage(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv("DGENTIC_NETWORK_DOMAIN_POLICY", '{"rules":"not-a-list"}')
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "invalid-network-policy-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="invalid-network-policy-tool",
+            description="Invalid policy should block before execution.",
+            entrypoint="localmcp/invalid-network-policy-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    with pytest.raises(PermissionError, match="Network domain policy is invalid"):
+        execute_tool("invalid-network-policy-tool", {})
+
+    stored = get_tool("invalid-network-policy-tool")
+    assert stored is not None
+    assert stored.usage_count == 0
 
 
 @pytest.mark.parametrize(

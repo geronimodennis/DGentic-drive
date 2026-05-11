@@ -20,6 +20,7 @@ from dgentic.database import get_db_session
 from dgentic.events import event_log
 from dgentic.memory.models import ToolManifest as RegistryToolManifest
 from dgentic.memory.schemas import ToolUsageRequest
+from dgentic.network_policy import NetworkDomainPolicyError, network_domain_policy
 from dgentic.orchestration import authorize_tool_action
 from dgentic.redaction import redact_metadata, redact_sensitive_values
 from dgentic.schemas import (
@@ -82,9 +83,198 @@ _RUNNER_SOURCE = r"""
 import contextlib
 import importlib.util
 import json
+import os
+import socket
 import sys
 import traceback
 from pathlib import Path
+
+
+def _install_network_guards():
+    raw_policy = os.environ.pop("DGENTIC_TOOL_NETWORK_DOMAIN_POLICY", "").strip()
+    if not raw_policy:
+        return
+
+    def normalize_mode(value):
+        if not isinstance(value, str):
+            raise RuntimeError("DGentic tool network policy mode is invalid.")
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized not in {"allow", "deny", "approval_required", "audit"}:
+            raise RuntimeError("DGentic tool network policy mode is invalid.")
+        return normalized
+
+    def normalize_domain(value):
+        if not isinstance(value, str):
+            raise RuntimeError("DGentic tool network policy domain is invalid.")
+        domain = value.strip().lower().rstrip(".")
+        if not domain:
+            raise RuntimeError("DGentic tool network policy domain is invalid.")
+        return domain
+
+    def normalize_host(value):
+        if isinstance(value, bytes):
+            try:
+                value = value.decode("idna")
+            except UnicodeError as exc:
+                raise PermissionError("Tool network host is invalid.") from exc
+        return str(value).strip().lower().rstrip(".")
+
+    def domain_matches(host, domain):
+        if domain.startswith("*."):
+            suffix = domain[2:]
+            return host.endswith(f".{suffix}") and host != suffix
+        return host == domain
+
+    try:
+        payload = json.loads(raw_policy)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("DGentic tool network policy must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("DGentic tool network policy must be a JSON object.")
+
+    default_mode = normalize_mode(payload.get("default_mode", "allow"))
+    raw_rules = payload.get("rules", [])
+    if not isinstance(raw_rules, list):
+        raise RuntimeError("DGentic tool network policy rules must be a list.")
+    rules = []
+    for rule in raw_rules:
+        if not isinstance(rule, dict):
+            raise RuntimeError("DGentic tool network policy rules must be objects.")
+        rules.append((normalize_domain(rule.get("domain")), normalize_mode(rule.get("mode"))))
+    rules = tuple(rules)
+
+    resolved_allowlist = set()
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    original_create_connection = socket.create_connection
+    original_getaddrinfo = socket.getaddrinfo
+    original_gethostbyaddr = socket.gethostbyaddr
+    original_gethostbyname = socket.gethostbyname
+    original_gethostbyname_ex = socket.gethostbyname_ex
+    original_getnameinfo = socket.getnameinfo
+
+    def policy_mode_for_host(host):
+        normalized_host = normalize_host(host)
+        for domain, mode in rules:
+            if domain_matches(normalized_host, domain):
+                return mode
+        return default_mode
+
+    def address_host(address):
+        if isinstance(address, tuple) and address:
+            return address[0]
+        return address
+
+    def address_key(address):
+        if isinstance(address, tuple) and address:
+            host = normalize_host(address[0])
+            port = address[1] if len(address) > 1 else None
+            return (host, port)
+        return (normalize_host(address), None)
+
+    def is_resolved_allowlisted(host, port=None):
+        normalized_host = normalize_host(host)
+        return (
+            (normalized_host, port) in resolved_allowlist
+            or (normalized_host, None) in resolved_allowlist
+        )
+
+    def authorize_host(host):
+        mode = policy_mode_for_host(host)
+        if mode == "deny":
+            raise PermissionError(
+                f"Tool network access to {host} is blocked by DGentic network policy."
+            )
+        if mode == "approval_required":
+            raise PermissionError(
+                f"Tool network access to {host} requires DGentic network approval."
+            )
+        return mode
+
+    def authorize_address(address):
+        key = address_key(address)
+        if key in resolved_allowlist or (key[0], None) in resolved_allowlist:
+            return "allow"
+        return authorize_host(address_host(address))
+
+    def authorize_resolver_host(host, port=None):
+        if is_resolved_allowlisted(host, port):
+            return "allow"
+        return authorize_host(host)
+
+    def remember_resolved_host(host, port=None):
+        resolved_allowlist.add((normalize_host(host), port))
+
+    def remember_getaddrinfo_results(results):
+        for result in results:
+            if len(result) >= 5:
+                resolved_allowlist.add(address_key(result[4]))
+
+    def guarded_getaddrinfo(host, port, *args, **kwargs):
+        mode = authorize_resolver_host(host, port)
+        results = original_getaddrinfo(host, port, *args, **kwargs)
+        if mode in {"allow", "audit"}:
+            remember_getaddrinfo_results(results)
+        return results
+
+    def guarded_gethostbyaddr(host):
+        authorize_host(host)
+        return original_gethostbyaddr(host)
+
+    def guarded_gethostbyname(host):
+        mode = authorize_host(host)
+        address = original_gethostbyname(host)
+        if mode in {"allow", "audit"}:
+            remember_resolved_host(address)
+        return address
+
+    def guarded_gethostbyname_ex(host):
+        mode = authorize_host(host)
+        result = original_gethostbyname_ex(host)
+        if mode in {"allow", "audit"} and len(result) >= 3:
+            for address in result[2]:
+                remember_resolved_host(address)
+        return result
+
+    def guarded_getnameinfo(sockaddr, flags):
+        authorize_address(sockaddr)
+        return original_getnameinfo(sockaddr, flags)
+
+    def guarded_connect(self, address):
+        authorize_address(address)
+        return original_connect(self, address)
+
+    def guarded_connect_ex(self, address):
+        authorize_address(address)
+        return original_connect_ex(self, address)
+
+    def guarded_create_connection(address, *args, **kwargs):
+        authorize_address(address)
+        return original_create_connection(address, *args, **kwargs)
+
+    def network_audit_hook(event, args):
+        if event == "socket.getaddrinfo" and len(args) > 1:
+            authorize_resolver_host(args[0], args[1])
+        elif event in {"socket.gethostbyaddr", "socket.gethostbyname"} and args:
+            authorize_host(args[0])
+        elif event == "socket.getnameinfo" and args:
+            authorize_address(args[0])
+        elif event == "socket.connect" and len(args) > 1:
+            authorize_address(args[1])
+
+    socket.getaddrinfo = guarded_getaddrinfo
+    socket.gethostbyaddr = guarded_gethostbyaddr
+    socket.gethostbyname = guarded_gethostbyname
+    socket.gethostbyname_ex = guarded_gethostbyname_ex
+    socket.getnameinfo = guarded_getnameinfo
+    socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
+    socket.create_connection = guarded_create_connection
+    sys.addaudithook(network_audit_hook)
+
+
+_install_network_guards()
+del _install_network_guards
 
 
 def _main():
@@ -1124,7 +1314,30 @@ def _subprocess_env() -> dict[str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["DGENTIC_TOOL_DEPENDENCY_MODE"] = "local-only"
+    sanitized_network_policy = _tool_runner_network_policy()
+    if sanitized_network_policy:
+        env["DGENTIC_TOOL_NETWORK_DOMAIN_POLICY"] = sanitized_network_policy
     return env
+
+
+def _tool_runner_network_policy() -> str:
+    if not get_settings().network_domain_policy.strip():
+        return ""
+    try:
+        policy = network_domain_policy()
+    except NetworkDomainPolicyError as exc:
+        raise PermissionError("Network domain policy is invalid.") from exc
+    payload = {
+        "default_mode": policy.default_mode,
+        "rules": [
+            {
+                "domain": rule.domain,
+                "mode": rule.mode,
+            }
+            for rule in policy.rules
+        ],
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _parse_json_output(stdout: str) -> Any | None:

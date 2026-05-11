@@ -30,6 +30,25 @@ CAPABILITY_TASKS = "tasks"
 CAPABILITY_TOOLS = "tools"
 CAPABILITY_AUTH = "auth"
 CAPABILITY_ALL = "*"
+KNOWN_CAPABILITIES = frozenset(
+    {
+        CAPABILITY_ADMIN,
+        CAPABILITY_AGENTS,
+        CAPABILITY_APPROVALS,
+        CAPABILITY_AUTH,
+        CAPABILITY_CLI,
+        CAPABILITY_CREDENTIALS,
+        CAPABILITY_FILESYSTEM,
+        CAPABILITY_LOGS,
+        CAPABILITY_MEMORY,
+        CAPABILITY_NETWORK,
+        CAPABILITY_PROVIDERS,
+        CAPABILITY_SESSIONS,
+        CAPABILITY_TASKS,
+        CAPABILITY_TOOLS,
+        CAPABILITY_ALL,
+    }
+)
 
 PUBLIC_PATHS = frozenset(
     {
@@ -92,15 +111,12 @@ class AuthTokenRequest(BaseModel):
     @field_validator("operator_id")
     @classmethod
     def operator_id_must_not_be_blank(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("operator_id must not be blank.")
-        return stripped
+        return _normalize_operator_id(value)
 
     @field_validator("capabilities")
     @classmethod
     def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
-        capabilities = _normalize_capabilities(value)
+        capabilities = _normalize_capabilities(value, validate_known=True)
         if not capabilities:
             raise ValueError("capabilities must include at least one non-blank value.")
         return list(capabilities)
@@ -121,7 +137,7 @@ class AuthTokenRotateRequest(BaseModel):
     def capabilities_must_be_normalized(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        capabilities = _normalize_capabilities(value)
+        capabilities = _normalize_capabilities(value, validate_known=True)
         if not capabilities:
             raise ValueError("capabilities must include at least one non-blank value.")
         return list(capabilities)
@@ -132,12 +148,99 @@ class AuthTokenRotateRequest(BaseModel):
         return _as_utc_datetime(value)
 
 
+class OperatorRequest(BaseModel):
+    operator_id: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(default="", max_length=120)
+    role: str = Field(default="", max_length=120)
+    capabilities: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("operator_id")
+    @classmethod
+    def operator_id_must_not_be_blank(cls, value: str) -> str:
+        return _normalize_operator_id(value)
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
+        capabilities = _normalize_capabilities(value, validate_known=True)
+        if not capabilities:
+            raise ValueError("capabilities must include at least one non-blank value.")
+        return list(capabilities)
+
+    @field_validator("display_name", "role")
+    @classmethod
+    def text_fields_must_be_stripped(cls, value: str) -> str:
+        return value.strip()
+
+
+class OperatorUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    role: str | None = Field(default=None, max_length=120)
+    capabilities: list[str] | None = Field(default=None, max_length=50)
+    status: Literal["active", "inactive"] | None = None
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        capabilities = _normalize_capabilities(value, validate_known=True)
+        if not capabilities:
+            raise ValueError("capabilities must include at least one non-blank value.")
+        return list(capabilities)
+
+    @field_validator("display_name", "role")
+    @classmethod
+    def text_fields_must_be_stripped(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class OperatorRecord(BaseModel):
+    id: str
+    display_name: str = ""
+    role: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    status: Literal["active", "inactive"] = "active"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    deactivated_at: datetime | None = None
+
+    @field_validator("id")
+    @classmethod
+    def id_must_not_be_blank(cls, value: str) -> str:
+        return _normalize_operator_id(value)
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
+        return list(_normalize_capabilities(value, validate_known=True))
+
+    @field_validator("created_at", "updated_at", "deactivated_at")
+    @classmethod
+    def datetimes_must_be_utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc_datetime(value)
+
+
+class OperatorView(BaseModel):
+    id: str
+    display_name: str = ""
+    role: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    status: Literal["active", "inactive"]
+    created_at: datetime
+    updated_at: datetime
+    deactivated_at: datetime | None = None
+
+
 class AuthTokenRecord(BaseModel):
     id: str
     operator_id: str
     label: str = ""
     token_hash: str
     capabilities: list[str] = Field(default_factory=list)
+    operator_profile_required: bool = False
     status: Literal["active", "revoked", "expired"] = "active"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -182,6 +285,7 @@ class AuthTokenCreateResponse(BaseModel):
 
 
 _auth_tokens = JsonCollection("auth-tokens", AuthTokenRecord)
+_operators = JsonCollection("operators", OperatorRecord)
 
 
 def parse_token_map(raw_config: str) -> dict[str, frozenset[str]]:
@@ -222,7 +326,7 @@ def validate_auth_configuration(settings: Settings | None = None) -> None:
 
     if parse_token_map(settings.auth_tokens):
         return
-    if _active_persisted_tokens():
+    if _usable_persisted_tokens():
         return
 
     raise AuthConfigurationError(
@@ -232,6 +336,74 @@ def validate_auth_configuration(settings: Settings | None = None) -> None:
     )
 
 
+def create_operator(
+    request: OperatorRequest,
+    *,
+    actor: str | None = None,
+) -> OperatorView:
+    now = datetime.now(UTC)
+    record = OperatorRecord(
+        id=request.operator_id,
+        display_name=request.display_name,
+        role=request.role,
+        capabilities=list(_normalize_capabilities(request.capabilities, validate_known=True)),
+        created_at=now,
+        updated_at=now,
+    )
+
+    def create(items: list[OperatorRecord]) -> tuple[list[OperatorRecord], OperatorRecord]:
+        if any(item.id == record.id for item in items):
+            raise ValueError(f"Operator already exists: {record.id}")
+        return [*items, record], record
+
+    saved = _operators.transact(create)
+    _record_operator_event("Created operator identity.", saved, actor=actor)
+    return _operator_view(saved)
+
+
+def list_operators() -> list[OperatorView]:
+    return [_operator_view(record) for record in _operators.list()]
+
+
+def get_operator(operator_id: str) -> OperatorView:
+    record = _operators.get(_normalize_operator_id(operator_id))
+    if record is None:
+        raise KeyError(f"Operator not found: {operator_id}")
+    return _operator_view(record)
+
+
+def update_operator(
+    operator_id: str,
+    request: OperatorUpdateRequest,
+    *,
+    actor: str | None = None,
+) -> OperatorView:
+    now = datetime.now(UTC)
+    normalized_operator_id = _normalize_operator_id(operator_id)
+
+    def update(record: OperatorRecord) -> OperatorRecord:
+        changes: dict[str, object] = {"updated_at": now}
+        if "display_name" in request.model_fields_set:
+            changes["display_name"] = request.display_name or ""
+        if "role" in request.model_fields_set:
+            changes["role"] = request.role or ""
+        if request.capabilities is not None:
+            changes["capabilities"] = list(
+                _normalize_capabilities(request.capabilities, validate_known=True)
+            )
+        if request.status is not None:
+            changes["status"] = request.status
+            changes["deactivated_at"] = now if request.status == "inactive" else None
+        return record.model_copy(update=changes)
+
+    try:
+        saved = _operators.update(normalized_operator_id, update)
+    except KeyError as exc:
+        raise KeyError(f"Operator not found: {operator_id}") from exc
+    _record_operator_event("Updated operator identity.", saved, actor=actor)
+    return _operator_view(saved)
+
+
 def create_auth_token(
     request: AuthTokenRequest,
     *,
@@ -239,12 +411,16 @@ def create_auth_token(
 ) -> AuthTokenCreateResponse:
     raw_token = secrets.token_urlsafe(32)
     now = datetime.now(UTC)
+    operator = _active_operator_for_token_request(request.operator_id)
+    capabilities = _normalize_capabilities(request.capabilities, validate_known=True)
+    _validate_operator_capabilities(operator, capabilities)
     record = AuthTokenRecord(
         id=f"auth-token-{uuid4()}",
-        operator_id=request.operator_id,
+        operator_id=operator.id,
         label=request.label,
         token_hash=_hash_token(raw_token),
-        capabilities=list(_normalize_capabilities(request.capabilities)),
+        capabilities=list(capabilities),
+        operator_profile_required=True,
         created_at=now,
         updated_at=now,
         expires_at=request.expires_at,
@@ -286,14 +462,21 @@ def rotate_auth_token(
             expired_record = _expired_record_copy_if_needed(record, now=now)
             if expired_record.status != "active":
                 raise ValueError("Auth token is not active.")
+            operator = _operator_for_auth_record(expired_record)
+            capabilities = _normalize_capabilities(
+                request.capabilities or expired_record.capabilities,
+                validate_known=True,
+            )
+            if operator is not None:
+                _validate_operator_capabilities(operator, capabilities)
             replacement = AuthTokenRecord(
                 id=f"auth-token-{uuid4()}",
                 operator_id=expired_record.operator_id,
                 label=request.label if request.label is not None else expired_record.label,
                 token_hash=_hash_token(raw_token),
-                capabilities=list(
-                    _normalize_capabilities(request.capabilities or expired_record.capabilities)
-                ),
+                capabilities=list(capabilities),
+                operator_profile_required=expired_record.operator_profile_required
+                or operator is not None,
                 created_at=now,
                 updated_at=now,
                 expires_at=(
@@ -427,6 +610,17 @@ def _principal_from_persisted_token(token: str) -> Principal | None:
             continue
         if record.status != "active":
             return None
+        try:
+            operator = _operator_for_auth_record(record)
+        except ValueError:
+            return None
+        capabilities = frozenset(record.capabilities)
+        if operator is not None:
+            operator_capabilities = frozenset(operator.capabilities)
+            if not _capabilities_allowed_by_operator(operator_capabilities, capabilities):
+                capabilities = capabilities & operator_capabilities
+            if not capabilities:
+                return None
         saved = _auth_tokens.update(
             record.id,
             lambda current: current.model_copy(update={"last_used_at": now, "updated_at": now}),
@@ -434,7 +628,7 @@ def _principal_from_persisted_token(token: str) -> Principal | None:
         return Principal(
             token_id=saved.id,
             operator_id=saved.operator_id,
-            capabilities=frozenset(saved.capabilities),
+            capabilities=capabilities,
         )
     return None
 
@@ -443,6 +637,24 @@ def _active_persisted_tokens() -> list[AuthTokenRecord]:
     now = datetime.now(UTC)
     records = [_expire_record_if_needed(record, now=now) for record in _auth_tokens.list()]
     return [record for record in records if record.status == "active"]
+
+
+def _usable_persisted_tokens() -> list[AuthTokenRecord]:
+    usable_records: list[AuthTokenRecord] = []
+    for record in _active_persisted_tokens():
+        try:
+            operator = _operator_for_auth_record(record)
+        except ValueError:
+            continue
+        if operator is not None:
+            token_capabilities = frozenset(record.capabilities)
+            operator_capabilities = frozenset(operator.capabilities)
+            if not _capabilities_allowed_by_operator(operator_capabilities, token_capabilities):
+                token_capabilities = token_capabilities & operator_capabilities
+            if not token_capabilities:
+                continue
+        usable_records.append(record)
+    return usable_records
 
 
 def _expire_record_if_needed(
@@ -486,13 +698,80 @@ def _token_view(record: AuthTokenRecord) -> AuthTokenView:
     )
 
 
-def _normalize_capabilities(values: list[str]) -> tuple[str, ...]:
+def _operator_view(record: OperatorRecord) -> OperatorView:
+    return OperatorView(
+        id=record.id,
+        display_name=record.display_name,
+        role=record.role,
+        capabilities=list(_normalize_capabilities(record.capabilities)),
+        status=record.status,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        deactivated_at=record.deactivated_at,
+    )
+
+
+def _active_operator_for_token_request(operator_id: str) -> OperatorRecord:
+    normalized_operator_id = _normalize_operator_id(operator_id)
+    operator = _operators.get(normalized_operator_id)
+    if operator is None:
+        raise ValueError(f"Operator not found: {normalized_operator_id}")
+    if operator.status != "active":
+        raise ValueError(f"Operator is not active: {normalized_operator_id}")
+    return operator
+
+
+def _operator_for_auth_record(record: AuthTokenRecord) -> OperatorRecord | None:
+    operator = _operators.get(_normalize_operator_id(record.operator_id))
+    if operator is None:
+        if record.operator_profile_required:
+            raise ValueError(f"Operator not found: {record.operator_id}")
+        return None
+    if operator.status != "active":
+        raise ValueError(f"Operator is not active: {record.operator_id}")
+    return operator
+
+
+def _validate_operator_capabilities(
+    operator: OperatorRecord,
+    requested_capabilities: tuple[str, ...],
+) -> None:
+    operator_capabilities = frozenset(operator.capabilities)
+    requested = frozenset(requested_capabilities)
+    if _capabilities_allowed_by_operator(operator_capabilities, requested):
+        return
+    raise ValueError("Requested token capabilities exceed operator assignment.")
+
+
+def _capabilities_allowed_by_operator(
+    operator_capabilities: frozenset[str],
+    requested_capabilities: frozenset[str],
+) -> bool:
+    if operator_capabilities & frozenset({CAPABILITY_ADMIN, CAPABILITY_ALL}):
+        return True
+    return requested_capabilities.issubset(operator_capabilities)
+
+
+def _normalize_capabilities(
+    values: list[str],
+    *,
+    validate_known: bool = False,
+) -> tuple[str, ...]:
     capabilities: list[str] = []
     for value in values:
         capability = value.strip()
+        if validate_known and capability and capability not in KNOWN_CAPABILITIES:
+            raise ValueError(f"Unknown capability: {capability}")
         if capability and capability not in capabilities:
             capabilities.append(capability)
     return tuple(sorted(capabilities))
+
+
+def _normalize_operator_id(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("operator_id must not be blank.")
+    return stripped
 
 
 def _as_utc_datetime(value: datetime | None) -> datetime | None:
@@ -551,5 +830,27 @@ def _record_auth_event(
             "expires_at": record.expires_at.isoformat() if record.expires_at else None,
             "rotated_from_token_id": record.rotated_from_token_id,
             "rotated_to_token_id": record.rotated_to_token_id,
+        },
+    )
+
+
+def _record_operator_event(
+    message: str,
+    record: OperatorRecord,
+    *,
+    actor: str | None,
+) -> None:
+    event_log.record(
+        LogEventType.auth,
+        message,
+        actor=actor or "system",
+        subject_id=record.id,
+        metadata={
+            "operator_id": record.id,
+            "display_name": record.display_name,
+            "role": record.role,
+            "capabilities": list(_normalize_capabilities(record.capabilities)),
+            "status": record.status,
+            "deactivated_at": record.deactivated_at.isoformat() if record.deactivated_at else None,
         },
     )

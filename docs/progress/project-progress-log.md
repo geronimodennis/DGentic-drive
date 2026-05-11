@@ -4,6 +4,45 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009d Persisted Operator Identity And Assignment
+
+Status: completed for the scoped persisted operator identity and capability-assignment slice; Sprint 15 remains active for richer identity workflows, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, audit propagation, and cross-surface no-secret-response validation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected persisted operator profiles and assignment-limited token issuance as the next bounded Sprint 15 slice after provider-call network guardrails.
+- Completed: Architect/Security and QA read-only scouts recommended a tight identity slice before encrypted vaulting or network approval records.
+- Completed: Developer added persisted operator records in `operators.json`, `/auth/operators` create/list/get/update APIs, role/display metadata, active/inactive status, and capability normalization.
+- Completed: Developer changed new persisted token creation to require an active operator and reject requested capabilities outside that operator's assignment.
+- Completed: Developer changed persisted token authentication and rotation to respect linked operator status and current assignment while preserving legacy persisted tokens that predate operator profiles.
+- Completed: QA updated focused auth/API tests for operator lifecycle, duplicate/unknown-capability rejection, assignment-limited token issuance, deactivated-operator token rejection, capability reduction, legacy persisted-token compatibility, existing token lifecycle behavior, credential capability gates, approval actor binding, and capability mapping.
+- Completed: PM updated README, setup/usage docs, repository architecture, backlog status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can be created, listed, retrieved, updated, and deactivated through auth-protected APIs.
+- Implemented in this slice: operator capabilities are normalized and become the assignment source for new persisted token issuance.
+- Implemented in this slice: new tokens cannot be issued for missing or inactive operators and cannot exceed assigned operator capabilities.
+- Implemented in this slice: deactivating an operator fails closed for linked persisted tokens and token rotation.
+- Implemented in this slice: legacy persisted tokens without operator profiles remain compatible to avoid upgrade lockout.
+- Implemented in this slice: operator lifecycle audit events record safe metadata without raw bearer token values.
+
+Remaining Sprint 15 work:
+- Richer user/group identity workflows beyond persisted operator profiles.
+- Encrypted local credential vaulting or external secret-manager adapters beyond environment-variable references.
+- Network approval records and enforcement expansion to non-provider surfaces such as web retrieval and generated-tool network access.
+- Broader audit actor propagation and cross-surface no-secret-response validation.
+
+Validation:
+- Focused auth suite: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py` passed with 59 tests.
+- Focused auth/API security gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py tests\test_api.py -k "auth or token or operator or credential or approval"` passed with 86 tests and 119 deselected.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 871 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .` and `uv --cache-dir .uv-cache run ruff format --check .` passed.
+
+Next:
+- Continue Sprint 15 with encrypted/external secret-manager support beyond env references unless audit propagation becomes the higher-risk blocker.
+
 ### Sprint 15 BL-009c Network Domain Guardrails
 
 Status: completed for the scoped provider-call network/domain guardrail slice; Sprint 15 remains active for broader identity, encrypted local vaulting or external secret-manager adapters beyond env references, network approval records, non-provider network surfaces, audit propagation, and cross-surface no-secret-response validation.

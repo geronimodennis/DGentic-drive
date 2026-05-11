@@ -47,7 +47,7 @@ Default settings:
 
 Local development is usable without authentication by default. In `staging` and `production`, DGentic enables bearer-token capability checks unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 
-When authentication is enabled, DGentic requires either at least one valid bootstrap `token=capabilities` entry in `DGENTIC_AUTH_TOKENS` or at least one active persisted generated token in `auth-tokens.json`. Startup fails closed if auth is enabled without a usable environment token or active persisted token.
+When authentication is enabled, DGentic requires either at least one valid bootstrap `token=capabilities` entry in `DGENTIC_AUTH_TOKENS` or at least one active persisted generated token in `auth-tokens.json`. Startup fails closed if auth is enabled without a usable environment token or active persisted token. New persisted tokens are issued for active operator identities stored in `operators.json`, and requested token capabilities cannot exceed the operator's assigned capabilities.
 
 Token configuration uses semicolon-separated token entries and comma-separated capabilities:
 
@@ -67,9 +67,16 @@ Invoke-RestMethod `
   -Body '{"objective":"Create a guarded plan for indexing project memory."}'
 ```
 
-Persisted generated tokens can be issued and rotated with a bootstrap admin token or another principal that has auth-token management access. The raw token is returned only from create or rotate responses; stored records keep salted PBKDF2 hashes and expose safe metadata when listed:
+Persisted generated tokens can be issued and rotated with a bootstrap admin token or another principal that has auth-token management access. Create an operator profile first, then issue a token within that operator's assigned capabilities. The raw token is returned only from create or rotate responses; stored records keep salted PBKDF2 hashes and expose safe metadata when listed:
 
 ```powershell
+$operator = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/auth/operators `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"operator_id":"operator-alpha","display_name":"Operator Alpha","role":"automation","capabilities":["tasks","logs"]}'
+
 $created = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/auth/tokens `
@@ -86,6 +93,17 @@ Invoke-RestMethod `
 ```
 
 Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`.
+
+Deactivate an operator to fail closed for linked persisted tokens:
+
+```powershell
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri http://127.0.0.1:8000/auth/operators/operator-alpha `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"status":"inactive"}'
+```
 
 ## Configure Database Persistence
 
@@ -605,7 +623,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential references, and provider-call network/domain guardrails, but broader persisted identity profiles, encrypted local credential storage, non-provider network approval workflows, and full audit actor propagation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, persisted external credential references, and provider-call network/domain guardrails, but richer user/group identity workflows, encrypted local credential storage, non-provider network approval workflows, and full audit actor propagation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.

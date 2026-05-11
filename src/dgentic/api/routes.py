@@ -18,11 +18,18 @@ from dgentic.auth import (
     AuthTokenRequest,
     AuthTokenRotateRequest,
     AuthTokenView,
+    OperatorRequest,
+    OperatorUpdateRequest,
+    OperatorView,
     create_auth_token,
+    create_operator,
     expire_auth_token,
+    get_operator,
     list_auth_tokens,
+    list_operators,
     revoke_auth_token,
     rotate_auth_token,
+    update_operator,
 )
 from dgentic.cli_runtime import (
     CommandApproval,
@@ -226,12 +233,53 @@ def create_persisted_auth_token(
     payload: AuthTokenRequest,
     request: Request,
 ) -> AuthTokenCreateResponse:
-    return create_auth_token(payload, actor=_principal_actor(request))
+    try:
+        return create_auth_token(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/auth/tokens", response_model=list[AuthTokenView])
 def get_persisted_auth_tokens() -> list[AuthTokenView]:
     return list_auth_tokens()
+
+
+@router.post("/auth/operators", response_model=OperatorView, status_code=201)
+def create_persisted_operator(
+    payload: OperatorRequest,
+    request: Request,
+) -> OperatorView:
+    try:
+        return create_operator(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/auth/operators", response_model=list[OperatorView])
+def get_persisted_operators() -> list[OperatorView]:
+    return list_operators()
+
+
+@router.get("/auth/operators/{operator_id}", response_model=OperatorView)
+def get_persisted_operator(operator_id: str) -> OperatorView:
+    try:
+        return get_operator(operator_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/auth/operators/{operator_id}", response_model=OperatorView)
+def update_persisted_operator(
+    operator_id: str,
+    payload: OperatorUpdateRequest,
+    request: Request,
+) -> OperatorView:
+    try:
+        return update_operator(operator_id, payload, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/auth/tokens/{token_id}/rotate", response_model=AuthTokenCreateResponse)

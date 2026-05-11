@@ -78,7 +78,7 @@ Current modules:
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
 - `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, usage tracking, reliability scoring, and source-path validation.
-- `tool_runtime.py`: Generated tool approval records, bound approval validation, subprocess execution, SQL registry permission/deprecation checks, reduced inherited execution environment, redacted output/audit events, SQL reliability counter sync, and runtime reliability policy automation.
+- `tool_runtime.py`: Generated tool approval records, bound approval validation, subprocess execution, SQL registry permission/deprecation checks, local-only dependency import isolation, reduced inherited execution environment, redacted output/audit events, SQL reliability counter sync, and runtime reliability policy automation.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
@@ -192,13 +192,13 @@ Current endpoints:
 - `POST /api/v1/memory/retrieve/vector`: Runs the vector retrieval contract. Semantic embedding generation currently requires an optional embedding dependency.
 - `GET /api/v1/memory/retrieve/metadata`: Runs metadata-only retrieval.
 - `POST /tools`: Registers a local tool manifest.
-- `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry.
+- `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, README files, and optional validated local dependency path metadata after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry.
 - `POST /tools/{name}/approvals`: Creates a pending approval for approval-required generated tools under the `tools` capability. Approval records include redacted payload preview, payload/artifact/approval HMAC digests, tool version/status, entrypoint, timeout, requester, agent/task context, and expiry.
 - `GET /tools/approvals`: Lists generated tool approval records.
 - `GET /tools/approvals/{approval_id}/review`: Returns the safe generated-tool approval review contract for UI consumers with redacted payload preview, digest identifiers, lifecycle timestamps, and bound-execution warnings.
 - `POST /tools/approvals/{approval_id}/approve`: Approves a pending generated tool execution request with an optional redacted decision reason. When auth is enabled, this route requires the separate `approvals` capability.
 - `POST /tools/approvals/{approval_id}/deny`: Denies a pending generated tool execution request with an optional redacted decision reason. When auth is enabled, this route requires the separate `approvals` capability.
-- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, requires a single-use bound `approval_id` for approval-required tools outside development/test mode, uses a reduced inherited environment, redacts stdout/stderr/parsed output for common secret patterns, records execution audit metadata, syncs SQL registry usage counters when a row exists, and applies reliability policy warnings/disable/deprecation after enough runtime evidence.
+- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, requires a single-use bound `approval_id` for approval-required tools outside development/test mode, launches Python with isolated import semantics and only tool-local dependency paths, uses a reduced inherited environment, redacts stdout/stderr/parsed output for common secret patterns, records execution audit metadata, syncs SQL registry usage counters when a row exists, and applies reliability policy warnings/disable/deprecation after enough runtime evidence.
 - `GET /tools`: Lists registered tool manifests.
 - `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
 - `POST /api/v1/tools/registry`: Registers a SQLAlchemy-backed tool registry entry.
@@ -301,7 +301,7 @@ Architect handoff:
 - Start with a backend-first monorepo because orchestration, permissions, schemas, and logs define the core product contracts.
 - Keep model-provider execution out of the first slice; the initial planner is deterministic and auditable.
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
-- Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, local JSON manifest, SQL registry entry, duplicate preflight checks, and memory artifact indexing.
+- Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, local JSON manifest, optional validated local dependency path metadata, SQL registry entry, duplicate preflight checks, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
 - Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, scheduled backup automation, and vector storage remain follow-up work.
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.

@@ -1,9 +1,12 @@
+import importlib.util
 import json
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import dgentic.tool_runtime as tool_runtime
 from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
 from dgentic.memory.schemas import ToolRegistryCreateRequest
@@ -749,6 +752,214 @@ def test_timed_out_tool_redacts_partial_output_and_records_audit_event(
     serialized_event = json.dumps(execution_events[-1].model_dump(mode="json"), sort_keys=True)
     for raw_secret in raw_secrets:
         assert raw_secret not in serialized_event
+
+
+def test_execute_tool_cannot_import_application_runtime_dependency(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    assert importlib.util.find_spec("fastapi") is not None
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "app-dependency-leak",
+        tool_source=(
+            "import fastapi\n\n"
+            "def run(payload):\n"
+            "    return {'fastapi_version': fastapi.__version__}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="app-dependency-leak",
+            description="Should not inherit app runtime dependencies.",
+            entrypoint="localmcp/app-dependency-leak/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("app-dependency-leak", {})
+    stored = get_tool("app-dependency-leak")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "No module named 'fastapi'" in result.stderr
+    assert stored is not None
+    assert stored.usage_count == 1
+    assert stored.success_count == 0
+    assert stored.failure_count == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "dependency_dir", "manifest_dependency_paths"),
+    [
+        ("manifest-local-dependency", "deps", ["deps"]),
+        ("standard-vendor-dependency", "vendor", []),
+    ],
+)
+def test_execute_tool_imports_local_dependency_path(
+    local_tool_state: tuple[Path, Path],
+    name: str,
+    dependency_dir: str,
+    manifest_dependency_paths: list[str],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    tool_dir = _write_tool(
+        root_dir,
+        name,
+        tool_source=(
+            "from local_tool_dependency import value\n\n"
+            "def run(payload):\n"
+            "    return {'value': value(), 'payload': payload['value']}\n"
+        ),
+    )
+    package_dir = tool_dir / dependency_dir / "local_tool_dependency"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "def value():\n    return 'loaded from local dependency'\n",
+        encoding="utf-8",
+    )
+    register_tool(
+        ToolManifest(
+            name=name,
+            description="Imports a dependency from the tool's local dependency path.",
+            entrypoint=f"localmcp/{name}/tool.py",
+            dependency_paths=manifest_dependency_paths,
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool(name, {"value": "payload visible"})
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {
+        "value": "loaded from local dependency",
+        "payload": "payload visible",
+    }
+    assert (tool_dir / dependency_dir).resolve() in result.dependency_paths
+
+
+def test_execute_tool_blocks_dependency_path_symlink_escape_before_usage(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    tool_dir = _write_tool(
+        root_dir,
+        "dependency-symlink-escape",
+        tool_source=(
+            "from pathlib import Path\n\n"
+            "def run(payload):\n"
+            "    Path('ran.txt').write_text('ran', encoding='utf-8')\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    external_dependency_dir = root_dir / "external-dependency"
+    external_dependency_dir.mkdir()
+    (tool_dir / "vendor-link").symlink_to(external_dependency_dir, target_is_directory=True)
+    register_tool(
+        ToolManifest(
+            name="dependency-symlink-escape",
+            description="Has a dependency path symlink that escapes the tool directory.",
+            entrypoint="localmcp/dependency-symlink-escape/tool.py",
+            dependency_paths=["vendor-link"],
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    with pytest.raises(PermissionError, match="symlinks"):
+        execute_tool("dependency-symlink-escape", {})
+
+    stored = get_tool("dependency-symlink-escape")
+    assert stored is not None
+    assert stored.usage_count == 0
+    assert not (tool_dir / "ran.txt").exists()
+
+
+def test_execute_tool_blocks_missing_explicit_dependency_path_before_usage(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "missing-dependency-path",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="missing-dependency-path",
+            description="Declares a missing local dependency directory.",
+            entrypoint="localmcp/missing-dependency-path/tool.py",
+            dependency_paths=["deps"],
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    with pytest.raises(FileNotFoundError, match="dependency path"):
+        execute_tool("missing-dependency-path", {})
+
+    stored = get_tool("missing-dependency-path")
+    assert stored is not None
+    assert stored.usage_count == 0
+
+
+def test_tool_subprocess_does_not_inherit_host_python_environment(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    host_python_vars = {
+        "PYTHONPATH": "C:\\fake-host-pythonpath",
+        "VIRTUAL_ENV": "C:\\fake-host-venv",
+        "PYTHONHOME": "C:\\fake-host-pythonhome",
+        "CONDA_PREFIX": "C:\\fake-host-conda",
+        "LD_LIBRARY_PATH": "/fake-host-ld",
+        "DYLD_LIBRARY_PATH": "/fake-host-dyld",
+    }
+    for key, value in host_python_vars.items():
+        monkeypatch.setenv(key, value)
+    _write_tool(
+        root_dir,
+        "subprocess-env-isolation",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="subprocess-env-isolation",
+            description="Verifies isolated subprocess launch configuration.",
+            entrypoint="localmcp/subprocess-env-isolation/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    call: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        call["args"] = args
+        call["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout='{"ok": true}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(tool_runtime.subprocess, "run", fake_run)
+
+    result = execute_tool("subprocess-env-isolation", {})
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {"ok": True}
+    args = call["args"]
+    env = call["env"]
+    assert isinstance(args, list)
+    assert "-I" in args
+    assert "-S" in args
+    assert "-X" in args
+    assert "utf8" in args
+    assert isinstance(env, dict)
+    for key, value in host_python_vars.items():
+        assert key not in env
+        assert value not in env.values()
+    assert env["DGENTIC_TOOL_DEPENDENCY_MODE"] == "local-only"
 
 
 def test_manifest_entrypoint_must_stay_under_named_localmcp_tool_dir(

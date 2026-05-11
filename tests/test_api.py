@@ -1226,6 +1226,7 @@ def test_dynamic_tool_generation_creates_localmcp_files_and_registry(tmp_path, m
             "permission_mode": "approval_required",
             "tags": ["pdf", "document"],
             "interface": {"input": "dict", "output": "pdf_path"},
+            "dependency_paths": ["deps"],
         },
     )
     duplicate_response = client.post(
@@ -1246,10 +1247,15 @@ def test_dynamic_tool_generation_creates_localmcp_files_and_registry(tmp_path, m
     assert body["manifest"]["name"] == "pdf-generator"
     assert body["manifest"]["status"] == "active"
     assert body["manifest"]["usage_count"] == 0
+    assert body["manifest"]["dependency_paths"] == ["deps"]
     assert (root_dir / "localmcp" / "pdf-generator" / "tool.py").exists()
     assert (root_dir / "localmcp" / "pdf-generator" / "wrapper.py").exists()
     assert (root_dir / "localmcp" / "pdf-generator" / "manifest.json").exists()
     assert (root_dir / "localmcp" / "pdf-generator" / "README.md").exists()
+    manifest_json = json.loads(
+        (root_dir / "localmcp" / "pdf-generator" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_json["dependency_paths"] == ["deps"]
     assert duplicate_response.status_code == 409
     assert any(tool["name"] == "pdf-generator" for tool in tools_response.json())
     assert any(

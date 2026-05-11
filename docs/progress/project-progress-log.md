@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005e Per-Tool Local Dependency Import Isolation
+
+Status: completed for the scoped local dependency import isolation slice; Sprint 11 remains open for OS/process sandboxing, production package/dependency lifecycle management, and richer version migration policy.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected local-only dependency import isolation as the next Sprint 11 slice after the pushed BL-005d checkpoint because it is a bounded safety improvement before heavier OS/process sandboxing.
+- Completed: Architect/Dev read-only explorer reviewed the generated-tool creation/runtime path and recommended finishing manifest dependency paths, isolated Python launch flags, explicit fail-closed dependency path validation, and generation persistence.
+- Completed: QA read-only explorer mapped the smallest high-value dependency isolation regressions.
+- Completed: Developer updated production source only for manifest/generation dependency paths, isolated generated-tool subprocess import semantics, host Python/virtualenv/library path environment stripping, standard tool-local dependency directories, dependency path audit metadata, and explicit dependency path fail-closed behavior.
+- Completed: QA updated tests only for app runtime dependency non-inheritance, explicit and standard local dependency import success, symlink escape blocking before execution, missing explicit dependency path blocking before usage counters increment, generated manifest dependency path persistence, and subprocess environment inheritance.
+- Completed: Focused and full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: generated tool manifests and generation requests can carry validated `dependency_paths` that must be relative paths under the generated tool directory.
+- Implemented in this slice: generated tools execute with Python isolated import semantics using `-I`, `-S`, and UTF-8 mode, then the runner injects only the tool directory plus validated tool-local dependency directories.
+- Implemented in this slice: host Python import environment variables such as `PYTHONPATH`, `PYTHONHOME`, `VIRTUAL_ENV`, `CONDA_PREFIX`, `LD_LIBRARY_PATH`, and `DYLD_LIBRARY_PATH` are not inherited by generated-tool subprocesses.
+- Implemented in this slice: standard local dependency directories such as `vendor` are supported when present, while explicit dependency paths fail closed when missing, absolute, non-directory, escaping, or symlinked.
+- Implemented in this slice: dependency path blocks happen before the subprocess starts and before generated-tool usage counters increment.
+- Implemented in this slice: execution audit metadata records local-only dependency isolation and dependency paths relative to the generated tool directory.
+
+Validation:
+- Focused dependency/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "dependency or dynamic_tool_generation or generated_tool_execute_api_updates_reliability"` passed with 10 tests and 60 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\schemas.py src\dgentic\tool_runtime.py src\dgentic\tools\__init__.py tests\test_tool_runtime.py tests\test_api.py` passed.
+- Focused format gate after formatting: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\schemas.py src\dgentic\tool_runtime.py src\dgentic\tools\__init__.py tests\test_tool_runtime.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 482 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+
+Residual risks:
+- This is import/dependency-path isolation, not a full OS/process sandbox; generated tools still run as local Python subprocesses under the same operating-system user.
+- DGentic still does not install, lock, update, or vulnerability-scan per-tool packages; operators must vendor dependencies into tool-local directories for this slice.
+- SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/schemas.py`, `src/dgentic/tool_runtime.py`, and `src/dgentic/tools/__init__.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with OS/process sandbox hardening or richer version migration policy.
+
 ### Sprint 11 BL-005d Runtime Reliability Policy Automation
 
 Status: completed for the scoped runtime reliability policy slice; Sprint 11 remains open for sandboxing, dependency isolation, and richer version migration policy.
@@ -17,7 +65,7 @@ Checklist:
 - Completed: Developer updated production source only for runtime reliability policy actions, SQL registry usage sync, SQL deprecation sync for very low-reliability generated tools, and reliability policy audit metadata.
 - Completed: QA updated tests only for warning, automatic disable, automatic deprecation, SQL usage sync, and SQL deprecation sync behavior.
 - Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
-- Pending: Checkpoint commit and push for this Sprint 11 slice.
+- Completed: Checkpoint commit and push for this Sprint 11 slice as `3aaf992`.
 
 Feature tracking:
 - Implemented in this slice: actual generated-tool executions sync usage, success, failure, and reliability score into the SQL registry row when one exists.
@@ -39,7 +87,7 @@ Validation:
 
 Residual risks:
 - Runtime reliability automation is scoped to actual generated-tool execution; manual SQL registry `/usage` calls still record counters without applying the same JSON tool governance action.
-- Tool execution is still a local Python subprocess without OS/process sandboxing or per-tool dependency isolation.
+- Tool execution remained a local Python subprocess without OS/process sandboxing or per-tool dependency isolation at BL-005d close; per-tool local dependency import isolation was completed later in BL-005e.
 - SQL registry versioning remains conservative: one row per generated tool name instead of parallel version rows or migrations.
 
 Role boundary:
@@ -52,7 +100,7 @@ Workspace hygiene:
 - Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
 
 Next:
-- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with sandbox hardening, dependency isolation, or richer version migration policy.
+- Continue Sprint 11 with sandbox hardening, dependency isolation, or richer version migration policy.
 
 ### Sprint 11 BL-005c Bound Tool Approval Records
 

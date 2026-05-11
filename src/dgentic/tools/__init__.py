@@ -90,6 +90,7 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
         permission_mode=request.permission_mode,
         tags=sorted(set(request.tags + [request.trigger_source.value])),
         interface=interface,
+        dependency_paths=request.dependency_paths,
     )
     manifest_json = json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n"
     manifest_path.write_text(manifest_json, encoding="utf-8")
@@ -256,6 +257,7 @@ def _readme(request: ToolGenerationRequest, manifest: ToolManifest) -> str:
         f"- Version: `{manifest.version}`\n"
         f"- Trigger source: `{request.trigger_source}`\n"
         f"- Permission mode: `{manifest.permission_mode}`\n"
+        f"- Dependency paths: `{manifest.dependency_paths or ['vendor']}`\n"
         f"- Governance status: `{manifest.status}`\n"
         f"- Permission note: {permission_note}\n"
     )

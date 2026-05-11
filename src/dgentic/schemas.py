@@ -98,6 +98,25 @@ class ToolStatus(StrEnum):
     disabled = "disabled"
 
 
+def _validate_tool_dependency_paths(values: list[str]) -> list[str]:
+    validated: list[str] = []
+    for value in values:
+        dependency_path = value.strip()
+        requested = Path(dependency_path)
+        if (
+            not dependency_path
+            or requested.is_absolute()
+            or requested.drive
+            or not requested.parts
+            or any(part in {"", ".", ".."} for part in requested.parts)
+        ):
+            raise ValueError(
+                "dependency_paths must be relative path segments under the tool directory."
+            )
+        validated.append(dependency_path)
+    return validated
+
+
 class TaskRequest(BaseModel):
     objective: str = Field(min_length=1, description="The user goal DGentic should plan.")
     context: list[str] = Field(default_factory=list)
@@ -226,6 +245,7 @@ class ToolManifest(BaseModel):
     permission_mode: PermissionMode
     tags: list[str] = Field(default_factory=list)
     interface: dict[str, Any] = Field(default_factory=dict)
+    dependency_paths: list[str] = Field(default_factory=list)
     status: ToolStatus = ToolStatus.active
     usage_count: int = 0
     success_count: int = 0
@@ -234,6 +254,11 @@ class ToolManifest(BaseModel):
     last_used_at: datetime | None = None
     deprecated_reason: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("dependency_paths")
+    @classmethod
+    def dependency_paths_must_be_tool_local(cls, values: list[str]) -> list[str]:
+        return _validate_tool_dependency_paths(values)
 
 
 class ToolGenerationRequest(BaseModel):
@@ -245,7 +270,13 @@ class ToolGenerationRequest(BaseModel):
     version: str = "0.2.6"
     source_code: str | None = None
     interface: dict[str, Any] = Field(default_factory=dict)
+    dependency_paths: list[str] = Field(default_factory=list)
     overwrite: bool = False
+
+    @field_validator("dependency_paths")
+    @classmethod
+    def dependency_paths_must_be_tool_local(cls, values: list[str]) -> list[str]:
+        return _validate_tool_dependency_paths(values)
 
 
 class ToolGenerationResult(BaseModel):

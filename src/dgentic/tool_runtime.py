@@ -46,24 +46,21 @@ TOOL_APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
 REDACTED_LEGACY_DIGEST_MARKER = "[LEGACY_DIGEST_REDACTED]"
 _TOOL_APPROVAL_DIGEST_KEY_FILE = "tool-approval-digest.key"
 _TOOL_APPROVAL_DIGEST_LOCK = Lock()
+STANDARD_TOOL_DEPENDENCY_DIRS = ("vendor", ".dgentic-deps", ".dgentic/deps", "site-packages")
 SUBPROCESS_ENV_KEYS = frozenset(
     {
         "APPDATA",
         "COMSPEC",
-        "CONDA_PREFIX",
         "CURL_CA_BUNDLE",
-        "DYLD_LIBRARY_PATH",
         "HOME",
         "HOMEDRIVE",
         "HOMEPATH",
         "LANG",
         "LC_ALL",
         "LC_CTYPE",
-        "LD_LIBRARY_PATH",
         "LOCALAPPDATA",
         "PATH",
         "PATHEXT",
-        "PYTHONHOME",
         "REQUESTS_CA_BUNDLE",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
@@ -74,7 +71,6 @@ SUBPROCESS_ENV_KEYS = frozenset(
         "TMPDIR",
         "TZ",
         "USERPROFILE",
-        "VIRTUAL_ENV",
         "WINDIR",
     }
 )
@@ -90,7 +86,8 @@ from pathlib import Path
 
 def _main():
     entrypoint = Path(sys.argv[1])
-    sys.path.insert(0, str(entrypoint.parent))
+    dependency_paths = [Path(item) for item in sys.argv[2:]]
+    sys.path[:0] = [str(entrypoint.parent), *[str(path) for path in dependency_paths]]
 
     payload = json.load(sys.stdin)
     spec = importlib.util.spec_from_file_location("_dgentic_tool_entrypoint", entrypoint)
@@ -209,6 +206,7 @@ class ToolExecutionResult(BaseModel):
     approval_id: str | None = None
     entrypoint: Path
     cwd: Path
+    dependency_paths: list[Path] = Field(default_factory=list)
     exit_code: int
     stdout: str
     stderr: str
@@ -254,11 +252,12 @@ def execute_tool(
     tool_dir = _tool_dir_for(manifest.name, root_dir)
     _validate_manifest_entrypoint(manifest, root_dir, tool_dir)
     entrypoint = _resolve_entrypoint(tool_dir)
+    dependency_paths = _tool_dependency_paths(manifest, tool_dir)
 
     started_at = perf_counter()
     try:
         completed = subprocess.run(
-            [sys.executable, "-c", _RUNNER_SOURCE, str(entrypoint)],
+            _tool_subprocess_args(entrypoint, dependency_paths),
             cwd=tool_dir,
             input=json.dumps(payload or {}),
             capture_output=True,
@@ -267,7 +266,7 @@ def execute_tool(
             errors="replace",
             timeout=timeout_seconds,
             check=False,
-            env=_subprocess_env(tool_dir),
+            env=_subprocess_env(),
         )
         exit_code = completed.returncode
         stdout = completed.stdout
@@ -297,6 +296,7 @@ def execute_tool(
         stdout=stdout,
         stderr=stderr,
         reliability_policy=reliability_policy,
+        dependency_paths=dependency_paths,
         requested_by=requested_by,
         agent_id=agent_id,
         agent_role=agent_role,
@@ -308,6 +308,7 @@ def execute_tool(
         approval_id=bound_approval_id,
         entrypoint=entrypoint,
         cwd=tool_dir,
+        dependency_paths=dependency_paths,
         exit_code=exit_code,
         stdout=stdout,
         stderr=stderr,
@@ -889,11 +890,87 @@ def _resolve_entrypoint(tool_dir: Path) -> Path:
     )
 
 
-def _subprocess_env(tool_dir: Path) -> dict[str, str]:
+def _tool_dependency_paths(manifest: ToolManifest, tool_dir: Path) -> list[Path]:
+    dependency_paths: list[Path] = []
+    seen: set[Path] = set()
+    for spec in manifest.dependency_paths:
+        dependency_path = _resolve_tool_dependency_path(tool_dir, spec, required=True)
+        if dependency_path in seen:
+            continue
+        seen.add(dependency_path)
+        dependency_paths.append(dependency_path)
+    for spec in [*STANDARD_TOOL_DEPENDENCY_DIRS, *_tool_venv_dependency_specs()]:
+        dependency_path = _resolve_tool_dependency_path(tool_dir, spec, required=False)
+        if dependency_path is None or dependency_path in seen:
+            continue
+        seen.add(dependency_path)
+        dependency_paths.append(dependency_path)
+    return dependency_paths
+
+
+def _tool_venv_dependency_specs() -> tuple[str, ...]:
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return (
+        f".venv/lib/{version}/site-packages",
+        ".venv/Lib/site-packages",
+    )
+
+
+def _resolve_tool_dependency_path(tool_dir: Path, spec: str, *, required: bool) -> Path | None:
+    dependency_spec = spec.strip()
+    if not dependency_spec:
+        return None
+    requested = Path(dependency_spec)
+    if requested.is_absolute() or requested.drive:
+        raise PermissionError("Tool dependency paths must be relative to the tool directory.")
+    if not requested.parts or any(part in {"", ".", ".."} for part in requested.parts):
+        raise PermissionError("Tool dependency paths must stay inside the tool directory.")
+
+    candidate = tool_dir / requested
+    if not candidate.exists():
+        if required:
+            raise FileNotFoundError(f"Tool dependency path does not exist: {dependency_spec}")
+        return None
+    if _path_has_symlink_between(tool_dir, candidate):
+        raise PermissionError("Tool dependency paths must not contain symlinks.")
+    if not candidate.is_dir():
+        raise PermissionError("Tool dependency paths must be directories.")
+
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(tool_dir):
+        raise PermissionError("Tool dependency paths must stay inside the tool directory.")
+    return resolved
+
+
+def _tool_subprocess_args(entrypoint: Path, dependency_paths: list[Path]) -> list[str]:
+    return [
+        sys.executable,
+        "-I",
+        "-S",
+        "-X",
+        "utf8",
+        "-c",
+        _RUNNER_SOURCE,
+        str(entrypoint),
+        *[str(path) for path in dependency_paths],
+    ]
+
+
+def _path_has_symlink_between(root: Path, candidate: Path) -> bool:
+    root = root.resolve()
+    current = candidate
+    paths_to_check = [current]
+    while current != root:
+        current = current.parent
+        paths_to_check.append(current)
+    return any(path.exists() and path.is_symlink() for path in paths_to_check)
+
+
+def _subprocess_env() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key.upper() in SUBPROCESS_ENV_KEYS}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["PYTHONPATH"] = str(tool_dir)
+    env["DGENTIC_TOOL_DEPENDENCY_MODE"] = "local-only"
     return env
 
 
@@ -1080,6 +1157,7 @@ def _record_execution_event(
     stdout: str,
     stderr: str,
     reliability_policy: str,
+    dependency_paths: list[Path],
     requested_by: str | None,
     agent_id: str | None,
     agent_role: str | None,
@@ -1099,6 +1177,13 @@ def _record_execution_event(
             "duration_ms": duration_ms,
             "reliability_policy_action": reliability_policy,
             "reliability_policy_reason": manifest.deprecated_reason,
+            "dependency_isolation": "local-only",
+            "dependency_paths": [
+                path.relative_to(
+                    _tool_dir_for(manifest.name, get_settings().root_dir.resolve())
+                ).as_posix()
+                for path in dependency_paths
+            ],
             "requested_by": requested_by,
             "agent_id": agent_id,
             "agent_role": agent_role,

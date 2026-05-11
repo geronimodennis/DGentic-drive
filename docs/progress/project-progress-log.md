@@ -4,6 +4,58 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006c OpenAI-Compatible External Adapter Boundary
+
+Status: completed for the scoped non-streaming OpenAI-compatible external adapter boundary; Sprint 12 remains open for encrypted credential storage, provider-specific external adapters, circuit breakers, cost accounting, broader payload validation, and streaming generation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected a conservative external adapter boundary after BL-006b, explicitly excluding credential persistence, credential APIs, streaming, circuit breakers, and cost accounting.
+- Completed: Architect read-only explorer recommended a disabled-by-default OpenAI-compatible adapter using base URL, model allowlist, and an API-key environment variable reference.
+- Completed: QA read-only explorer recommended fake-transport tests for adapter success, missing config, credential no-leak behavior, external routing, privacy routing, and API mappings.
+- Completed: Developer updated production source only for external adapter settings, provider-scoped allowlist validation, OpenAI-compatible payload/header construction, HTTPS-only credentialed base URL validation, explicit external-generation approval checks, model allowlist checks, config-only external health, external routing eligibility, and safe API mapping for missing config and caller policy errors.
+- Completed: QA updated tests only for configured adapter success, missing config before transport, runtime base URL rejection, credential redaction, external routing, privacy local routing, config-only external health, model allowlist rejection, local-provider bypass prevention, plain-HTTP credential blocking, approval-required generation, and caller-error API mappings.
+- Completed: Reviewer/Security found a provider-scoped allowlist blocker; fixes were routed through Dev and QA.
+- Completed: Follow-up Reviewer/Security found plain-HTTP credential transport, approval-contract, and caller-error API mapping blockers; fixes were routed through Dev and QA.
+- Completed: Final review found the provider-scoped allowlist had dropped documented `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` support for local runtime overrides and that the shared policy helper still treated external configured URLs as globally allowed; Dev restored local extra trusted endpoints, scoped the shared helper by provider, removed external URLs from the global helper, and QA added runtime/API/policy regressions.
+
+Feature tracking:
+- Implemented in this slice: `external-openai-compatible` provider id for non-streaming OpenAI-compatible chat completions.
+- Implemented in this slice: adapter is disabled unless HTTPS base URL, model allowlist, credential env-var name, and referenced credential value are all present.
+- Implemented in this slice: actual API key values are read from the named process environment variable and sent only as outbound `Authorization` headers to HTTPS external endpoints.
+- Implemented in this slice: direct external generation requires explicit approval; the current `approved: true` bypass is limited to development/test mode until provider approval records are implemented.
+- Implemented in this slice: request-level `base_url` overrides and model names outside the configured allowlist are rejected before transport with caller-policy API status codes.
+- Implemented in this slice: provider-scoped allowlist validation prevents local provider ids from targeting the external configured URL.
+- Implemented in this slice: local providers can still use operator-declared extra trusted base URLs from `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`.
+- Implemented in this slice: `/providers/{external}/health` is config-only and does not perform live authenticated network probes.
+- Implemented in this slice: routing can select the configured external provider for non-private external-capability requests, while privacy-required routing scores external providers as unavailable.
+
+Validation:
+- Focused provider gate after final review remediation: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "provider"` passed with 61 tests and 47 deselected.
+- Broad touched-surface regression gate after final review remediation: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py tests\test_tool_runtime.py tests\test_auth.py` passed with 170 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_policy.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_policy.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py src\dgentic\settings.py tests\test_provider_runtime.py tests\test_api.py` passed with 7 files already formatted.
+- Full regression gate after final review remediation: `uv --cache-dir .uv-cache run pytest -q` passed with 545 tests and 2 skipped.
+- Full lint gate after final review remediation: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate after final review remediation: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+
+Residual risks:
+- This slice does not add encrypted credential storage, rotation, or secret-manager integration; it only references an existing environment variable by name.
+- Bound provider approval records are not implemented; development/test can use the explicit `approved: true` external-generation bypass, while staging/production rejects that bypass.
+- Exact provider allowlists still trust operator-provided host configuration; broader DNS/IP/network guardrails remain future security work.
+- No streaming, circuit breaker, global retry budget, cost accounting, or provider-specific external adapters beyond the generic OpenAI-compatible contract are included.
+
+Role boundary:
+- Developer-owned files: `.env.example`, `src/dgentic/api/routes.py`, `src/dgentic/provider_policy.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/providers.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Commit/push the stable BL-006c checkpoint, then continue Sprint 12 with credential strategy or streaming depending on risk priority.
+
 ### Sprint 12 BL-006b Provider Transport Retry And Backoff
 
 Status: completed for the scoped non-streaming provider transport/retry slice; Sprint 12 remains open for production external adapters, credential handling, circuit breakers, cost accounting, and streaming generation.

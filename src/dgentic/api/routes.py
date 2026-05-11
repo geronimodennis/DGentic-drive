@@ -42,6 +42,8 @@ from dgentic.guardrails import (
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_runtime import (
+    ProviderApprovalRequiredError,
+    ProviderConfigurationError,
     ProviderEgressPolicyError,
     ProviderFeatureNotSupportedError,
     ProviderGenerationRequest,
@@ -499,8 +501,12 @@ def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenera
         return generate_provider_completion(request)
     except ProviderEgressPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProviderApprovalRequiredError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderFeatureNotSupportedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ProviderRateLimitError as exc:
         raise HTTPException(status_code=429, detail="Provider request failed.") from exc
     except ValueError as exc:

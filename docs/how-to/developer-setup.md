@@ -39,6 +39,7 @@ Default settings:
 - `DGENTIC_LM_STUDIO_BASE_URL=http://127.0.0.1:1234`
 - `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` empty by default; add comma-separated exact provider base URLs only when an additional trusted provider endpoint is configured
 - Provider retry defaults: `DGENTIC_PROVIDER_RETRY_MAX_ATTEMPTS=3`, `DGENTIC_PROVIDER_RETRY_INITIAL_DELAY_SECONDS=0.2`, `DGENTIC_PROVIDER_RETRY_MAX_DELAY_SECONDS=2.0`, and `DGENTIC_PROVIDER_RETRY_BACKOFF_MULTIPLIER=2.0`
+- OpenAI-compatible external adapter defaults: `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are empty, so the adapter is disabled
 
 ## Configure API Authentication
 
@@ -343,6 +344,17 @@ Invoke-RestMethod `
 
 Provider generation and health probes only use exact allowlisted base URLs. The default allowlist is the configured Ollama and LM Studio base URLs, plus any trusted URLs in `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`. Provider redirects are blocked, malformed upstream JSON is returned to API callers as a generic provider failure, and provider logs store safe metadata rather than raw completion content. Generation retries only bounded transient failures such as `429` and upstream `5xx`; health probes do not retry.
 
+To enable the OpenAI-compatible external adapter, set an API-versioned HTTPS base URL, a comma-separated model allowlist, and the name of an environment variable that already contains the API key. The API key value itself is not stored in DGentic settings:
+
+```powershell
+$env:OPENAI_API_KEY = "<set outside DGentic config>"
+$env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1"
+$env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV = "OPENAI_API_KEY"
+$env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS = "gpt-4.1-mini,gpt-4.1"
+```
+
+Direct external generation is approval-required. In development/test mode, local smoke checks may include `"approved": true`; staging/production provider approval IDs are still follow-up work, so the boolean bypass is rejected there.
+
 ## Generate A Local Tool
 
 ```powershell
@@ -464,6 +476,6 @@ uv run ruff format .
 - The planner is deterministic and does not call local or external models yet.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
-- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry, but external adapters, circuit breakers, and streaming are not implemented yet.
+- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry. The OpenAI-compatible external adapter can call a configured model allowlist using an HTTPS-only env-referenced bearer credential and an explicit development/test approval flag, but bound provider approval records, encrypted credential storage, circuit breakers, cost accounting, and streaming are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
 - Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

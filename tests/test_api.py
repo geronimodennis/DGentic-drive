@@ -429,7 +429,7 @@ def test_provider_listing_and_health_do_not_leak_invalid_configured_base_url(
 
     assert providers_response.status_code == 200
     assert health_response.status_code == 200
-    assert calls == []
+    assert calls == ["http://127.0.0.1:1234/v1/models"]
     ollama_config = next(
         provider for provider in providers_response.json() if provider["id"] == "ollama"
     )
@@ -437,6 +437,205 @@ def test_provider_listing_and_health_do_not_leak_invalid_configured_base_url(
     assert health_response.json()["available"] is False
     serialized = providers_response.text + health_response.text + logs_response.text
     assert "provider-password-secret" not in serialized
+    get_settings.cache_clear()
+
+
+def configure_external_provider_api(
+    monkeypatch,
+    *,
+    base_url: str = "https://provider.example.test/v1",
+    api_key_env: str = "DGENTIC_TEST_EXTERNAL_API_KEY",
+    api_key: str = "external-api-key-secret",
+    models: str = "gpt-test,gpt-other",
+) -> None:
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", base_url)
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", api_key_env)
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", models)
+    monkeypatch.setenv(api_key_env, api_key)
+    get_settings.cache_clear()
+
+
+def test_external_provider_listing_disabled_without_configuration(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "")
+    monkeypatch.delenv("DGENTIC_TEST_EXTERNAL_API_KEY", raising=False)
+    get_settings.cache_clear()
+    transport_calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        transport_calls.append(request.full_url)
+        raise AssertionError("external transport should not be called")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    providers_response = client.get("/providers")
+    health_response = client.get(
+        f"/providers/{provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}/health"
+    )
+    route_response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert providers_response.status_code == 200
+    external_provider = next(
+        provider
+        for provider in providers_response.json()
+        if provider["id"] == provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    )
+    assert external_provider["enabled"] is False
+    assert external_provider["model_names"] == []
+    assert external_provider["base_url"] is None
+    assert health_response.status_code == 200
+    assert health_response.json()["available"] is False
+    assert route_response.status_code == 404
+    assert transport_calls == []
+    serialized = providers_response.text + health_response.text + logs_response.text
+    assert "external-api-key-secret" not in serialized
+    get_settings.cache_clear()
+
+
+def test_routing_selects_configured_external_when_requested(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider_id"] == provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    assert body["model_name"] == "gpt-test"
+    assert body["candidate_scores"][provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID] > 0
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_prefers_local_when_privacy_required_with_external_configured(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post("/routing/decide", json={"privacy_required": True})
+
+    assert response.status_code == 200
+    assert response.json()["provider_id"] in {"ollama", "lm-studio"}
+    assert (
+        response.json()["candidate_scores"][provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID]
+        == 0.0
+    )
+    assert "Privacy requirement" in response.json()["reason"]
+    get_settings.cache_clear()
+
+
+def test_configured_external_provider_health_is_config_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("external health should not call transport")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.get(
+        f"/providers/{provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}/health"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert response.json()["model_names"] == ["gpt-test", "gpt-other"]
+    assert calls == []
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_plain_http_external_provider_configuration_stays_disabled(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch, base_url="http://provider.example.test/v1")
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("external health should not call transport")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    providers_response = client.get("/providers")
+    health_response = client.get(
+        f"/providers/{provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}/health"
+    )
+    route_response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
+
+    assert providers_response.status_code == 200
+    external_provider = next(
+        provider
+        for provider in providers_response.json()
+        if provider["id"] == provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    )
+    assert external_provider["enabled"] is False
+    assert external_provider["base_url"] is None
+    assert external_provider["model_names"] == []
+    assert health_response.status_code == 200
+    assert health_response.json()["available"] is False
+    assert route_response.status_code == 404
+    assert calls == []
+    assert "external-api-key-secret" not in (
+        providers_response.text + health_response.text + route_response.text
+    )
     get_settings.cache_clear()
 
 
@@ -2046,6 +2245,55 @@ def test_provider_generate_api_rejects_disallowed_base_url_before_post(
     assert "169.254.169.254" not in response.text
 
 
+def test_provider_generate_api_allows_extra_trusted_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_ALLOWED_BASE_URLS", "http://127.0.0.1:4321")
+    get_settings.cache_clear()
+    calls: list[dict] = []
+    raw_response = {
+        "id": "chatcmpl-extra-api",
+        "model": "local-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Extra API endpoint."},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        calls.append({"url": url, "payload": payload, "timeout_seconds": timeout_seconds})
+        return raw_response
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:4321",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "Extra API endpoint."
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:4321/v1/chat/completions",
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    get_settings.cache_clear()
+
+
 def test_provider_generate_api_rejects_streaming_before_post(monkeypatch) -> None:
     calls: list[dict] = []
 
@@ -2091,6 +2339,252 @@ def test_provider_generate_api_rejects_external_placeholder_before_post(monkeypa
 
     assert response.status_code == 501
     assert calls == []
+
+
+def test_external_provider_generate_api_sends_authorization_and_redacts_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[dict] = []
+    raw_response = {
+        "id": "chatcmpl-external-api",
+        "model": "gpt-test",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello external API."},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        "token": "upstream-token-secret",
+        "authorization": "Bearer upstream-auth-secret",
+    }
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(raw_response).encode("utf-8")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.2,
+            "max_tokens": 32,
+            "approved": True,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "temperature": 0.2,
+                "max_tokens": 32,
+            },
+        }
+    ]
+    assert response.json()["content"] == "Hello external API."
+    serialized = response.text + logs_response.text
+    for raw_secret in [
+        "external-api-key-secret",
+        "upstream-token-secret",
+        "upstream-auth-secret",
+    ]:
+        assert raw_secret not in serialized
+    assert "Hello external API." in response.text
+    assert "Hello external API." not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_requires_approval_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "External provider requires explicit approval."
+    assert calls == []
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_rejects_plain_http_config_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch, base_url="http://provider.example.test/v1")
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert "https" in response.json()["detail"]
+    assert calls == []
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_missing_config_fails_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "DGENTIC_TEST_EXTERNAL")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    monkeypatch.setenv("DGENTIC_TEST_EXTERNAL", "external-api-key-secret")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "External provider is not configured."
+    assert calls == []
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_rejects_runtime_base_url_before_transport(
+    monkeypatch,
+) -> None:
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "base_url": "https://evil.example.test/v1",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 403
+    assert calls == []
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_rejects_model_outside_allowlist_before_transport(
+    monkeypatch,
+) -> None:
+    configure_external_provider_api(monkeypatch, models="gpt-test")
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-not-allowed",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "External provider model is not configured."
+    assert calls == []
+    get_settings.cache_clear()
 
 
 def test_provider_generate_api_maps_exhausted_429_to_too_many_requests(monkeypatch) -> None:

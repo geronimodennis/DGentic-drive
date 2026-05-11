@@ -269,7 +269,8 @@ Current implementation status:
 - Partially implemented: Ollama and LM Studio health checks, local generation calls, and scored routing are available for the backend MVP.
 - Completed: BL-006a provider egress policy and safe telemetry, including exact provider base URL allowlist enforcement for generation and health probes, redirect blocking, safe display of configured base URLs, disabled/non-routable external placeholder behavior, generic malformed-upstream API failures, provider completion logs without raw content, and whitelisted response metadata with preserved numeric usage counters.
 - Completed: BL-006b shared provider transport and bounded retry/backoff for generation, including deterministic retry policy settings, retry-after parsing/capping, generic rate-limit and upstream failure API mapping, safe retry metadata logging, no retries for policy/unsupported/malformed/ordinary 4xx failures, and no-retry health probes.
-- Remaining: production external provider adapters, secure credential storage or secret-manager integration, circuit breaker behavior, streaming generation, cost metadata, and broader provider payload shape validation.
+- Completed: BL-006c OpenAI-compatible external provider adapter boundary, including disabled-by-default HTTPS configuration, env-var-referenced bearer credential, explicit external-generation approval checks, model allowlist enforcement, provider-scoped egress allowlist, no live external health probe, external routing when configured and policy-allowed, privacy routing exclusion, and credential no-leak tests.
+- Remaining: bound provider approval records beyond the development/test approval flag, encrypted credential storage or secret-manager integration, provider-specific external adapters beyond OpenAI-compatible chat completions, circuit breaker behavior, streaming generation, cost metadata, and broader provider payload shape validation.
 
 ### BL-007: Memory And Retrieval Production Lifecycle
 
@@ -553,7 +554,7 @@ Exit criteria:
 - External provider adapter works through shared provider contracts.
 - Credentials are protected.
 - Streaming, retry, rate-limit, and routing tests pass.
-- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport.
+- Completed so far: BL-006a protects local provider egress and telemetry before external credentials or adapters are introduced; BL-006b adds bounded retry/backoff through a shared provider transport; BL-006c adds a disabled-by-default OpenAI-compatible external adapter using env-referenced credentials and a model allowlist.
 
 ### Sprint 13: Memory Production Lifecycle
 

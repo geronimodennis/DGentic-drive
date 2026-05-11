@@ -1,10 +1,15 @@
+from os import environ
 from time import perf_counter
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from dgentic.events import event_log
-from dgentic.provider_policy import ProviderEgressPolicyError, validate_provider_base_url
+from dgentic.provider_policy import (
+    ProviderEgressPolicyError,
+    allowed_provider_base_urls_for_provider,
+    normalize_provider_base_url,
+)
 from dgentic.provider_transport import (
     ProviderRateLimitError,
     ProviderRetryPolicy,
@@ -22,10 +27,19 @@ DEFAULT_GENERATION_TIMEOUT_SECONDS = 60.0
 OLLAMA_PROVIDER_ID = "ollama"
 LM_STUDIO_PROVIDER_ID = "lm-studio"
 EXTERNAL_PLACEHOLDER_PROVIDER_ID = "external-placeholder"
+EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID = "external-openai-compatible"
 
 
 class ProviderFeatureNotSupportedError(NotImplementedError):
     """Raised when a requested provider capability is intentionally unavailable."""
+
+
+class ProviderConfigurationError(ValueError):
+    """Raised when a configured provider is unavailable before transport."""
+
+
+class ProviderApprovalRequiredError(PermissionError):
+    """Raised when provider generation requires explicit approval."""
 
 
 class ProviderChatMessage(BaseModel):
@@ -42,6 +56,8 @@ class ProviderGenerationRequest(BaseModel):
     max_tokens: int | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     stream: bool = False
+    approved: bool = False
+    approval_id: str | None = None
     timeout_seconds: float = DEFAULT_GENERATION_TIMEOUT_SECONDS
 
 
@@ -69,8 +85,16 @@ def generate_provider_completion(
     )
 
     try:
-        url, payload = _build_provider_request(request)
-        transport_result = _post_json(url, payload, request.timeout_seconds)
+        url, payload, headers = _build_provider_request(request)
+        if headers:
+            transport_result = _post_json(
+                url,
+                payload,
+                request.timeout_seconds,
+                headers=headers,
+            )
+        else:
+            transport_result = _post_json(url, payload, request.timeout_seconds)
         raw_response, retry_metadata = _transport_payload_and_metadata(transport_result)
         duration_ms = _duration_ms(started_at)
         result = ProviderGenerationResult(
@@ -104,7 +128,9 @@ def generate_provider_completion(
         raise
 
 
-def _build_provider_request(request: ProviderGenerationRequest) -> tuple[str, dict[str, Any]]:
+def _build_provider_request(
+    request: ProviderGenerationRequest,
+) -> tuple[str, dict[str, Any], dict[str, str]]:
     if request.stream:
         raise ProviderFeatureNotSupportedError(
             "Provider streaming is not implemented for this endpoint."
@@ -126,6 +152,7 @@ def _build_provider_request(request: ProviderGenerationRequest) -> tuple[str, di
                 "options": options,
                 "stream": False,
             },
+            {},
         )
 
     if request.provider_id == LM_STUDIO_PROVIDER_ID:
@@ -138,10 +165,32 @@ def _build_provider_request(request: ProviderGenerationRequest) -> tuple[str, di
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
         payload["stream"] = False
-        return f"{_base_url_for(request)}/v1/chat/completions", payload
+        return f"{_base_url_for(request)}/v1/chat/completions", payload, {}
 
     if request.provider_id == EXTERNAL_PLACEHOLDER_PROVIDER_ID:
         raise ProviderFeatureNotSupportedError("External provider adapter is not implemented yet.")
+
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        settings = get_settings()
+        _reject_external_runtime_base_url(request)
+        _authorize_external_provider_request(request, settings=settings)
+        _validate_external_model(request.model, settings)
+        base_url = _external_base_url(settings)
+        headers = _external_headers(settings)
+        payload = {
+            "model": request.model,
+            "messages": messages,
+            "stream": False,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        return (
+            f"{base_url}/chat/completions",
+            payload,
+            headers,
+        )
 
     raise ValueError(f"Unsupported provider_id: {request.provider_id}")
 
@@ -153,7 +202,7 @@ def _extract_content(provider_id: str, response: dict[str, Any]) -> str:
             return ""
         return str(message.get("content", ""))
 
-    if provider_id == LM_STUDIO_PROVIDER_ID:
+    if provider_id in {LM_STUDIO_PROVIDER_ID, EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}:
         choices = response.get("choices", [])
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             return ""
@@ -167,25 +216,29 @@ def _extract_content(provider_id: str, response: dict[str, Any]) -> str:
 
 def _base_url_for(request: ProviderGenerationRequest) -> str:
     settings = get_settings()
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID and request.base_url:
+        _reject_external_runtime_base_url(request)
     if request.base_url:
-        return validate_provider_base_url(
+        return _validate_base_url_for_provider(
             provider_id=request.provider_id,
             base_url=request.base_url,
             settings=settings,
         )
 
     if request.provider_id == OLLAMA_PROVIDER_ID:
-        return validate_provider_base_url(
+        return _validate_base_url_for_provider(
             provider_id=request.provider_id,
             base_url=settings.ollama_base_url,
             settings=settings,
         )
     if request.provider_id == LM_STUDIO_PROVIDER_ID:
-        return validate_provider_base_url(
+        return _validate_base_url_for_provider(
             provider_id=request.provider_id,
             base_url=settings.lm_studio_base_url,
             settings=settings,
         )
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        return _external_base_url(settings)
 
     raise ValueError(f"Unsupported provider_id: {request.provider_id}")
 
@@ -213,7 +266,7 @@ def _safe_response_metadata(provider_id: str, response: dict[str, Any]) -> dict[
             safe_metadata["message_role"] = message["role"]
         return redact_metadata(safe_metadata)
 
-    if provider_id == LM_STUDIO_PROVIDER_ID:
+    if provider_id in {LM_STUDIO_PROVIDER_ID, EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}:
         choices = response.get("choices", [])
         finish_reasons = []
         if isinstance(choices, list):
@@ -262,6 +315,8 @@ def _post_json(
     url: str,
     payload: dict[str, Any],
     timeout_seconds: float,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> ProviderTransportResult:
     return send_provider_json_request(
         ProviderTransportRequest(
@@ -269,6 +324,7 @@ def _post_json(
             method="POST",
             payload=payload,
             timeout_seconds=timeout_seconds,
+            headers=headers or {},
             retry_policy=_generation_retry_policy(),
         )
     )
@@ -309,10 +365,93 @@ def _duration_ms(started_at: float) -> int:
     return round((perf_counter() - started_at) * 1000)
 
 
+def _external_base_url(settings: Any) -> str:
+    if not settings.external_openai_compatible_base_url.strip():
+        raise ProviderConfigurationError("External provider is not configured.")
+    normalized = _validate_base_url_for_provider(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        base_url=settings.external_openai_compatible_base_url,
+        settings=settings,
+    )
+    if not normalized.startswith("https://"):
+        raise ProviderEgressPolicyError(
+            "External provider base_url must use https when bearer credentials are configured."
+        )
+    return normalized
+
+
+def _external_headers(settings: Any) -> dict[str, str]:
+    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    if not credential_env:
+        raise ProviderConfigurationError("External provider is not configured.")
+    credential_value = environ.get(credential_env, "").strip()
+    if not credential_value:
+        raise ProviderConfigurationError("External provider is not configured.")
+    return {"Authorization": f"Bearer {credential_value}"}
+
+
+def _external_models(settings: Any) -> list[str]:
+    return [
+        model_name.strip()
+        for model_name in settings.external_openai_compatible_models.split(",")
+        if model_name.strip()
+    ]
+
+
+def _validate_external_model(model: str, settings: Any) -> None:
+    configured_models = _external_models(settings)
+    if not configured_models:
+        raise ProviderConfigurationError("External provider is not configured.")
+    if model not in configured_models:
+        raise ValueError("External provider model is not configured.")
+
+
+def _authorize_external_provider_request(
+    request: ProviderGenerationRequest,
+    *,
+    settings: Any,
+) -> None:
+    if request.approval_id:
+        raise ProviderApprovalRequiredError(
+            "External provider approval_id execution is not implemented yet."
+        )
+    if request.approved and settings.environment.strip().lower() in {
+        "development",
+        "test",
+        "testing",
+    }:
+        return
+    if request.approved:
+        raise ProviderApprovalRequiredError(
+            "External provider requires an approved approval_id before generation; "
+            "the approved boolean bypass is only allowed in development/test mode."
+        )
+    raise ProviderApprovalRequiredError("External provider requires explicit approval.")
+
+
+def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> None:
+    if request.base_url:
+        raise ProviderEgressPolicyError(
+            "External provider base_url must be configured by the operator."
+        )
+
+
+def _validate_base_url_for_provider(*, provider_id: str, base_url: str, settings: Any) -> str:
+    normalized = normalize_provider_base_url(base_url)
+    if normalized not in allowed_provider_base_urls_for_provider(provider_id, settings):
+        raise ProviderEgressPolicyError(
+            f"Provider base_url for {provider_id} is not allowed by egress policy."
+        )
+    return normalized
+
+
 __all__ = [
     "EXTERNAL_PLACEHOLDER_PROVIDER_ID",
+    "EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID",
     "LM_STUDIO_PROVIDER_ID",
     "OLLAMA_PROVIDER_ID",
+    "ProviderApprovalRequiredError",
+    "ProviderConfigurationError",
     "ProviderEgressPolicyError",
     "ProviderFeatureNotSupportedError",
     "ProviderRateLimitError",

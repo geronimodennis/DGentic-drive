@@ -33,7 +33,7 @@ def validate_provider_base_url(
 ) -> str:
     active_settings = settings if settings is not None else get_settings()
     normalized = normalize_provider_base_url(base_url)
-    allowed = allowed_provider_base_urls(active_settings)
+    allowed = allowed_provider_base_urls_for_provider(provider_id, active_settings)
     if normalized not in allowed:
         raise ProviderEgressPolicyError(
             f"Provider base_url for {provider_id} is not allowed by egress policy."
@@ -47,7 +47,26 @@ def allowed_provider_base_urls(settings: Any) -> set[str]:
         settings.lm_studio_base_url,
         *(item.strip() for item in settings.provider_allowed_base_urls.split(",") if item.strip()),
     ]
-    return {normalize_provider_base_url(item) for item in configured_urls}
+    return {normalize_provider_base_url(item) for item in configured_urls if item.strip()}
+
+
+def allowed_provider_base_urls_for_provider(provider_id: str, settings: Any) -> set[str]:
+    base_urls = []
+    if provider_id == "ollama":
+        base_urls.append(settings.ollama_base_url)
+        base_urls.extend(
+            item.strip() for item in settings.provider_allowed_base_urls.split(",") if item.strip()
+        )
+    elif provider_id == "lm-studio":
+        base_urls.append(settings.lm_studio_base_url)
+        base_urls.extend(
+            item.strip() for item in settings.provider_allowed_base_urls.split(",") if item.strip()
+        )
+    elif provider_id == "external-openai-compatible":
+        base_urls.append(settings.external_openai_compatible_base_url)
+    else:
+        return set()
+    return {normalize_provider_base_url(item) for item in base_urls if item.strip()}
 
 
 def normalize_provider_base_url(base_url: str) -> str:

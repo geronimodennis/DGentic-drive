@@ -1,3 +1,5 @@
+from os import environ
+from typing import Any
 from urllib.error import URLError
 
 from dgentic.events import event_log
@@ -6,6 +8,7 @@ from dgentic.provider_policy import (
     normalize_provider_base_url,
     validate_provider_base_url,
 )
+from dgentic.provider_runtime import EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
 from dgentic.provider_transport import (
     ProviderRetryPolicy,
     ProviderTransportRequest,
@@ -31,6 +34,7 @@ class ProviderRoutingError(ValueError):
 
 def default_providers() -> list[ProviderConfig]:
     settings = get_settings()
+    external_enabled = _external_provider_configured(settings)
     return [
         ProviderConfig(
             id="ollama",
@@ -54,6 +58,19 @@ def default_providers() -> list[ProviderConfig]:
             estimated_latency_ms=300,
             estimated_cost_usd=0.0,
             permission_mode=PermissionMode.autopilot_safe,
+            supports_streaming=False,
+        ),
+        ProviderConfig(
+            id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            name="OpenAI-Compatible External",
+            kind=ProviderKind.external,
+            base_url=_safe_external_provider_base_url_for_display(settings),
+            model_names=_external_model_names(settings) if external_enabled else [],
+            capabilities=["chat", "external", "openai-compatible", "high-capability"],
+            estimated_latency_ms=800,
+            estimated_cost_usd=0.01,
+            permission_mode=PermissionMode.approval_required,
+            enabled=external_enabled,
             supports_streaming=False,
         ),
         ProviderConfig(
@@ -91,6 +108,8 @@ def check_provider_health(provider_id: str) -> ProviderHealth:
         health = _probe_ollama(provider)
     elif provider.id == "lm-studio":
         health = _probe_lm_studio(provider)
+    elif provider.id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        health = _check_external_openai_compatible(provider)
     else:
         health = ProviderHealth(
             provider_id=provider.id,
@@ -141,6 +160,8 @@ def choose_provider(policy: RoutingRequest) -> RoutingDecision:
 
 def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
     if not provider.enabled:
+        return 0.0
+    if policy.privacy_required and provider.kind == ProviderKind.external:
         return 0.0
 
     score = 0.0
@@ -230,7 +251,50 @@ def _get_json(url: str) -> dict:
 
 
 def _safe_provider_base_url_for_display(base_url: str) -> str | None:
+    if not base_url.strip():
+        return None
     try:
         return normalize_provider_base_url(base_url)
     except ProviderEgressPolicyError:
         return None
+
+
+def _safe_external_provider_base_url_for_display(settings: Any) -> str | None:
+    normalized = _safe_provider_base_url_for_display(settings.external_openai_compatible_base_url)
+    if normalized is None or not normalized.startswith("https://"):
+        return None
+    return normalized
+
+
+def _check_external_openai_compatible(provider: ProviderConfig) -> ProviderHealth:
+    if not provider.enabled:
+        return ProviderHealth(
+            provider_id=provider.id,
+            available=False,
+            message="External provider is not configured.",
+            model_names=[],
+        )
+    return ProviderHealth(
+        provider_id=provider.id,
+        available=True,
+        message="External provider is configured.",
+        model_names=provider.model_names,
+    )
+
+
+def _external_provider_configured(settings: Any) -> bool:
+    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    return (
+        bool(_safe_external_provider_base_url_for_display(settings))
+        and bool(credential_env)
+        and bool(environ.get(credential_env, "").strip())
+        and bool(_external_model_names(settings))
+    )
+
+
+def _external_model_names(settings: Any) -> list[str]:
+    return [
+        model_name.strip()
+        for model_name in settings.external_openai_compatible_models.split(",")
+        if model_name.strip()
+    ]

@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from uuid import uuid4
 
 from dgentic.events import event_log
+from dgentic.orchestration import authorize_cli_action
 from dgentic.schemas import (
     CommandPolicyDecision,
     CommandPolicyMatchType,
@@ -309,6 +310,30 @@ def update_command_policy_rule(
 def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
     command = request.command.strip()
     parsed = parse_command(command)
+    orchestration_decision = authorize_cli_action(
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+
+    def finish(decision: CommandPolicyDecision) -> CommandPolicyDecision:
+        decision = decision.model_copy(update={"orchestration": orchestration_decision})
+        _record_decision(decision)
+        return decision
+
+    if not orchestration_decision.allowed:
+        return finish(
+            CommandPolicyDecision(
+                command=command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason=orchestration_decision.reason,
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
+        )
+
     policy_cwd = _resolve_policy_cwd(request.cwd)
     if policy_cwd is None:
         decision = CommandPolicyDecision(
@@ -320,8 +345,7 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
             agent_id=request.agent_id,
             task_id=request.task_id,
         )
-        _record_decision(decision)
-        return decision
+        return finish(decision)
 
     default_decision = _default_decision(command, parsed, request, policy_cwd)
 
@@ -334,40 +358,32 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
             or default_decision.reason
             == "Command references DGentic state files and needs approval."
         ):
-            _record_decision(default_decision)
-            return default_decision
+            return finish(default_decision)
         decision = _decision_from_configured_rules(command, parsed, request)
         if decision is not None:
-            _record_decision(decision)
-            return decision
+            return finish(decision)
 
     if parsed.executable in SHELL_COMMAND_FLAGS:
         wrapper_decision = default_decision
         if wrapper_decision.permission_mode == PermissionMode.blocked:
-            _record_decision(wrapper_decision)
-            return wrapper_decision
+            return finish(wrapper_decision)
 
         configured_decision = _decision_from_configured_rules(command, parsed, request)
         if configured_decision is not None and (
             configured_decision.permission_mode == PermissionMode.blocked
         ):
-            _record_decision(configured_decision)
-            return configured_decision
+            return finish(configured_decision)
 
         if wrapper_decision.permission_mode == PermissionMode.approval_required:
-            _record_decision(wrapper_decision)
-            return wrapper_decision
+            return finish(wrapper_decision)
 
         if configured_decision is not None:
-            _record_decision(configured_decision)
-            return configured_decision
+            return finish(configured_decision)
 
-        _record_decision(wrapper_decision)
-        return wrapper_decision
+        return finish(wrapper_decision)
 
     decision = _default_decision(command, parsed, request, policy_cwd)
-    _record_decision(decision)
-    return decision
+    return finish(decision)
 
 
 def _decision_from_configured_rules(

@@ -650,6 +650,7 @@ class CommandPolicyDecision(BaseModel):
     task_id: str | None = None
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
+    orchestration: OrchestrationActionDecision | None = None
 
 
 class CommandExecutionRequest(BaseModel):

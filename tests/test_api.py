@@ -511,6 +511,149 @@ def test_api_filesystem_write_serializes_orchestration_decisions(
     get_settings.cache_clear()
 
 
+def test_api_command_policy_serializes_orchestration_decisions(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Bind command policy checks to the scheduled QA task.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Evaluate orchestration-bound command policy.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Command policy binding is enforced.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+
+    response = client.post(
+        "/guardrails/commands",
+        json={
+            "command": "cmd /c echo api-bound",
+            "agent_id": task["agent_id"],
+            "agent_role": task["role"],
+            "task_id": task["id"],
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["permission_mode"] == "autopilot_safe"
+    assert response.json()["orchestration"] == {
+        "allowed": True,
+        "reason": "CLI action is bound to a running orchestration task.",
+        "run_id": create_response.json()["id"],
+        "task_id": "qa-validation",
+        "agent_id": task["agent_id"],
+        "agent_role": "QA",
+        "violating_paths": [],
+    }
+    get_settings.cache_clear()
+
+
+def test_api_cli_runtime_blocks_partial_active_orchestration_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block partial CLI runtime context for active QA task.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate API runtime orchestration binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "CLI runtime binding is enforced.",
+                }
+            ],
+        },
+    )
+    task = create_response.json()["tasks"][0]
+
+    execute_response = client.post(
+        "/cli/execute",
+        json={
+            "command": "cmd /c echo should-not-run",
+            "agent_id": task["agent_id"],
+        },
+    )
+    run_response = client.post(
+        "/cli/runs",
+        json={
+            "command": "cmd /c echo should-not-start",
+            "task_id": task["id"],
+        },
+    )
+    approval_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={
+            "command": "python --version",
+            "agent_id": task["agent_id"],
+        },
+    )
+
+    assert create_response.status_code == 201
+    assert execute_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in execute_response.json()["detail"]
+    assert run_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in run_response.json()["detail"]
+    assert approval_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in approval_response.json()["detail"]
+    get_settings.cache_clear()
+
+
+def test_api_execute_approved_cli_command_rechecks_active_orchestration_context(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    approval_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={
+            "command": "python --version",
+            "task_id": "qa-validation",
+        },
+    )
+    approval_id = approval_response.json()["id"]
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Recheck orchestration context before direct approval execution.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate approved command orchestration binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Direct approval execution is rechecked.",
+                }
+            ],
+        },
+    )
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
+
+    assert approval_response.status_code == 201
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in execute_response.json()["detail"]
+    get_settings.cache_clear()
+
+
 def test_guarded_filesystem_binary_list_metadata_and_audit(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

@@ -10,6 +10,7 @@ from dgentic.command_policy import (
     update_command_policy_rule,
 )
 from dgentic.events import event_log
+from dgentic.orchestration import OrchestrationService
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandPolicyMatchType,
@@ -17,6 +18,8 @@ from dgentic.schemas import (
     CommandPolicyRuleRequest,
     CommandPolicyRuleUpdate,
     LogEventType,
+    OrchestrationCreateRequest,
+    OrchestrationTaskSpec,
     PermissionMode,
 )
 from dgentic.settings import get_settings
@@ -133,6 +136,130 @@ def test_command_policy_rules_can_be_scoped_to_agent_roles(policy_state) -> None
     assert developer_decision.agent_id == "agent-dev-1"
     assert developer_decision.task_id == "story-5.3"
     assert qa_decision.permission_mode == PermissionMode.approval_required
+
+
+def test_command_policy_keeps_legacy_agent_context_when_no_orchestration_task_matches(
+    policy_state,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="cmd /c echo legacy context",
+            agent_role="Developer",
+            agent_id="legacy-agent",
+            task_id="legacy-task",
+        )
+    )
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.agent_id == "legacy-agent"
+    assert decision.agent_role == "Developer"
+    assert decision.task_id == "legacy-task"
+    assert decision.orchestration is not None
+    assert decision.orchestration.allowed is True
+    assert (
+        decision.orchestration.reason
+        == "No active orchestration task matched supplied CLI context."
+    )
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "agent_role", "task_id", "reason"),
+    [
+        ("agent-from-task", None, None, "require agent_id, agent_role, and task_id"),
+        (None, "QA", "qa-validation", "require agent_id, agent_role, and task_id"),
+        ("wrong-agent", "QA", "qa-validation", "does not match the running orchestration task"),
+        ("agent-from-task", "Developer", "qa-validation", "does not match orchestration task role"),
+        ("agent-from-task", "QA", "wrong-task", "does not match the running orchestration task"),
+    ],
+)
+def test_command_policy_fails_closed_for_partial_or_mismatched_active_orchestration_context(
+    policy_state,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    reason: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    run = _create_running_orchestration_task()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+    bound_agent_id = task.agent_id if agent_id == "agent-from-task" else agent_id
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="cmd /c echo should-not-run",
+            agent_role=agent_role,
+            agent_id=bound_agent_id,
+            task_id=task_id,
+        )
+    )
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert reason in decision.reason
+    assert decision.orchestration is not None
+    assert decision.orchestration.allowed is False
+
+
+def test_command_policy_allows_matching_orchestration_context_to_use_normal_policy(
+    policy_state,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    run = _create_running_orchestration_task()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    safe_decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="cmd /c echo allowed",
+            agent_role="qa",
+            agent_id=task.agent_id,
+            task_id=task.id,
+        )
+    )
+    approval_decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="python --version",
+            agent_role=task.role,
+            agent_id=task.agent_id,
+            task_id=task.id,
+        )
+    )
+
+    assert safe_decision.permission_mode == PermissionMode.autopilot_safe
+    assert safe_decision.orchestration is not None
+    assert safe_decision.orchestration.allowed is True
+    assert safe_decision.orchestration.run_id == run.id
+    assert approval_decision.permission_mode == PermissionMode.approval_required
+    assert approval_decision.orchestration is not None
+    assert approval_decision.orchestration.allowed is True
+
+
+def test_command_policy_serializes_orchestration_decision_metadata(policy_state) -> None:
+    _root_dir, _data_dir = policy_state
+    run = _create_running_orchestration_task()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="cmd /c echo metadata",
+            agent_role=task.role,
+            agent_id=task.agent_id,
+            task_id=task.id,
+        )
+    )
+    serialized = decision.model_dump(mode="json")
+    latest_event = event_log.list(LogEventType.cli)[-1]
+
+    assert serialized["orchestration"] == {
+        "allowed": True,
+        "reason": "CLI action is bound to a running orchestration task.",
+        "run_id": run.id,
+        "task_id": task.id,
+        "agent_id": task.agent_id,
+        "agent_role": task.role,
+        "violating_paths": [],
+    }
+    assert latest_event.metadata["orchestration"] == serialized["orchestration"]
 
 
 def test_shell_wrapped_blocked_commands_do_not_bypass_policy(policy_state) -> None:
@@ -1661,3 +1788,22 @@ def test_cli_runtime_honors_argument_aware_policy_rules(policy_state) -> None:
 
     with pytest.raises(PermissionError, match="Force-delete marker"):
         service.execute_command(CommandExecutionRequest(command="cmd /c echo force-delete"))
+
+
+def _create_running_orchestration_task():
+    return OrchestrationService().create_run(
+        OrchestrationCreateRequest(
+            objective="Bind CLI command policy to a running QA task.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate orchestration-bound CLI behavior.",
+                    role="QA",
+                    declared_write_paths=["tests/test_command_policy.py"],
+                    expected_output="Focused policy regressions.",
+                    validation="pytest tests/test_command_policy.py passes.",
+                )
+            ],
+        )
+    )

@@ -290,6 +290,77 @@ class OrchestrationService:
             task_id=task_id,
         )
 
+    def authorize_cli_action(
+        self,
+        *,
+        agent_id: str | None,
+        agent_role: str | None,
+        task_id: str | None,
+    ) -> OrchestrationActionDecision:
+        if not any([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=True,
+                reason="No orchestration context was supplied.",
+            )
+
+        relevant_tasks = [
+            (run, task)
+            for run in self._runs.list()
+            if run.status not in TERMINAL_RUN_STATUSES
+            for task in run.tasks
+            if task.status == StepStatus.running
+            and ((agent_id is not None and task.agent_id == agent_id) or task.id == task_id)
+        ]
+        if not relevant_tasks:
+            return OrchestrationActionDecision(
+                allowed=True,
+                reason="No active orchestration task matched supplied CLI context.",
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+        if not all([agent_id, agent_role, task_id]):
+            return OrchestrationActionDecision(
+                allowed=False,
+                reason=(
+                    "Orchestration-bound CLI actions require agent_id, agent_role, and task_id."
+                ),
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
+            )
+
+        for run, task in relevant_tasks:
+            if task.id == task_id and task.agent_id == agent_id:
+                if _normalize_role(task.role) != _normalize_role(agent_role or ""):
+                    return OrchestrationActionDecision(
+                        allowed=False,
+                        reason=(
+                            f"Agent role {agent_role} does not match orchestration "
+                            f"task role {task.role}."
+                        ),
+                        run_id=run.id,
+                        task_id=task.id,
+                        agent_id=agent_id,
+                        agent_role=agent_role,
+                    )
+                return OrchestrationActionDecision(
+                    allowed=True,
+                    reason="CLI action is bound to a running orchestration task.",
+                    run_id=run.id,
+                    task_id=task.id,
+                    agent_id=agent_id,
+                    agent_role=agent_role,
+                )
+
+        return OrchestrationActionDecision(
+            allowed=False,
+            reason="Supplied CLI agent context does not match the running orchestration task.",
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+        )
+
     def _require_run(
         self,
         run_id: str,
@@ -727,4 +798,17 @@ def authorize_filesystem_action(
         task_id=task_id,
         action=action,
         paths=paths,
+    )
+
+
+def authorize_cli_action(
+    *,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> OrchestrationActionDecision:
+    return orchestration_service.authorize_cli_action(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
     )

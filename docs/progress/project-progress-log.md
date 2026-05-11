@@ -4,6 +4,51 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008c Orchestration-Bound CLI Actions
+
+Status: completed for the scoped CLI runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, tool action binding, blocked-run recovery, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect kept the story in Full Sprint mode because command execution and orchestration role binding are runtime- and security-sensitive.
+- Completed: Developer updated production source only for CLI orchestration authorization, command-policy integration, and command decision schema metadata.
+- Completed: QA updated tests only for orchestration authorization, command policy serialization, API guardrail metadata, and synchronous/asynchronous CLI runtime enforcement.
+- Completed: Reviewer/Security found no blockers and called out optional approval/async-path hardening.
+- Completed: QA added explicit fail-closed regressions for `/cli/execute`, `/cli/runs`, CLI approval creation, and direct approved-command execution when active orchestration context is partial.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: command policy decisions now include orchestration action metadata.
+- Implemented in this slice: omitted CLI orchestration context preserves existing non-orchestrated CLI behavior.
+- Implemented in this slice: legacy agent/task context with no active running orchestration task remains backward-compatible.
+- Implemented in this slice: partial or mismatched context that references a running orchestration task blocks before CLI policy execution.
+- Implemented in this slice: exact active `agent_id`, `agent_role`, and `task_id` context is required when a CLI action is bound to a running orchestration task.
+- Implemented in this slice: `/guardrails/commands`, `/cli/execute`, and `/cli/runs` serialize or persist the orchestration decision through the existing command policy/runtime flow.
+
+Remaining Sprint 14 work:
+- Add a real autonomous execution loop beyond scheduling briefs.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Add runtime binding for tool actions.
+- Add richer blocked-run recovery or reassignment semantics.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused CLI-binding gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py -k "orchestration or command_policy or cli or guardrails"` passed with 390 tests, 2 skipped, and 91 deselected.
+- Focused security-hardening gate: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py tests\test_api.py -k "orchestration or cli_runtime_blocks or execute_approved_cli or approved_command_rechecks or create_approval_fails or start_run_fails or command_policy_serializes"` passed with 13 tests and 167 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\orchestration.py src\dgentic\command_policy.py src\dgentic\schemas.py tests\test_orchestration.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\orchestration.py src\dgentic\command_policy.py src\dgentic\schemas.py tests\test_orchestration.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed with 7 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 719 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+- Whitespace gate: `git diff --check` passed with only LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 14 with tool runtime binding or the event-driven autonomous execution loop, depending on review and full-gate results.
+
 ### Sprint 14 BL-008b Orchestration-Bound Filesystem Actions
 
 Status: completed for the scoped filesystem runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, CLI/tool action binding, and production scheduling hardening.

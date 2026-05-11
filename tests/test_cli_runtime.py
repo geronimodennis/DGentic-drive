@@ -26,10 +26,13 @@ from dgentic.cli_runtime import (
     sanitize_output,
 )
 from dgentic.command_policy import create_command_policy_rule
+from dgentic.orchestration import OrchestrationService
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandPolicyMatchType,
     CommandPolicyRuleRequest,
+    OrchestrationCreateRequest,
+    OrchestrationTaskSpec,
     PermissionMode,
 )
 from dgentic.settings import get_settings
@@ -95,6 +98,113 @@ def test_create_approval_includes_safe_policy_review_metadata(runtime) -> None:
     assert approval.agent_role == "developer"
     assert approval.agent_id == "agent-dev-1"
     assert approval.task_id == "sprint-9"
+
+
+def test_cli_runtime_executes_legacy_agent_context_without_orchestration_match(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    result = service.execute_command(
+        CommandExecutionRequest(
+            command="cmd /c echo legacy-ok",
+            agent_role="Developer",
+            agent_id="legacy-agent",
+            task_id="legacy-task",
+        )
+    )
+
+    assert result.exit_code == 0
+    assert "legacy-ok" in result.stdout
+    assert result.permission_mode == PermissionMode.autopilot_safe
+
+
+def test_cli_runtime_fails_closed_for_partial_active_orchestration_context(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+    run = _create_running_orchestration_task_for_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        service.execute_command(
+            CommandExecutionRequest(
+                command="cmd /c echo should-not-run",
+                agent_id=task.agent_id,
+            )
+        )
+
+
+def test_cli_runtime_start_run_fails_closed_for_partial_active_orchestration_context(
+    runtime,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+    run = _create_running_orchestration_task_for_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        service.start_command(
+            CommandExecutionRequest(
+                command="cmd /c echo should-not-start",
+                task_id=task.id,
+            )
+        )
+
+    assert service.list_command_runs() == []
+
+
+def test_cli_runtime_create_approval_fails_closed_for_partial_active_orchestration_context(
+    runtime,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+    run = _create_running_orchestration_task_for_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        service.create_approval(
+            CommandExecutionRequest(
+                command="python --version",
+                agent_id=task.agent_id,
+            )
+        )
+
+    assert service.list_approvals() == []
+
+
+def test_cli_runtime_execute_approved_command_rechecks_active_orchestration_context(
+    runtime,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+    approval = service.create_approval(
+        CommandExecutionRequest(
+            command="python --version",
+            task_id="qa-validation",
+        )
+    )
+    service.approve_approval(approval.id, decided_by="reviewer")
+
+    _create_running_orchestration_task_for_runtime()
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        service.execute_approved_command(approval.id)
+
+    assert service.list_command_runs() == []
+    assert service.list_approvals()[0].status == CommandApprovalStatus.approved
+
+
+def test_cli_runtime_allows_matching_orchestration_context_under_normal_policy(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+    run = _create_running_orchestration_task_for_runtime()
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+
+    result = service.execute_command(
+        CommandExecutionRequest(
+            command="cmd /c echo bound-ok",
+            agent_role=task.role,
+            agent_id=task.agent_id,
+            task_id=task.id,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert "bound-ok" in result.stdout
+    assert result.permission_mode == PermissionMode.autopilot_safe
 
 
 def test_create_approval_evaluates_policy_with_request_cwd(runtime) -> None:
@@ -1823,3 +1933,22 @@ def test_stale_reconciliation_preserves_output_cursor_and_approval_id(runtime) -
     assert "TOKEN=[REDACTED]" in stored.stdout
     assert [chunk.sequence for chunk in output.chunks] == [1]
     assert "TOKEN=[REDACTED]" in output.chunks[0].text
+
+
+def _create_running_orchestration_task_for_runtime():
+    return OrchestrationService().create_run(
+        OrchestrationCreateRequest(
+            objective="Bind CLI runtime execution to a running QA task.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate orchestration-bound CLI runtime behavior.",
+                    role="QA",
+                    declared_write_paths=["tests/test_cli_runtime.py"],
+                    expected_output="Focused runtime regressions.",
+                    validation="pytest tests/test_cli_runtime.py passes.",
+                )
+            ],
+        )
+    )

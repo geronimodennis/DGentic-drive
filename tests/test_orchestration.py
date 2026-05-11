@@ -295,6 +295,93 @@ def test_orchestration_filesystem_allows_read_only_action_for_running_bound_task
     )
 
 
+def test_orchestration_cli_context_is_backward_compatible_without_active_task_match(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    service.create_run(
+        OrchestrationCreateRequest(
+            objective="Keep legacy CLI context behavior when no task matches.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+
+    decision = service.authorize_cli_action(
+        agent_id="legacy-agent",
+        agent_role="Developer",
+        task_id="legacy-task",
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "No active orchestration task matched supplied CLI context."
+    assert decision.agent_id == "legacy-agent"
+    assert decision.agent_role == "Developer"
+    assert decision.task_id == "legacy-task"
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "agent_role", "task_id", "reason"),
+    [
+        ("agent-from-task", None, None, "require agent_id, agent_role, and task_id"),
+        (None, "QA", "qa-validation", "require agent_id, agent_role, and task_id"),
+        ("wrong-agent", "QA", "qa-validation", "does not match the running orchestration task"),
+        ("agent-from-task", "Developer", "qa-validation", "does not match orchestration task role"),
+        ("agent-from-task", "QA", "wrong-task", "does not match the running orchestration task"),
+    ],
+)
+def test_orchestration_cli_binding_blocks_partial_or_mismatched_active_context(
+    orchestration_state,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    reason: str,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject incomplete or mismatched CLI ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    bound_agent_id = task.agent_id if agent_id == "agent-from-task" else agent_id
+
+    decision = service.authorize_cli_action(
+        agent_id=bound_agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+
+    assert decision.allowed is False
+    assert reason in decision.reason
+
+
+def test_orchestration_cli_allows_matching_running_task_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Allow exact running task CLI context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+
+    decision = service.authorize_cli_action(
+        agent_id=task.agent_id,
+        agent_role="qa",
+        task_id=task.id,
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "CLI action is bound to a running orchestration task."
+    assert decision.run_id == run.id
+    assert decision.agent_id == task.agent_id
+    assert decision.agent_role == "qa"
+    assert decision.task_id == task.id
+
+
 def test_orchestration_retry_exhaustion_creates_blocker_and_follow_up(
     orchestration_state,
 ) -> None:

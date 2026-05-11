@@ -9,6 +9,7 @@ from dgentic.settings import Settings, get_settings
 
 CAPABILITY_ADMIN = "admin"
 CAPABILITY_AGENTS = "agents"
+CAPABILITY_APPROVALS = "approvals"
 CAPABILITY_CLI = "cli"
 CAPABILITY_FILESYSTEM = "filesystem"
 CAPABILITY_LOGS = "logs"
@@ -41,6 +42,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/agents", CAPABILITY_AGENTS),
     ("/memory", CAPABILITY_MEMORY),
     ("/api/v1/memory", CAPABILITY_MEMORY),
+    ("/tools/approvals", CAPABILITY_APPROVALS),
     ("/tools", CAPABILITY_TOOLS),
     ("/api/v1/tools", CAPABILITY_TOOLS),
     ("/sessions", CAPABILITY_SESSIONS),

@@ -1420,6 +1420,159 @@ def test_generated_tool_execute_api_updates_reliability(tmp_path, monkeypatch) -
     get_settings.cache_clear()
 
 
+def test_generated_tool_execute_api_requires_bound_approval_in_production(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-approval-tool",
+            "description": "Requires a bound tool approval.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": (
+                "def run(payload):\n    return {'ok': True, 'value': payload.get('value')}\n"
+            ),
+        },
+    )
+    bypass_response = client.post(
+        "/tools/api-approval-tool/execute",
+        json={"payload": {"value": "safe"}, "approved": True, "timeout_seconds": 5},
+    )
+    create_response = client.post(
+        "/tools/api-approval-tool/approvals?requested_by=tester",
+        json={
+            "payload": {"value": "PASSWORD=api-approval-secret"},
+            "timeout_seconds": 5,
+            "agent_role": "developer",
+            "task_id": "sprint-11",
+        },
+    )
+    approval_id = create_response.json()["id"]
+    list_response = client.get("/tools/approvals?status=pending")
+    review_response = client.get(f"/tools/approvals/{approval_id}/review")
+    approve_response = client.post(
+        f"/tools/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "Approved with --token api-reason-secret."},
+    )
+    mismatch_response = client.post(
+        "/tools/api-approval-tool/execute",
+        json={
+            "payload": {"value": "different"},
+            "approval_id": approval_id,
+            "timeout_seconds": 5,
+            "requested_by": "tester",
+            "agent_role": "developer",
+            "task_id": "sprint-11",
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-approval-tool/execute",
+        json={
+            "payload": {"value": "PASSWORD=api-approval-secret"},
+            "approval_id": approval_id,
+            "timeout_seconds": 5,
+            "requested_by": "tester",
+            "agent_role": "developer",
+            "task_id": "sprint-11",
+        },
+    )
+    second_execute_response = client.post(
+        "/tools/api-approval-tool/execute",
+        json={
+            "payload": {"value": "PASSWORD=api-approval-secret"},
+            "approval_id": approval_id,
+            "timeout_seconds": 5,
+            "requested_by": "tester",
+            "agent_role": "developer",
+            "task_id": "sprint-11",
+        },
+    )
+
+    assert generate_response.status_code == 201
+    assert bypass_response.status_code == 403
+    assert "approval_id" in bypass_response.json()["detail"]
+    assert create_response.status_code == 201
+    assert create_response.json()["review_payload"]["value"] == "PASSWORD=[REDACTED]"
+    assert "api-approval-secret" not in create_response.text
+    assert list_response.status_code == 200
+    assert any(item["id"] == approval_id for item in list_response.json())
+    assert review_response.status_code == 200
+    assert review_response.json()["review_payload"]["value"] == "PASSWORD=[REDACTED]"
+    assert review_response.json()["direct_execute_available"] is False
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+    assert "--token [REDACTED]" in approve_response.json()["decision_reason"]
+    assert "api-reason-secret" not in approve_response.text
+    assert mismatch_response.status_code == 403
+    assert "not bound" in mismatch_response.json()["detail"]
+    assert execute_response.status_code == 200
+    assert execute_response.json()["approval_id"] == approval_id
+    assert execute_response.json()["parsed_output"]["value"] == "PASSWORD=[REDACTED]"
+    assert second_execute_response.status_code == 403
+    assert "not executable" in second_execute_response.json()["detail"]
+    get_settings.cache_clear()
+
+
+def test_tool_approval_approve_api_requires_approvals_capability(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "tool-token=tools;approval-token=approvals",
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    tool_headers = {"Authorization": "Bearer tool-token"}
+    approval_headers = {"Authorization": "Bearer approval-token"}
+
+    generate_response = client.post(
+        "/tools/generate",
+        headers=tool_headers,
+        json={
+            "name": "api-review-boundary-tool",
+            "description": "Requires separate approval capability.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": "def run(payload):\n    return {'ok': True}\n",
+        },
+    )
+    create_response = client.post(
+        "/tools/api-review-boundary-tool/approvals?requested_by=tester",
+        headers=tool_headers,
+        json={"payload": {}, "timeout_seconds": 5},
+    )
+    approval_id = create_response.json()["id"]
+    tool_approve_response = client.post(
+        f"/tools/approvals/{approval_id}/approve",
+        headers=tool_headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+    approval_approve_response = client.post(
+        f"/tools/approvals/{approval_id}/approve",
+        headers=approval_headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+
+    assert generate_response.status_code == 201
+    assert create_response.status_code == 201
+    assert tool_approve_response.status_code == 403
+    assert approval_approve_response.status_code == 200
+    assert (
+        approval_approve_response.json()["decided_by"] == sha256(b"approval-token").hexdigest()[:12]
+    )
+    get_settings.cache_clear()
+
+
 def test_generated_tool_execute_api_redacts_secret_outputs_and_audits(
     isolated_tool_api_state,
 ) -> None:

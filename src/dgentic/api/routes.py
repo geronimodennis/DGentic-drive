@@ -103,7 +103,18 @@ from dgentic.schemas import (
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
 from dgentic.settings import get_settings
-from dgentic.tool_runtime import ToolExecutionResult, execute_tool
+from dgentic.tool_runtime import (
+    ToolApproval,
+    ToolApprovalReview,
+    ToolApprovalStatus,
+    ToolExecutionResult,
+    approve_tool_approval,
+    create_tool_approval,
+    deny_tool_approval,
+    execute_tool,
+    get_tool_approval_review,
+    list_tool_approvals,
+)
 from dgentic.tools import generate_tool, list_tools, register_tool, update_tool_governance
 
 router = APIRouter()
@@ -541,6 +552,73 @@ def get_tools() -> list[ToolManifest]:
     return list_tools()
 
 
+@router.post("/tools/{name}/approvals", response_model=ToolApproval, status_code=201)
+def create_local_tool_approval(
+    name: str,
+    request: ToolExecutionRequest,
+    requested_by: str | None = None,
+) -> ToolApproval:
+    try:
+        return create_tool_approval(name, request, requested_by=requested_by)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/tools/approvals", response_model=list[ToolApproval])
+def get_local_tool_approvals(
+    status: ToolApprovalStatus | None = None,
+) -> list[ToolApproval]:
+    return list_tool_approvals(status)
+
+
+@router.get("/tools/approvals/{approval_id}/review", response_model=ToolApprovalReview)
+def get_local_tool_approval_review(approval_id: str) -> ToolApprovalReview:
+    try:
+        return get_tool_approval_review(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/tools/approvals/{approval_id}/approve", response_model=ToolApproval)
+def approve_local_tool_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> ToolApproval:
+    try:
+        return approve_tool_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/tools/approvals/{approval_id}/deny", response_model=ToolApproval)
+def deny_local_tool_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> ToolApproval:
+    try:
+        return deny_tool_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.post("/tools/{name}/execute", response_model=ToolExecutionResult)
 def execute_local_tool(name: str, request: ToolExecutionRequest) -> ToolExecutionResult:
     try:
@@ -548,11 +626,18 @@ def execute_local_tool(name: str, request: ToolExecutionRequest) -> ToolExecutio
             name,
             request.payload,
             approved=request.approved,
+            approval_id=request.approval_id,
             timeout_seconds=request.timeout_seconds,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (PermissionError, ValueError) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

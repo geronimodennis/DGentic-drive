@@ -4,6 +4,61 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 11 BL-005c Bound Tool Approval Records
+
+Status: completed for the scoped bound-approval slice; Sprint 11 remains open for sandboxing, dependency isolation, and reliability policy automation.
+
+Current story:
+- BL-005: Tool Runtime Safety And Registry Integration.
+
+Checklist:
+- Completed: PM selected bound generated-tool approvals as the next Sprint 11 slice after the pushed BL-005b checkpoint because caller-supplied approval remained the largest execution-safety gap.
+- Completed: Architect explorer reviewed the CLI approval implementation and recommended a tool-specific JSON approval store with redacted review payloads, HMAC binding digests, single-use claims, and UI-safe review endpoints.
+- Completed: Developer updated production source only for tool approval records, payload/full-artifact-tree/approval digests, approval create/list/review/approve/deny APIs, production/staging rejection of `approved: true`, and single-process approval claiming before subprocess execution.
+- Completed: QA updated tests only for production rejection of caller-supplied approval, bound approval creation/review/approval/execution, payload mismatch rejection, single-use execution in the local JSON runtime, redacted persisted payloads and decision reasons, denied/expired approval rejection, and generated helper artifact drift invalidation.
+- Completed: Final read-only reviewer found helper/import artifact drift, missing reviewer capability boundary, unredacted identity/context fields, and a multi-process JSON claim caveat; Developer and QA resolved the first three and recorded the multi-process caveat as residual risk.
+- Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
+- Pending: Checkpoint commit and push for this Sprint 11 slice.
+
+Feature tracking:
+- Implemented in this slice: approval-required generated tools need an approved `approval_id` outside development/test mode.
+- Implemented in this slice: tool approval records store redacted payload previews plus HMAC digests for payload, full generated artifact tree, and approval binding rather than raw payload values.
+- Implemented in this slice: approval binding covers tool name, version, status, selected entrypoint, generated artifact tree digest, timeout, requester, agent/task context, permission mode, and payload digest.
+- Implemented in this slice: generated tool approval APIs create, list, review, approve, and deny approval records using the existing safe decision-reason redaction and authenticated-decider helper; approve/deny routes require the separate `approvals` capability when auth is enabled.
+- Implemented in this slice: approval records are claimed before subprocess launch in the local JSON runtime, making them single-use for a single backend process even when tool execution fails or times out after claim.
+- Implemented in this slice: requester, agent, task, and reviewer identity/context fields are redacted before persisted approval records or API responses expose them.
+
+Validation:
+- Focused reviewer-remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py::test_production_approval_required_tool_requires_bound_approval tests\test_tool_runtime.py::test_bound_tool_approval_rejects_artifact_drift tests\test_tool_runtime.py::test_bound_tool_approval_rejects_denied_and_expired_records tests\test_api.py::test_tool_approval_approve_api_requires_approvals_capability tests\test_api.py::test_generated_tool_execute_api_requires_bound_approval_in_production tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes` passed with 19 tests.
+- Focused bound approval gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py::test_production_approval_required_tool_requires_bound_approval tests\test_tool_runtime.py::test_bound_tool_approval_rejects_artifact_drift tests\test_api.py::test_generated_tool_execute_api_requires_bound_approval_in_production` passed with 3 tests.
+- Focused tool/API approval regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "tool or approval"` passed with 33 tests and 25 deselected.
+- Focused registry/policy regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_registry.py tests\test_command_policy.py` passed with 284 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\tool_runtime.py src\dgentic\api\routes.py src\dgentic\schemas.py tests\test_tool_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\tool_runtime.py src\dgentic\api\routes.py src\dgentic\schemas.py tests\test_tool_runtime.py tests\test_api.py` passed.
+- Focused reviewer-remediation regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py tests\test_api.py -k "tool or approval" tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes` passed with 37 tests and 37 deselected.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 472 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 45 files already formatted.
+- Diff hygiene gate: `git diff --check` passed with Windows line-ending warnings only.
+
+Residual risks:
+- Tool execution is still a local Python subprocess without OS/process sandboxing or per-tool dependency isolation.
+- Approval records are local JSON MVP state, not migration-managed production SQL records.
+- Approval claiming uses process-local JSON locking; production multi-worker process-safe single-use claims still need durable SQL or file-lock-backed compare-and-set semantics.
+- Development/test mode still permits `approved: true` for local smoke checks.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/auth.py`, `src/dgentic/schemas.py`, `src/dgentic/tool_runtime.py`, and `src/dgentic/api/routes.py`.
+- QA-owned files: `tests/test_api.py`, `tests/test_auth.py`, and `tests/test_tool_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Workspace hygiene:
+- Existing backup files remain untracked and were not included: `docs/DGentic-goal.md.bak` and `docs/DGentic-goal.md.bak2`.
+
+Next:
+- Commit and push this stable Sprint 11 checkpoint, then continue Sprint 11 with sandbox hardening, dependency isolation, or reliability-score policy automation.
+
 ### Sprint 11 BL-005b Tool Execution Redaction And Audit Events
 
 Status: completed for the scoped tool-output redaction and audit slice; Sprint 11 remains open for bound approvals, sandboxing, dependency isolation, and reliability policy automation.
@@ -19,7 +74,7 @@ Checklist:
 - Completed: Read-only reviewer found JSON, colon-label, and authorization-header shaped stderr leak risks plus missing failure/timeout coverage; Developer and QA resolved those findings before checkpointing.
 - Completed: Final read-only reviewer found a non-Bearer authorization-header tail leak; Developer separated authorization-header redaction from generic label redaction, and QA pinned Bearer, Basic, token, and proxy authorization header cases.
 - Completed: Final full regression, lint, format, and diff hygiene gates for this Sprint 11 slice.
-- Pending: Checkpoint commit and push for this Sprint 11 slice.
+- Completed: Checkpoint commit and push for this Sprint 11 slice.
 
 Feature tracking:
 - Implemented in this slice: tool stdout and stderr are redacted before being returned through runtime/API responses.
@@ -42,7 +97,7 @@ Validation:
 
 Residual risks:
 - Redaction is still heuristic and cannot guarantee removal of arbitrary unlabeled secrets.
-- Approval-required tool execution still uses the MVP caller-supplied `approved` flag; bound tool approval records remain future work.
+- Approval-required tool execution used the MVP caller-supplied `approved` flag in this slice; bound tool approval records were completed later in BL-005c.
 - Tool execution is still a local Python subprocess without OS/process sandboxing or per-tool dependency isolation.
 
 Role boundary:
@@ -71,7 +126,7 @@ Checklist:
 - Completed: Dev2 updated production source so tool execution consults the SQL registry when present, blocks deprecated registry rows, fails closed on invalid or conflicting registry permission levels, preserves legacy JSON-only execution when no SQL row exists, and reduces inherited subprocess environment keys.
 - Completed: QA2 updated tests only for generated-tool SQL registry auto-registration, SQL duplicate preflight with no file writes, deprecated registry execution blocking, and permission conflict fail-closed behavior.
 - Completed: Final full regression, lint, format, and diff hygiene gates.
-- Pending: Checkpoint commit and push for this Sprint 11 slice.
+- Completed: Checkpoint commit and push for this Sprint 11 slice.
 
 Feature tracking:
 - Implemented in this slice: `/tools/generate` registers generated tools in both local JSON state and the SQLAlchemy-backed tool registry.
@@ -91,7 +146,7 @@ Validation:
 - Diff hygiene gate: `git diff --check` passed.
 
 Residual risks:
-- Approval-required tool execution still uses the MVP caller-supplied `approved` flag; bound tool approval records and UI review remain future work.
+- Approval-required tool execution still used the MVP caller-supplied `approved` flag in this slice; bound tool approval records were completed later in BL-005c, while interactive UI remains future work.
 - Tool execution is still a local Python subprocess, not an OS/process sandbox.
 - Tool output and stderr redaction were completed later in BL-005b through the shared redaction helper and tool execution audit events.
 - Per-tool dependency isolation is not implemented; tools still run with the application interpreter.

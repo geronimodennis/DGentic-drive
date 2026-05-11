@@ -191,6 +191,7 @@ def test_create_app_fails_closed_when_production_auth_has_no_tokens(
         ("/providers", "providers"),
         ("/agents/agent-1", "agents"),
         ("/api/v1/memory/metadata", "memory"),
+        ("/tools/approvals/approval-1/approve", "approvals"),
         ("/api/v1/tools/registry", "tools"),
         ("/sessions/summary", "sessions"),
         ("/logs", "logs"),

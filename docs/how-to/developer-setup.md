@@ -358,17 +358,29 @@ This creates:
 
 Generated tools are registered in local JSON state, auto-registered in the SQLAlchemy-backed tool registry with an interface signature, and indexed as memory artifacts. A duplicate SQL registry row or duplicate interface signature blocks generation before files are written.
 
-Execute a generated tool:
+Create, approve, and execute an approval-required generated tool in production-style mode:
 
 ```powershell
+$approval = Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/tools/pdf-generator/approvals?requested_by=operator" `
+  -ContentType "application/json" `
+  -Body '{"payload":{"title":"Example"},"timeout_seconds":30}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/tools/approvals/$($approval.id)/approve" `
+  -ContentType "application/json" `
+  -Body '{"decided_by":"reviewer","reason":"Safe local generated tool run."}'
+
 Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/tools/pdf-generator/execute `
   -ContentType "application/json" `
-  -Body '{"payload":{"title":"Example"},"approved":true}'
+  -Body ('{"payload":{"title":"Example"},"approval_id":"' + $approval.id + '","timeout_seconds":30,"requested_by":"operator"}')
 ```
 
-Tool execution also consults the SQL registry when a row exists. Deprecated registry rows, invalid permission levels, or permission conflicts between the SQL registry and local JSON manifest fail closed before the subprocess starts. The subprocess receives a reduced environment plus `PYTHONPATH` scoped to the tool directory. Tool stdout, stderr, parsed JSON output, and execution audit metadata are redacted for common secret-shaped values.
+In `development` and `test`, approval-required tools can still use `approved: true` for local smoke checks. In `staging` and `production`, approval-required tools need a single-use approved `approval_id` bound to the tool name, version, status, generated artifact tree, payload digest, timeout, requester, agent/task context, and expiry. When auth is enabled, creating/executing tools uses the `tools` capability while approving or denying tool approvals uses the separate `approvals` capability. Tool execution also consults the SQL registry when a row exists. Deprecated registry rows, invalid permission levels, or permission conflicts between the SQL registry and local JSON manifest fail closed before the subprocess starts. The subprocess receives a reduced environment plus `PYTHONPATH` scoped to the tool directory. Tool stdout, stderr, parsed JSON output, and execution audit metadata are redacted for common secret-shaped values.
 
 Read it back:
 
@@ -448,4 +460,4 @@ uv run ruff format .
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation, but streaming is not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, but no production database migration set, production vector backend, frontend, or VS Code extension exists yet.
-- Local tools can be generated, SQL-registered, duplicate-checked, and executed under `localmcp/` with registry permission/deprecation checks, redacted outputs/audit metadata, and a reduced inherited environment, but bound tool approval records, stronger sandbox isolation, and per-tool dependency isolation are still needed.
+- Local tools can be generated, SQL-registered, duplicate-checked, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, redacted outputs/audit metadata, and a reduced inherited environment, but stronger sandbox isolation and per-tool dependency isolation are still needed.

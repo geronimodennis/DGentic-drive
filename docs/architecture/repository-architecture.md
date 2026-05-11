@@ -78,7 +78,7 @@ Current modules:
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
 - `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, usage tracking, reliability scoring, and source-path validation.
-- `tool_runtime.py`: Generated tool subprocess execution, SQL registry permission/deprecation checks, reduced inherited execution environment, redacted output/audit events, and reliability counter updates.
+- `tool_runtime.py`: Generated tool approval records, bound approval validation, subprocess execution, SQL registry permission/deprecation checks, reduced inherited execution environment, redacted output/audit events, and reliability counter updates.
 - `sessions.py`: Session summary registry.
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
@@ -133,7 +133,7 @@ Authentication:
 - `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json` are public.
 - Development mode is auth-off by default.
 - Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
-- Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS`, using capabilities such as `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
+- Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS`, using capabilities such as `tasks`, `filesystem`, `cli`, `providers`, `agents`, `memory`, `tools`, `approvals`, `sessions`, `logs`, or `admin`.
 - When auth is enabled, startup fails closed if `DGENTIC_AUTH_TOKENS` does not contain at least one valid `token=capabilities` entry.
 
 Current endpoints:
@@ -193,7 +193,12 @@ Current endpoints:
 - `GET /api/v1/memory/retrieve/metadata`: Runs metadata-only retrieval.
 - `POST /tools`: Registers a local tool manifest.
 - `POST /tools/generate`: Generates a local tool directory with source, wrapper, manifest, and README files after JSON and SQL registry duplicate preflight checks, then registers the generated tool in local JSON state and the SQLAlchemy-backed tool registry.
-- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, uses a reduced inherited environment, redacts stdout/stderr/parsed output for common secret patterns, records execution audit metadata, and updates reliability counters.
+- `POST /tools/{name}/approvals`: Creates a pending approval for approval-required generated tools under the `tools` capability. Approval records include redacted payload preview, payload/artifact/approval HMAC digests, tool version/status, entrypoint, timeout, requester, agent/task context, and expiry.
+- `GET /tools/approvals`: Lists generated tool approval records.
+- `GET /tools/approvals/{approval_id}/review`: Returns the safe generated-tool approval review contract for UI consumers with redacted payload preview, digest identifiers, lifecycle timestamps, and bound-execution warnings.
+- `POST /tools/approvals/{approval_id}/approve`: Approves a pending generated tool execution request with an optional redacted decision reason. When auth is enabled, this route requires the separate `approvals` capability.
+- `POST /tools/approvals/{approval_id}/deny`: Denies a pending generated tool execution request with an optional redacted decision reason. When auth is enabled, this route requires the separate `approvals` capability.
+- `POST /tools/{name}/execute`: Executes a registered generated tool, blocks deprecated/disabled/blocked tools, fails closed on SQL registry permission conflicts, requires a single-use bound `approval_id` for approval-required tools outside development/test mode, uses a reduced inherited environment, redacts stdout/stderr/parsed output for common secret patterns, records execution audit metadata, and updates reliability counters.
 - `GET /tools`: Lists registered tool manifests.
 - `PATCH /tools/{name}/governance`: Deprecates, disables, or reactivates a registered tool.
 - `POST /api/v1/tools/registry`: Registers a SQLAlchemy-backed tool registry entry.

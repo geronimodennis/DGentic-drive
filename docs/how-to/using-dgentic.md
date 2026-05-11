@@ -239,12 +239,20 @@ curl -X PATCH http://127.0.0.1:8000/tools/pdf-generator/governance `
   -d '{"status":"deprecated","reason":"Replaced by a more reliable tool."}'
 ```
 
-Execute a generated tool:
+Create, approve, and execute an approval-required generated tool:
 
 ```powershell
+$approval = curl -X POST "http://127.0.0.1:8000/tools/pdf-generator/approvals?requested_by=operator" `
+  -H "Content-Type: application/json" `
+  -d '{"payload":{"title":"Example"},"timeout_seconds":30}' | ConvertFrom-Json
+
+curl -X POST "http://127.0.0.1:8000/tools/approvals/$($approval.id)/approve" `
+  -H "Content-Type: application/json" `
+  -d '{"decided_by":"reviewer","reason":"Safe local generated tool run."}'
+
 curl -X POST http://127.0.0.1:8000/tools/pdf-generator/execute `
   -H "Content-Type: application/json" `
-  -d '{"payload":{"title":"Example"},"approved":true}'
+  -d ('{"payload":{"title":"Example"},"approval_id":"' + $approval.id + '","timeout_seconds":30,"requested_by":"operator"}')
 ```
 
 Create a SQLAlchemy-backed metadata index record:
@@ -271,7 +279,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/tools/registry `
   -d '{"tool_name":"example-tool","version":"1.0.0","source_path":"localmcp/example-tool","interface_signature":"sha256:example","permission_level":"approval_required","tags":["example"]}'
 ```
 
-Generated tools created through `/tools/generate` are also registered in the SQLAlchemy-backed registry. Registry duplicate checks run before file creation, execution fails closed when the SQL registry marks a tool deprecated or disagrees with the local manifest permission mode, and tool stdout/stderr/parsed output plus execution audit metadata are redacted for common secret-shaped values.
+Generated tools created through `/tools/generate` are also registered in the SQLAlchemy-backed registry. Registry duplicate checks run before file creation, execution fails closed when the SQL registry marks a tool deprecated or disagrees with the local manifest permission mode, approval-required execution uses single-use bound approval IDs outside development/test mode, approving or denying tool approvals uses the `approvals` capability when auth is enabled, and tool stdout/stderr/parsed output plus execution audit metadata are redacted for common secret-shaped values.
 
 The interactive OpenAPI docs are available at `http://127.0.0.1:8000/docs` when the backend is running.
 
@@ -357,6 +365,6 @@ DGentic should persist session state so future sessions can resume with context,
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.
-- Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, executed with registry permission/deprecation checks and redacted outputs/audit metadata, and deprecated, but bound tool approval records, stronger sandbox isolation, and per-tool dependency isolation are still needed.
+- Tools can be generated, auto-registered in the SQL registry, duplicate-checked, indexed, executed with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, redacted outputs/audit metadata, and deprecated, but stronger sandbox isolation and per-tool dependency isolation are still needed.
 - Frontend, dashboard, and VS Code extension components still need to be built.
 - Commands for the current backend are documented in `docs/how-to/developer-setup.md`.

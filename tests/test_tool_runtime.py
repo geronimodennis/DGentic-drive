@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,24 @@ from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
 from dgentic.memory.schemas import ToolRegistryCreateRequest
 from dgentic.redaction import REDACTED_SECRET_MARKER
-from dgentic.schemas import LogEventType, PermissionMode, ToolManifest, ToolStatus
+from dgentic.schemas import (
+    LogEventType,
+    PermissionMode,
+    ToolExecutionRequest,
+    ToolManifest,
+    ToolStatus,
+)
 from dgentic.settings import get_settings
-from dgentic.tool_runtime import TIMEOUT_EXIT_CODE, execute_tool
+from dgentic.tool_runtime import (
+    TIMEOUT_EXIT_CODE,
+    ToolApprovalStatus,
+    approve_tool_approval,
+    create_tool_approval,
+    deny_tool_approval,
+    execute_tool,
+    get_tool_approval_review,
+    list_tool_approvals,
+)
 from dgentic.tools import get_tool, register_tool
 from dgentic.tools.registry_service import ToolRegistryService
 
@@ -88,7 +104,7 @@ def test_approval_required_tool_must_be_approved(
         )
     )
 
-    with pytest.raises(PermissionError, match="requires explicit approval"):
+    with pytest.raises(PermissionError, match="approved approval_id"):
         execute_tool("reviewer", {"approved": False})
 
     denied_manifest = get_tool("reviewer")
@@ -101,6 +117,213 @@ def test_approval_required_tool_must_be_approved(
     assert approved_manifest is not None
     assert approved_manifest.usage_count == 1
     assert approved_manifest.success_count == 1
+
+
+def test_production_approval_required_tool_requires_bound_approval(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir, data_dir = local_tool_state
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "reviewer-bound",
+        tool_source=("def run(payload):\n    return {'ok': True, 'value': payload.get('value')}\n"),
+    )
+    register_tool(
+        ToolManifest(
+            name="reviewer-bound",
+            description="Requires a bound tool approval.",
+            entrypoint="localmcp/reviewer-bound/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+
+    with pytest.raises(PermissionError, match="approved approval_id"):
+        execute_tool("reviewer-bound", {"value": "safe"}, approved=True)
+
+    approval = create_tool_approval(
+        "reviewer-bound",
+        ToolExecutionRequest(
+            payload={"value": "TOKEN=payload-secret"},
+            timeout_seconds=5,
+            requested_by="operator TOKEN=requester-secret",
+            agent_id="agent PASSWORD=agent-secret",
+            agent_role="developer SECRET=role-secret",
+            task_id="sprint-11 API_KEY=task-secret",
+        ),
+    )
+    assert approval.status == ToolApprovalStatus.pending
+    assert approval.review_payload["value"] == "TOKEN=[REDACTED]"
+    assert approval.requested_by == "operator TOKEN=[REDACTED]"
+    assert approval.agent_id == "agent PASSWORD=[REDACTED]"
+    assert approval.agent_role == "developer SECRET=[REDACTED]"
+    assert approval.task_id == "sprint-11 API_KEY=[REDACTED]"
+    approval_storage = (data_dir / "tool-approvals.json").read_text(encoding="utf-8")
+    assert "payload-secret" not in approval_storage
+    assert "requester-secret" not in approval_storage
+    assert "agent-secret" not in approval_storage
+    assert "role-secret" not in approval_storage
+    assert "task-secret" not in approval_storage
+
+    approved = approve_tool_approval(
+        approval.id,
+        decided_by="reviewer TOKEN=reviewer-secret",
+        reason="Approved after checking --token reason-secret.",
+    )
+    review = get_tool_approval_review(approval.id)
+    assert approved.status == ToolApprovalStatus.approved
+    assert approved.decided_by == "reviewer TOKEN=[REDACTED]"
+    assert "--token [REDACTED]" in approved.decision_reason
+    assert review.review_payload["value"] == "TOKEN=[REDACTED]"
+    assert review.direct_execute_available is False
+    approval_storage = (data_dir / "tool-approvals.json").read_text(encoding="utf-8")
+    assert "reviewer-secret" not in approval_storage
+
+    with pytest.raises(PermissionError, match="not bound"):
+        execute_tool(
+            "reviewer-bound",
+            {"value": "different"},
+            approval_id=approval.id,
+            timeout_seconds=5,
+            requested_by="operator TOKEN=requester-secret",
+            agent_id="agent PASSWORD=agent-secret",
+            agent_role="developer SECRET=role-secret",
+            task_id="sprint-11 API_KEY=task-secret",
+        )
+
+    result = execute_tool(
+        "reviewer-bound",
+        {"value": "TOKEN=payload-secret"},
+        approval_id=approval.id,
+        timeout_seconds=5,
+        requested_by="operator TOKEN=requester-secret",
+        agent_id="agent PASSWORD=agent-secret",
+        agent_role="developer SECRET=role-secret",
+        task_id="sprint-11 API_KEY=task-secret",
+    )
+
+    executed = list_tool_approvals()[0]
+    assert result.exit_code == 0
+    assert result.approval_id == approval.id
+    assert result.parsed_output["value"] == "TOKEN=[REDACTED]"
+    assert executed.status == ToolApprovalStatus.executed
+
+    with pytest.raises(PermissionError, match="not executable"):
+        execute_tool(
+            "reviewer-bound",
+            {"value": "TOKEN=payload-secret"},
+            approval_id=approval.id,
+            timeout_seconds=5,
+            requested_by="operator TOKEN=requester-secret",
+            agent_id="agent PASSWORD=agent-secret",
+            agent_role="developer SECRET=role-secret",
+            task_id="sprint-11 API_KEY=task-secret",
+        )
+
+
+def test_bound_tool_approval_rejects_artifact_drift(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    tool_dir = _write_tool(
+        root_dir,
+        "artifact-bound-tool",
+        tool_source=(
+            "from helper import approved_value\n\n"
+            "def run(payload):\n"
+            "    return {'value': approved_value()}\n"
+        ),
+    )
+    (tool_dir / "helper.py").write_text(
+        "def approved_value():\n    return 'approved'\n",
+        encoding="utf-8",
+    )
+    register_tool(
+        ToolManifest(
+            name="artifact-bound-tool",
+            description="Approval should bind to generated tool artifacts.",
+            entrypoint="localmcp/artifact-bound-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    approval = create_tool_approval(
+        "artifact-bound-tool",
+        ToolExecutionRequest(payload={}, timeout_seconds=5),
+    )
+    approve_tool_approval(approval.id, decided_by="reviewer")
+    (tool_dir / "helper.py").write_text(
+        "def approved_value():\n    return 'changed'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionError, match="not bound"):
+        execute_tool(
+            "artifact-bound-tool",
+            {},
+            approval_id=approval.id,
+            timeout_seconds=5,
+        )
+
+
+def test_bound_tool_approval_rejects_denied_and_expired_records(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir, data_dir = local_tool_state
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "approval-lifecycle-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="approval-lifecycle-tool",
+            description="Exercises non-executable approval states.",
+            entrypoint="localmcp/approval-lifecycle-tool/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+
+    denied = create_tool_approval(
+        "approval-lifecycle-tool",
+        ToolExecutionRequest(payload={"case": "denied"}, timeout_seconds=5),
+    )
+    deny_tool_approval(denied.id, decided_by="reviewer", reason="Denied after review.")
+
+    with pytest.raises(PermissionError, match="not executable"):
+        execute_tool(
+            "approval-lifecycle-tool",
+            {"case": "denied"},
+            approval_id=denied.id,
+            timeout_seconds=5,
+        )
+
+    expired = create_tool_approval(
+        "approval-lifecycle-tool",
+        ToolExecutionRequest(payload={"case": "expired"}, timeout_seconds=5),
+    )
+    approve_tool_approval(expired.id, decided_by="reviewer")
+    approval_path = data_dir / "tool-approvals.json"
+    approvals = json.loads(approval_path.read_text(encoding="utf-8"))
+    for approval in approvals:
+        if approval["id"] == expired.id:
+            approval["expires_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    approval_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="expired"):
+        execute_tool(
+            "approval-lifecycle-tool",
+            {"case": "expired"},
+            approval_id=expired.id,
+            timeout_seconds=5,
+        )
 
 
 @pytest.mark.parametrize(

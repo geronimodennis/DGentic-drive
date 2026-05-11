@@ -1,7 +1,9 @@
 import json
 import math
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
@@ -86,6 +88,35 @@ class ProviderTransportResult:
     retry_delays_seconds: list[float] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ProviderStreamingTransportResult:
+    response: Any
+    attempt_count: int
+    retry_count: int
+    final_status_code: int | None = None
+    retry_delays_seconds: list[float] = field(default_factory=list)
+
+    def iter_lines(self) -> Iterator[str]:
+        try:
+            while True:
+                raw_line = self.response.readline()
+                if not raw_line:
+                    break
+                if isinstance(raw_line, str):
+                    yield raw_line.rstrip("\r\n")
+                    continue
+                try:
+                    yield raw_line.decode("utf-8").rstrip("\r\n")
+                except UnicodeDecodeError as exc:
+                    raise ProviderUpstreamResponseError(
+                        "Provider returned malformed streaming data."
+                    ) from exc
+        finally:
+            close = getattr(self.response, "close", None)
+            if callable(close):
+                close()
+
+
 def send_provider_json_request(request: ProviderTransportRequest) -> ProviderTransportResult:
     retry_delays: list[float] = []
     for attempt_index in range(request.retry_policy.max_attempts):
@@ -97,6 +128,68 @@ def send_provider_json_request(request: ProviderTransportRequest) -> ProviderTra
                 attempt_count=attempt_count,
                 retry_count=len(retry_delays),
                 final_status_code=status_code,
+                retry_delays_seconds=retry_delays,
+            )
+        except ProviderEgressPolicyError:
+            raise
+        except ProviderTransportError as exc:
+            raise exc
+        except HTTPError as exc:
+            transport_error = _http_error_to_transport_error(
+                exc,
+                attempt_count=attempt_count,
+                retry_count=len(retry_delays),
+            )
+        except TimeoutError as exc:
+            transport_error = _generic_retryable_error(
+                exc,
+                attempt_count=attempt_count,
+                retry_count=len(retry_delays),
+            )
+        except URLError as exc:
+            transport_error = _generic_retryable_error(
+                exc,
+                attempt_count=attempt_count,
+                retry_count=len(retry_delays),
+            )
+        except OSError as exc:
+            transport_error = _generic_retryable_error(
+                exc,
+                attempt_count=attempt_count,
+                retry_count=len(retry_delays),
+            )
+
+        if not _can_retry(transport_error, attempt_count, request.retry_policy):
+            raise _final_transport_error(transport_error)
+
+        delay_seconds = _retry_delay_seconds(
+            transport_error,
+            attempt_index=attempt_index,
+            policy=request.retry_policy,
+        )
+        retry_delays.append(delay_seconds)
+        sleep_provider_retry(delay_seconds)
+
+    raise ProviderRetryExhaustedError(retry_exhausted=True)
+
+
+def open_provider_stream_request(
+    request: ProviderTransportRequest,
+) -> ProviderStreamingTransportResult:
+    retry_delays: list[float] = []
+    for attempt_index in range(request.retry_policy.max_attempts):
+        attempt_count = attempt_index + 1
+        try:
+            http_request = _build_http_request(request)
+            response = open_provider_request(
+                http_request,
+                timeout_seconds=request.timeout_seconds,
+            )
+            return ProviderStreamingTransportResult(
+                response=response,
+                attempt_count=attempt_count,
+                retry_count=len(retry_delays),
+                final_status_code=_status_code(response),
                 retry_delays_seconds=retry_delays,
             )
         except ProviderEgressPolicyError:

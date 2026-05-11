@@ -1,6 +1,9 @@
 import subprocess
+from collections.abc import Iterable, Iterator
+from itertools import chain
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from dgentic.agents import (
     get_agent,
@@ -49,7 +52,9 @@ from dgentic.provider_runtime import (
     ProviderGenerationRequest,
     ProviderGenerationResult,
     ProviderRateLimitError,
+    ProviderStreamEvent,
     generate_provider_completion,
+    stream_provider_completion,
 )
 from dgentic.providers import (
     ProviderRoutingError,
@@ -513,6 +518,41 @@ def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenera
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=502, detail="Provider request failed.") from exc
+
+
+@router.post("/providers/generate/stream")
+def stream_with_provider(request: ProviderGenerationRequest) -> StreamingResponse:
+    try:
+        events = stream_provider_completion(request)
+        try:
+            first_event = next(events)
+        except StopIteration:
+            stream_events = iter(())
+        else:
+            stream_events = chain([first_event], events)
+        return StreamingResponse(
+            _provider_stream_lines(stream_events),
+            media_type="application/x-ndjson",
+        )
+    except ProviderEgressPolicyError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProviderApprovalRequiredError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProviderFeatureNotSupportedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProviderRateLimitError as exc:
+        raise HTTPException(status_code=429, detail="Provider request failed.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail="Provider request failed.") from exc
+
+
+def _provider_stream_lines(events: Iterable[ProviderStreamEvent]) -> Iterator[str]:
+    for event in events:
+        yield event.model_dump_json() + "\n"
 
 
 @router.post("/agents", response_model=AgentBrief, status_code=201)

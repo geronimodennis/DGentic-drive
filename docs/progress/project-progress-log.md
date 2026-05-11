@@ -4,6 +4,52 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006d OpenAI-Compatible Streaming Generation Contract
+
+Status: completed for the scoped OpenAI-compatible streaming contract; Sprint 12 remains open for bound provider approval records, encrypted credential storage or secret-manager integration, provider-specific external adapters, Ollama streaming, circuit breakers, cost accounting, and broader payload validation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected streaming as the next Sprint 12 slice after the stable BL-006c checkpoint, keeping encrypted credentials, circuit breakers, cost accounting, and Ollama streaming out of scope.
+- Completed: Architect/QA read-only explorer recommended upstream OpenAI-compatible SSE parsing with downstream NDJSON, pre-stream HTTP error mapping, sanitized post-chunk error events, no retry after bytes begin flowing, and focused runtime/API coverage.
+- Completed: Developer updated production source only for streaming transport open/retry behavior, OpenAI-compatible stream request construction, streaming event parsing, safe stream metadata/logging, `POST /providers/generate/stream`, and provider streaming capability advertisement.
+- Completed: QA updated tests only for LM Studio streaming payloads and ordered deltas, external streaming authorization/no-leak behavior, unsupported-provider rejection, malformed first chunk mapping, post-chunk sanitized error events, stream-open retry, NDJSON API responses, provider listing support, and external stream approval/config errors.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /providers/generate/stream` returns `application/x-ndjson` chunk events for LM Studio and configured external OpenAI-compatible providers.
+- Implemented in this slice: upstream `data:` server-sent event chunks are parsed for OpenAI-compatible `choices[].delta.content` and `finish_reason`, with `[DONE]` ending the stream.
+- Implemented in this slice: streaming reuses provider-scoped egress policy, HTTPS-only external credentials, model allowlists, and external approval checks from BL-006c.
+- Implemented in this slice: stream-open retry/backoff works for retryable failures before a response stream starts; malformed data before the first chunk maps to a safe provider failure, while malformed data after emitted content yields a sanitized terminal error event.
+- Implemented in this slice: provider completion logs record chunk counts, content length, finish reasons, retry metadata, and safe response metadata without raw streamed deltas, prompts, or credentials.
+- Implemented in this slice: LM Studio and configured external OpenAI-compatible providers advertise `supports_streaming=True` and a `streaming` capability; Ollama and placeholder providers remain non-streaming.
+
+Validation:
+- Focused stream gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "stream"` passed with 20 tests and 103 deselected.
+- Focused provider gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py -k "provider"` passed with 76 tests and 47 deselected.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_transport.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_transport.py src\dgentic\provider_runtime.py src\dgentic\providers.py src\dgentic\api\routes.py tests\test_provider_runtime.py tests\test_api.py` passed with 6 files already formatted.
+- Broad touched-surface regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py tests\test_tool_runtime.py tests\test_auth.py` passed with 185 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 560 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+
+Residual risks:
+- Streaming is implemented only for OpenAI-compatible chunk shapes; Ollama streaming remains future Sprint 12 work.
+- Bound provider approval records are not implemented; development/test can use the explicit `approved: true` external-generation bypass, while staging/production rejects that bypass.
+- No encrypted credential storage, circuit breaker, cost accounting, or provider-specific external adapter work is included.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/provider_transport.py`, and `src/dgentic/providers.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Review, commit/push the stable BL-006d checkpoint, then continue Sprint 12 with provider approval records, credential strategy, or circuit-breaker/cost work depending on risk priority.
+
 ### Sprint 12 BL-006c OpenAI-Compatible External Adapter Boundary
 
 Status: completed for the scoped non-streaming OpenAI-compatible external adapter boundary; Sprint 12 remains open for encrypted credential storage, provider-specific external adapters, circuit breakers, cost accounting, broader payload validation, and streaming generation.

@@ -60,6 +60,22 @@ class FakeResponse:
         return self.body
 
 
+class FakeStreamResponse:
+    status = 200
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = [line.encode("utf-8") for line in lines]
+        self.closed = False
+
+    def readline(self) -> bytes:
+        if not self.lines:
+            return b""
+        return self.lines.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def http_error(status_code: int, headers: dict | None = None) -> HTTPError:
     return HTTPError(
         "http://127.0.0.1:1234/v1/chat/completions",
@@ -85,6 +101,16 @@ def lm_studio_response(content: str = "Hello from LM Studio.") -> bytes:
             "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
         }
     ).encode("utf-8")
+
+
+def openai_stream_lines(
+    *chunks: dict,
+    done: bool = True,
+) -> list[str]:
+    lines = [f"data: {json.dumps(chunk)}\n" for chunk in chunks]
+    if done:
+        lines.append("data: [DONE]\n")
+    return lines
 
 
 def configure_external_provider(
@@ -823,6 +849,299 @@ def test_provider_generation_caps_or_ignores_unsafe_retry_after_values(
     assert result.content == "Recovered after retry-after edge."
     assert len(calls) == 2
     assert sleeps == [expected_delay]
+
+
+def test_lm_studio_streaming_emits_ordered_chunks_and_safe_logs(monkeypatch) -> None:
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+    stream_response = FakeStreamResponse(
+        openai_stream_lines(
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "model": "local-model",
+                "choices": [{"index": 0, "delta": {"content": "Hel"}, "finish_reason": None}],
+            },
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "model": "local-model",
+                "choices": [{"index": 0, "delta": {"content": "lo"}, "finish_reason": None}],
+            },
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "model": "local-model",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        )
+    )
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "headers": dict(request.headers),
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return stream_response
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                base_url="http://127.0.0.1:1234",
+                messages=[{"role": "user", "content": "Say hello."}],
+                temperature=0.2,
+                max_tokens=32,
+            )
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:1234/v1/chat/completions",
+            "headers": {"Accept": "text/event-stream", "Content-type": "application/json"},
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "Say hello."}],
+                "stream": True,
+                "temperature": 0.2,
+                "max_tokens": 32,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert [event.delta for event in events] == ["Hel", "lo", ""]
+    assert events[-1].finish_reason == "stop"
+    assert stream_response.closed is True
+    completion_metadata = event_log.records[-1]["metadata"]
+    assert completion_metadata["chunk_count"] == 3
+    assert completion_metadata["content_length"] == len("Hello")
+    assert completion_metadata["finish_reasons"] == ["stop"]
+    serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "Hello" not in serialized_event
+
+
+def test_external_streaming_sends_authorization_and_redacts_logs(monkeypatch) -> None:
+    configure_external_provider(monkeypatch)
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-external-stream",
+                    "model": "gpt-test",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Secretless"}, "finish_reason": None}
+                    ],
+                    "authorization": "Bearer upstream-stream-secret",
+                },
+                {
+                    "id": "chatcmpl-external-stream",
+                    "model": "gpt-test",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+                approved=True,
+            )
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "Say hello."}],
+                "stream": True,
+            },
+        }
+    ]
+    assert [event.delta for event in events] == ["Secretless", ""]
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "external-api-key-secret" not in serialized
+    assert "upstream-stream-secret" not in serialized
+    assert "Secretless" not in serialized
+    get_settings.cache_clear()
+
+
+def test_streaming_open_retries_429_then_succeeds(monkeypatch) -> None:
+    event_log = RecordingEventLog()
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(429, headers={"Retry-After": "2"})
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-stream-retry",
+                    "model": "local-model",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Recovered"}, "finish_reason": None}
+                    ],
+                },
+                {
+                    "id": "chatcmpl-stream-retry",
+                    "model": "local-model",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_transport, "sleep_provider_retry", sleeps.append)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                base_url="http://127.0.0.1:1234",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+    )
+
+    assert [event.delta for event in events] == ["Recovered", ""]
+    assert len(calls) == 2
+    assert sleeps == [2.0]
+    completion_metadata = event_log.records[-1]["metadata"]
+    assert completion_metadata["attempt_count"] == 2
+    assert completion_metadata["retry_count"] == 1
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "Recovered" not in serialized
+    assert "provider-error-secret" not in serialized
+
+
+def test_streaming_malformed_first_chunk_raises_safe_error(monkeypatch) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(['data: {"not": "valid"\n'])
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_transport.ProviderUpstreamResponseError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id="lm-studio",
+                    model="local-model",
+                    base_url="http://127.0.0.1:1234",
+                    messages=[{"role": "user", "content": "Say hello."}],
+                )
+            )
+        )
+
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert '{"not": "valid"' not in serialized
+    assert "Say hello." not in serialized
+
+
+def test_streaming_failure_after_first_chunk_emits_sanitized_error_event(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-stream",
+                    "model": "local-model",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Visible"}, "finish_reason": None}
+                    ],
+                },
+                done=False,
+            )
+            + ['data: {"not": "valid"\n']
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                base_url="http://127.0.0.1:1234",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+    )
+
+    assert events[0].delta == "Visible"
+    assert events[-1].event == "error"
+    assert events[-1].error == "Provider request failed."
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "Visible" not in serialized
+    assert '{"not": "valid"' not in serialized
+
+
+@pytest.mark.parametrize("provider_id", ["ollama", "external-placeholder"])
+def test_streaming_rejects_unsupported_provider_before_transport(
+    provider_id,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_runtime.ProviderFeatureNotSupportedError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id=provider_id,
+                    model="local-model",
+                    messages=[{"role": "user", "content": "Say hello."}],
+                )
+            )
+        )
+
+    assert calls == []
 
 
 def test_provider_generation_rejects_unsupported_streaming_before_post(monkeypatch) -> None:

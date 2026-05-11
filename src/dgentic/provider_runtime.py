@@ -1,3 +1,5 @@
+import json
+from collections.abc import Iterator
 from os import environ
 from time import perf_counter
 from typing import Any
@@ -13,9 +15,11 @@ from dgentic.provider_policy import (
 from dgentic.provider_transport import (
     ProviderRateLimitError,
     ProviderRetryPolicy,
+    ProviderStreamingTransportResult,
     ProviderTransportRequest,
     ProviderTransportResult,
     ProviderUpstreamResponseError,
+    open_provider_stream_request,
     send_provider_json_request,
     transport_error_metadata,
 )
@@ -69,6 +73,17 @@ class ProviderGenerationResult(BaseModel):
     duration_ms: int
 
 
+class ProviderStreamEvent(BaseModel):
+    provider_id: str
+    model: str
+    event: str = "chunk"
+    delta: str = ""
+    finish_reason: str | None = None
+    raw_response_metadata: dict[str, Any] = Field(default_factory=dict)
+    duration_ms: int | None = None
+    error: str | None = None
+
+
 def generate_provider_completion(
     request: ProviderGenerationRequest,
 ) -> ProviderGenerationResult:
@@ -115,6 +130,48 @@ def generate_provider_completion(
         event_log.record(
             LogEventType.provider,
             "Provider generation failed.",
+            subject_id=request.provider_id,
+            metadata={
+                "provider_id": request.provider_id,
+                "model": request.model,
+                "duration_ms": _duration_ms(started_at),
+                "error_type": type(exc).__name__,
+                "error": _safe_error_message(exc),
+                **transport_error_metadata(exc),
+            },
+        )
+        raise
+
+
+def stream_provider_completion(
+    request: ProviderGenerationRequest,
+) -> Iterator[ProviderStreamEvent]:
+    request = request.model_copy(update={"stream": True})
+    started_at = perf_counter()
+    event_log.record(
+        LogEventType.provider,
+        "Started provider streaming generation.",
+        subject_id=request.provider_id,
+        metadata={
+            "provider_id": request.provider_id,
+            "model": request.model,
+            "message_count": len(request.messages),
+        },
+    )
+
+    try:
+        url, payload, headers = _build_provider_stream_request(request)
+        transport_result = _open_stream(
+            url,
+            payload,
+            request.timeout_seconds,
+            headers=headers,
+        )
+        return _iter_provider_stream_events(request, started_at, transport_result)
+    except Exception as exc:
+        event_log.record(
+            LogEventType.provider,
+            "Provider streaming generation failed.",
             subject_id=request.provider_id,
             metadata={
                 "provider_id": request.provider_id,
@@ -190,6 +247,49 @@ def _build_provider_request(
             f"{base_url}/chat/completions",
             payload,
             headers,
+        )
+
+    raise ValueError(f"Unsupported provider_id: {request.provider_id}")
+
+
+def _build_provider_stream_request(
+    request: ProviderGenerationRequest,
+) -> tuple[str, dict[str, Any], dict[str, str]]:
+    messages = [message.model_dump(mode="json") for message in request.messages]
+
+    if request.provider_id == LM_STUDIO_PROVIDER_ID:
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "messages": messages,
+            "stream": True,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        return f"{_base_url_for(request)}/v1/chat/completions", payload, {}
+
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        settings = get_settings()
+        _reject_external_runtime_base_url(request)
+        _authorize_external_provider_request(request, settings=settings)
+        _validate_external_model(request.model, settings)
+        base_url = _external_base_url(settings)
+        headers = _external_headers(settings)
+        payload = {
+            "model": request.model,
+            "messages": messages,
+            "stream": True,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        return f"{base_url}/chat/completions", payload, headers
+
+    if request.provider_id in {OLLAMA_PROVIDER_ID, EXTERNAL_PLACEHOLDER_PROVIDER_ID}:
+        raise ProviderFeatureNotSupportedError(
+            "Provider streaming is not implemented for this provider."
         )
 
     raise ValueError(f"Unsupported provider_id: {request.provider_id}")
@@ -330,6 +430,164 @@ def _post_json(
     )
 
 
+def _open_stream(
+    url: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+    *,
+    headers: dict[str, str] | None = None,
+) -> ProviderStreamingTransportResult:
+    stream_headers = {"Accept": "text/event-stream", **(headers or {})}
+    return open_provider_stream_request(
+        ProviderTransportRequest(
+            url=url,
+            method="POST",
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+            headers=stream_headers,
+            retry_policy=_generation_retry_policy(),
+        )
+    )
+
+
+def _iter_provider_stream_events(
+    request: ProviderGenerationRequest,
+    started_at: float,
+    transport_result: ProviderStreamingTransportResult,
+) -> Iterator[ProviderStreamEvent]:
+    chunk_count = 0
+    content_length = 0
+    finish_reasons: list[str] = []
+    try:
+        for payload in _iter_openai_compatible_stream_payloads(transport_result):
+            for event in _stream_events_from_openai_payload(
+                provider_id=request.provider_id,
+                model=request.model,
+                payload=payload,
+            ):
+                chunk_count += 1
+                content_length += len(event.delta)
+                if event.finish_reason is not None:
+                    finish_reasons.append(event.finish_reason)
+                yield event
+        event_log.record(
+            LogEventType.provider,
+            "Completed provider streaming generation.",
+            subject_id=request.provider_id,
+            metadata={
+                "provider_id": request.provider_id,
+                "model": request.model,
+                "duration_ms": _duration_ms(started_at),
+                "chunk_count": chunk_count,
+                "content_length": content_length,
+                "finish_reasons": finish_reasons,
+                **_stream_transport_metadata(transport_result),
+            },
+        )
+    except Exception as exc:
+        event_log.record(
+            LogEventType.provider,
+            "Provider streaming generation failed.",
+            subject_id=request.provider_id,
+            metadata={
+                "provider_id": request.provider_id,
+                "model": request.model,
+                "duration_ms": _duration_ms(started_at),
+                "chunk_count": chunk_count,
+                "content_length": content_length,
+                "error_type": type(exc).__name__,
+                "error": _safe_error_message(exc),
+                **_stream_transport_metadata(transport_result),
+                **transport_error_metadata(exc),
+            },
+        )
+        if chunk_count == 0:
+            raise
+        yield ProviderStreamEvent(
+            provider_id=request.provider_id,
+            model=request.model,
+            event="error",
+            error=_safe_error_message(exc),
+            duration_ms=_duration_ms(started_at),
+        )
+
+
+def _iter_openai_compatible_stream_payloads(
+    transport_result: ProviderStreamingTransportResult,
+) -> Iterator[dict[str, Any]]:
+    for line in transport_result.iter_lines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(":"):
+            continue
+        if not stripped.startswith("data:"):
+            continue
+        data = stripped.removeprefix("data:").strip()
+        if data == "[DONE]":
+            break
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ProviderUpstreamResponseError(
+                "Provider returned malformed streaming data."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ProviderUpstreamResponseError(
+                "Provider returned a non-object streaming response."
+            )
+        yield payload
+
+
+def _stream_events_from_openai_payload(
+    *,
+    provider_id: str,
+    model: str,
+    payload: dict[str, Any],
+) -> Iterator[ProviderStreamEvent]:
+    choices = payload.get("choices", [])
+    if not isinstance(choices, list):
+        raise ProviderUpstreamResponseError("Provider returned malformed streaming choices.")
+    for choice in choices:
+        if not isinstance(choice, dict):
+            raise ProviderUpstreamResponseError("Provider returned malformed streaming choice.")
+        delta_payload = choice.get("delta", {})
+        delta = ""
+        if isinstance(delta_payload, dict) and delta_payload.get("content") is not None:
+            delta = str(delta_payload.get("content", ""))
+        finish_reason = choice.get("finish_reason")
+        finish_reason_text = str(finish_reason) if finish_reason is not None else None
+        if delta or finish_reason_text is not None:
+            yield ProviderStreamEvent(
+                provider_id=provider_id,
+                model=model,
+                delta=delta,
+                finish_reason=finish_reason_text,
+                raw_response_metadata=_safe_stream_response_metadata(payload, choice),
+            )
+
+
+def _safe_stream_response_metadata(
+    payload: dict[str, Any],
+    choice: dict[str, Any],
+) -> dict[str, Any]:
+    safe_metadata = {
+        key: payload[key] for key in ("id", "object", "created", "model", "usage") if key in payload
+    }
+    if choice.get("index") is not None:
+        safe_metadata["choice_index"] = choice["index"]
+    return redact_metadata(safe_metadata)
+
+
+def _stream_transport_metadata(
+    transport_result: ProviderStreamingTransportResult,
+) -> dict[str, Any]:
+    return {
+        "attempt_count": transport_result.attempt_count,
+        "retry_count": transport_result.retry_count,
+        "final_status_code": transport_result.final_status_code,
+        "retry_delays_seconds": transport_result.retry_delays_seconds,
+    }
+
+
 def _generation_retry_policy() -> ProviderRetryPolicy:
     settings = get_settings()
     return ProviderRetryPolicy(
@@ -459,5 +717,7 @@ __all__ = [
     "ProviderChatMessage",
     "ProviderGenerationRequest",
     "ProviderGenerationResult",
+    "ProviderStreamEvent",
     "generate_provider_completion",
+    "stream_provider_completion",
 ]

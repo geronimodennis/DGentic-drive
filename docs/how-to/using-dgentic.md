@@ -227,6 +227,8 @@ Provider calls must target exact allowlisted base URLs. By default, DGentic allo
 
 The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. The credential setting stores only the name of an environment variable; the actual API key value must be exported separately and is sent only as an outbound Authorization header. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`, while staging/production bound provider approval IDs remain future work.
 
+For OpenAI-compatible streaming, call `POST /providers/generate/stream`. The endpoint returns newline-delimited JSON chunk events for LM Studio and the configured external adapter, while `/providers/generate` remains the non-streaming JSON endpoint.
+
 Generate a reusable local tool:
 
 ```powershell
@@ -303,7 +305,7 @@ Configure local model providers first:
 
 - Local runtimes: Ollama and LM Studio.
 - Extra trusted endpoints: add exact comma-separated base URLs with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`.
-- External providers: an OpenAI-compatible non-streaming adapter is available when explicitly configured with HTTPS, a model allowlist, an env-referenced credential, and development/test approval; bound provider approvals and dedicated Google AI, DeepSeek, Anthropic, Copilot, or other adapters remain future work.
+- External providers: an OpenAI-compatible non-streaming and streaming adapter is available when explicitly configured with HTTPS, a model allowlist, an env-referenced credential, and development/test approval; bound provider approvals and dedicated Google AI, DeepSeek, Anthropic, Copilot, or other adapters remain future work.
 - Routing rules: Cost, latency, reliability, privacy, role-to-model mapping, and task complexity.
 
 ### 3. Set Security Boundaries
@@ -365,8 +367,8 @@ DGentic should persist session state so future sessions can resume with context,
 - DGentic has backend MVP contracts, not production autonomy.
 - Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
-- Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry, but streaming is not implemented yet.
-- The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; bound provider approval records, encrypted credential storage, and provider-specific external adapters remain future work.
+- Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry; LM Studio has OpenAI-compatible NDJSON streaming, while Ollama streaming remains future work.
+- The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls, while bound provider approval records, encrypted credential storage, and provider-specific external adapters remain future work.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.

@@ -394,6 +394,11 @@ def test_provider_routing_prefers_local_when_privacy_is_required(monkeypatch) ->
     assert external_provider["enabled"] is False
     assert external_provider["model_names"] == []
     assert external_provider["supports_streaming"] is False
+    lm_studio_provider = next(
+        provider for provider in providers_response.json() if provider["id"] == "lm-studio"
+    )
+    assert lm_studio_provider["supports_streaming"] is True
+    assert "streaming" in lm_studio_provider["capabilities"]
     assert route_response.status_code == 200
     assert route_response.json()["provider_id"] in {"ollama", "lm-studio"}
     assert route_response.json()["candidate_scores"]
@@ -453,6 +458,29 @@ def configure_external_provider_api(
     monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", models)
     monkeypatch.setenv(api_key_env, api_key)
     get_settings.cache_clear()
+
+
+class FakeStreamResponse:
+    status = 200
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = [line.encode("utf-8") for line in lines]
+        self.closed = False
+
+    def readline(self) -> bytes:
+        if not self.lines:
+            return b""
+        return self.lines.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def openai_stream_lines(*chunks: dict, done: bool = True) -> list[str]:
+    lines = [f"data: {json.dumps(chunk)}\n" for chunk in chunks]
+    if done:
+        lines.append("data: [DONE]\n")
+    return lines
 
 
 def test_external_provider_listing_disabled_without_configuration(tmp_path, monkeypatch) -> None:
@@ -585,6 +613,34 @@ def test_configured_external_provider_health_is_config_only(tmp_path, monkeypatc
     assert response.json()["model_names"] == ["gpt-test", "gpt-other"]
     assert calls == []
     assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_configured_external_provider_lists_streaming_support(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    external_provider = next(
+        provider
+        for provider in response.json()
+        if provider["id"] == provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    )
+    assert external_provider["enabled"] is True
+    assert external_provider["supports_streaming"] is True
+    assert "streaming" in external_provider["capabilities"]
     get_settings.cache_clear()
 
 
@@ -2316,6 +2372,297 @@ def test_provider_generate_api_rejects_streaming_before_post(monkeypatch) -> Non
 
     assert response.status_code == 501
     assert calls == []
+
+
+def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-api-stream",
+                    "model": "local-model",
+                    "choices": [{"index": 0, "delta": {"content": "Hel"}, "finish_reason": None}],
+                },
+                {
+                    "id": "chatcmpl-api-stream",
+                    "model": "local-model",
+                    "choices": [{"index": 0, "delta": {"content": "lo"}, "finish_reason": None}],
+                },
+                {
+                    "id": "chatcmpl-api-stream",
+                    "model": "local-model",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.2,
+            "max_tokens": 32,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:1234/v1/chat/completions",
+            "payload": {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "temperature": 0.2,
+                "max_tokens": 32,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["delta"] for event in events] == ["Hel", "lo", ""]
+    assert events[-1]["finish_reason"] == "stop"
+    assert "Hello" not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_stream_api_sends_authorization_and_redacts_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-external-stream-api",
+                    "model": "gpt-test",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "External"}, "finish_reason": None}
+                    ],
+                    "token": "upstream-stream-token-secret",
+                },
+                {
+                    "id": "chatcmpl-external-stream-api",
+                    "model": "gpt-test",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+            },
+        }
+    ]
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["delta"] for event in events] == ["External", ""]
+    serialized = response.text + logs_response.text
+    assert "external-api-key-secret" not in serialized
+    assert "upstream-stream-token-secret" not in serialized
+    assert "External" in response.text
+    assert "External" not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_stream_api_requires_approval_before_transport(
+    monkeypatch,
+) -> None:
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 403
+    assert calls == []
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_stream_api_missing_config_fails_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "DGENTIC_TEST_EXTERNAL")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    monkeypatch.setenv("DGENTIC_TEST_EXTERNAL", "external-api-key-secret")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "External provider is not configured."
+    assert calls == []
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_provider_generate_stream_api_rejects_unsupported_provider(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "ollama",
+            "model": "llama3.1",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 501
+    assert calls == []
+
+
+def test_provider_generate_stream_api_maps_malformed_first_chunk_to_bad_gateway(
+    monkeypatch,
+) -> None:
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(['data: {"not": "valid"\n'])
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+
+
+def test_provider_generate_stream_api_emits_sanitized_error_after_first_chunk(
+    monkeypatch,
+) -> None:
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-api-stream",
+                    "model": "local-model",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Visible"}, "finish_reason": None}
+                    ],
+                },
+                done=False,
+            )
+            + ['data: {"not": "valid"\n']
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert events[0]["delta"] == "Visible"
+    assert events[-1]["event"] == "error"
+    assert events[-1]["error"] == "Provider request failed."
 
 
 def test_provider_generate_api_rejects_external_placeholder_before_post(monkeypatch) -> None:

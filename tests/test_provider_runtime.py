@@ -1123,6 +1123,251 @@ def test_lm_studio_streaming_emits_ordered_chunks_and_safe_logs(monkeypatch) -> 
     assert "Hello" not in serialized_event
 
 
+def test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+    stream_response = FakeStreamResponse(
+        [
+            json.dumps(
+                {
+                    "model": "llama3.1",
+                    "message": {"role": "assistant", "content": "delta-secret-"},
+                    "done": False,
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "model": "llama3.1",
+                    "message": {"role": "assistant", "content": "abc"},
+                    "done": False,
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "model": "llama3.1",
+                    "message": {"role": "assistant", "content": ""},
+                    "done": True,
+                    "done_reason": "stop",
+                    "total_duration": 12345,
+                }
+            )
+            + "\n",
+        ]
+    )
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "headers": dict(request.headers),
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return stream_response
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="ollama",
+                model="llama3.1",
+                base_url="http://127.0.0.1:11434/",
+                messages=[{"role": "user", "content": "prompt-secret-123"}],
+                options={"num_ctx": 4096},
+                temperature=0.2,
+                max_tokens=128,
+            )
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:11434/api/chat",
+            "headers": {"Accept": "application/x-ndjson", "Content-type": "application/json"},
+            "payload": {
+                "model": "llama3.1",
+                "messages": [{"role": "user", "content": "prompt-secret-123"}],
+                "options": {"num_ctx": 4096, "temperature": 0.2, "num_predict": 128},
+                "stream": True,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert [event.delta for event in events] == ["delta-secret-", "abc", ""]
+    assert events[-1].finish_reason == "stop"
+    assert events[-1].raw_response_metadata == {
+        "model": "llama3.1",
+        "done": True,
+        "done_reason": "stop",
+        "total_duration": 12345,
+        "message_role": "assistant",
+    }
+    assert stream_response.closed is True
+    completion_metadata = event_log.records[-1]["metadata"]
+    assert completion_metadata["chunk_count"] == 3
+    assert completion_metadata["content_length"] == len("delta-secret-abc")
+    assert completion_metadata["finish_reasons"] == ["stop"]
+    serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "prompt-secret-123" not in serialized_event
+    assert "delta-secret-abc" not in serialized_event
+    assert "delta-secret-" not in serialized_event
+
+
+def test_ollama_streaming_malformed_first_chunk_raises_safe_error(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(['{"not": "valid"\n'])
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_transport.ProviderUpstreamResponseError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id="ollama",
+                    model="llama3.1",
+                    base_url="http://127.0.0.1:11434",
+                    messages=[{"role": "user", "content": "Say hello."}],
+                )
+            )
+        )
+
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert '{"not": "valid"' not in serialized
+
+
+def test_ollama_streaming_error_first_chunk_raises_safe_error(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse([json.dumps({"error": "ollama-upstream-error-secret"}) + "\n"])
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_transport.ProviderUpstreamResponseError):
+        list(
+            provider_runtime.stream_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id="ollama",
+                    model="llama3.1",
+                    base_url="http://127.0.0.1:11434",
+                    messages=[{"role": "user", "content": "prompt-secret-123"}],
+                )
+            )
+        )
+
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "ollama-upstream-error-secret" not in serialized
+    assert "prompt-secret-123" not in serialized
+
+
+def test_ollama_streaming_failure_after_first_chunk_emits_sanitized_error_event(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            [
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": "Visible"},
+                        "done": False,
+                    }
+                )
+                + "\n",
+                '{"not": "valid"\n',
+            ]
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="ollama",
+                model="llama3.1",
+                base_url="http://127.0.0.1:11434",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+    )
+
+    assert [event.delta for event in events] == ["Visible", ""]
+    assert events[-1].event == "error"
+    assert events[-1].error == "Provider request failed."
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "Visible" not in serialized
+    assert '{"not": "valid"' not in serialized
+
+
+def test_ollama_streaming_error_after_first_chunk_emits_sanitized_error_event(
+    monkeypatch,
+) -> None:
+    event_log = RecordingEventLog()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            [
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": "delta-secret-abc"},
+                        "done": False,
+                    }
+                )
+                + "\n",
+                json.dumps({"error": "ollama-upstream-error-secret"}) + "\n",
+            ]
+        )
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="ollama",
+                model="llama3.1",
+                base_url="http://127.0.0.1:11434",
+                messages=[{"role": "user", "content": "prompt-secret-123"}],
+            )
+        )
+    )
+
+    assert [event.delta for event in events] == ["delta-secret-abc", ""]
+    assert events[-1].event == "error"
+    assert events[-1].error == "Provider request failed."
+    failure_metadata = event_log.records[-1]["metadata"]
+    assert failure_metadata["error_type"] == "ProviderUpstreamResponseError"
+    serialized = json.dumps(event_log.records, sort_keys=True, default=str)
+    assert "delta-secret-abc" not in serialized
+    assert "ollama-upstream-error-secret" not in serialized
+    assert "prompt-secret-123" not in serialized
+
+
 def test_external_streaming_sends_authorization_and_redacts_logs(monkeypatch) -> None:
     configure_external_provider(monkeypatch)
     event_log = RecordingEventLog()
@@ -1384,7 +1629,7 @@ def test_streaming_failure_after_first_chunk_emits_sanitized_error_event(
     assert '{"not": "valid"' not in serialized
 
 
-@pytest.mark.parametrize("provider_id", ["ollama", "external-placeholder"])
+@pytest.mark.parametrize("provider_id", ["external-placeholder"])
 def test_streaming_rejects_unsupported_provider_before_transport(
     provider_id,
     monkeypatch,

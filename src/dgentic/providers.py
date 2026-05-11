@@ -42,11 +42,11 @@ def default_providers() -> list[ProviderConfig]:
             kind=ProviderKind.local,
             base_url=_safe_provider_base_url_for_display(settings.ollama_base_url),
             model_names=[],
-            capabilities=["chat", "local", "private"],
+            capabilities=["chat", "streaming", "local", "private"],
             estimated_latency_ms=250,
             estimated_cost_usd=0.0,
             permission_mode=PermissionMode.autopilot_safe,
-            supports_streaming=False,
+            supports_streaming=True,
         ),
         ProviderConfig(
             id="lm-studio",

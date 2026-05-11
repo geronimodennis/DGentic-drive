@@ -394,6 +394,11 @@ def test_provider_routing_prefers_local_when_privacy_is_required(monkeypatch) ->
     assert external_provider["enabled"] is False
     assert external_provider["model_names"] == []
     assert external_provider["supports_streaming"] is False
+    ollama_provider = next(
+        provider for provider in providers_response.json() if provider["id"] == "ollama"
+    )
+    assert ollama_provider["supports_streaming"] is True
+    assert "streaming" in ollama_provider["capabilities"]
     lm_studio_provider = next(
         provider for provider in providers_response.json() if provider["id"] == "lm-studio"
     )
@@ -2267,7 +2272,7 @@ def test_provider_generate_api_rejects_unsupported_provider() -> None:
         json={
             "provider_id": "unknown",
             "model": "local-model",
-            "messages": [{"role": "user", "content": "hello"}],
+            "messages": [{"role": "user", "content": "prompt-secret-123"}],
         },
     )
 
@@ -2386,6 +2391,7 @@ def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
         calls.append(
             {
                 "url": request.full_url,
+                "headers": dict(request.headers),
                 "payload": json.loads(request.data.decode("utf-8")),
                 "timeout_seconds": timeout_seconds,
             }
@@ -2431,6 +2437,7 @@ def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
     assert calls == [
         {
             "url": "http://127.0.0.1:1234/v1/chat/completions",
+            "headers": {"Accept": "text/event-stream", "Content-type": "application/json"},
             "payload": {
                 "model": "local-model",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -2445,6 +2452,174 @@ def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
     assert [event["delta"] for event in events] == ["Hel", "lo", ""]
     assert events[-1]["finish_reason"] == "stop"
     assert "Hello" not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_provider_generate_stream_api_emits_ollama_ndjson_and_safe_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "headers": dict(request.headers),
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeStreamResponse(
+            [
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": "delta-secret-"},
+                        "done": False,
+                    }
+                )
+                + "\n",
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": "abc"},
+                        "done": False,
+                    }
+                )
+                + "\n",
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": ""},
+                        "done": True,
+                        "done_reason": "stop",
+                        "total_duration": 12345,
+                    }
+                )
+                + "\n",
+            ]
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "ollama",
+            "model": "llama3.1",
+            "base_url": "http://127.0.0.1:11434",
+            "messages": [{"role": "user", "content": "prompt-secret-123"}],
+            "temperature": 0.2,
+            "max_tokens": 32,
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert calls == [
+        {
+            "url": "http://127.0.0.1:11434/api/chat",
+            "headers": {"Accept": "application/x-ndjson", "Content-type": "application/json"},
+            "payload": {
+                "model": "llama3.1",
+                "messages": [{"role": "user", "content": "prompt-secret-123"}],
+                "options": {"temperature": 0.2, "num_predict": 32},
+                "stream": True,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["delta"] for event in events] == ["delta-secret-", "abc", ""]
+    assert events[-1]["finish_reason"] == "stop"
+    assert "prompt-secret-123" not in logs_response.text
+    assert "delta-secret-abc" not in logs_response.text
+    assert "delta-secret-" not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_provider_generate_stream_api_maps_ollama_error_first_chunk_to_bad_gateway(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse([json.dumps({"error": "ollama-upstream-error-secret"}) + "\n"])
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "ollama",
+            "model": "llama3.1",
+            "base_url": "http://127.0.0.1:11434",
+            "messages": [{"role": "user", "content": "prompt-secret-123"}],
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    serialized = response.text + logs_response.text
+    assert "ollama-upstream-error-secret" not in serialized
+    assert "prompt-secret-123" not in serialized
+    get_settings.cache_clear()
+
+
+def test_provider_generate_stream_api_emits_sanitized_error_for_ollama_post_chunk_error(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        return FakeStreamResponse(
+            [
+                json.dumps(
+                    {
+                        "model": "llama3.1",
+                        "message": {"role": "assistant", "content": "delta-secret-abc"},
+                        "done": False,
+                    }
+                )
+                + "\n",
+                json.dumps({"error": "ollama-upstream-error-secret"}) + "\n",
+            ]
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate/stream",
+        json={
+            "provider_id": "ollama",
+            "model": "llama3.1",
+            "base_url": "http://127.0.0.1:11434",
+            "messages": [{"role": "user", "content": "prompt-secret-123"}],
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["delta"] for event in events] == ["delta-secret-abc", ""]
+    assert events[-1]["event"] == "error"
+    assert events[-1]["error"] == "Provider request failed."
+    serialized_logs = logs_response.text
+    assert "delta-secret-abc" not in serialized_logs
+    assert "ollama-upstream-error-secret" not in serialized_logs
+    assert "prompt-secret-123" not in serialized_logs
     get_settings.cache_clear()
 
 
@@ -2667,7 +2842,7 @@ def test_external_provider_generate_stream_api_missing_config_fails_before_trans
     get_settings.cache_clear()
 
 
-def test_provider_generate_stream_api_rejects_unsupported_provider(monkeypatch) -> None:
+def test_provider_generate_stream_api_rejects_external_placeholder(monkeypatch) -> None:
     calls: list[str] = []
 
     def fake_open_provider_request(request, *, timeout_seconds: float):
@@ -2680,8 +2855,8 @@ def test_provider_generate_stream_api_rejects_unsupported_provider(monkeypatch) 
     response = client.post(
         "/providers/generate/stream",
         json={
-            "provider_id": "ollama",
-            "model": "llama3.1",
+            "provider_id": "external-placeholder",
+            "model": "external-default",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )

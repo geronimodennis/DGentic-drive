@@ -602,6 +602,23 @@ def _build_provider_stream_request(
 ) -> tuple[str, dict[str, Any], dict[str, str]]:
     messages = [message.model_dump(mode="json") for message in request.messages]
 
+    if request.provider_id == OLLAMA_PROVIDER_ID:
+        options = dict(request.options)
+        if request.temperature is not None:
+            options.setdefault("temperature", request.temperature)
+        if request.max_tokens is not None:
+            options.setdefault("num_predict", request.max_tokens)
+        return (
+            f"{_base_url_for(request)}/api/chat",
+            {
+                "model": request.model,
+                "messages": messages,
+                "options": options,
+                "stream": True,
+            },
+            {"Accept": "application/x-ndjson"},
+        )
+
     if request.provider_id == LM_STUDIO_PROVIDER_ID:
         payload: dict[str, Any] = {
             "model": request.model,
@@ -632,7 +649,7 @@ def _build_provider_stream_request(
             payload["max_tokens"] = request.max_tokens
         return f"{base_url}/chat/completions", payload, headers
 
-    if request.provider_id in {OLLAMA_PROVIDER_ID, EXTERNAL_PLACEHOLDER_PROVIDER_ID}:
+    if request.provider_id == EXTERNAL_PLACEHOLDER_PROVIDER_ID:
         raise ProviderFeatureNotSupportedError(
             "Provider streaming is not implemented for this provider."
         )
@@ -804,17 +821,12 @@ def _iter_provider_stream_events(
     content_length = 0
     finish_reasons: list[str] = []
     try:
-        for payload in _iter_openai_compatible_stream_payloads(transport_result):
-            for event in _stream_events_from_openai_payload(
-                provider_id=request.provider_id,
-                model=request.model,
-                payload=payload,
-            ):
-                chunk_count += 1
-                content_length += len(event.delta)
-                if event.finish_reason is not None:
-                    finish_reasons.append(event.finish_reason)
-                yield event
+        for event in _stream_events_for_provider(request, transport_result):
+            chunk_count += 1
+            content_length += len(event.delta)
+            if event.finish_reason is not None:
+                finish_reasons.append(event.finish_reason)
+            yield event
         event_log.record(
             LogEventType.provider,
             "Completed provider streaming generation.",
@@ -857,6 +869,49 @@ def _iter_provider_stream_events(
         )
 
 
+def _stream_events_for_provider(
+    request: ProviderGenerationRequest,
+    transport_result: ProviderStreamingTransportResult,
+) -> Iterator[ProviderStreamEvent]:
+    if request.provider_id == OLLAMA_PROVIDER_ID:
+        for payload in _iter_ollama_stream_payloads(transport_result):
+            event = _stream_event_from_ollama_payload(
+                provider_id=request.provider_id,
+                model=request.model,
+                payload=payload,
+            )
+            if event is not None:
+                yield event
+        return
+
+    for payload in _iter_openai_compatible_stream_payloads(transport_result):
+        yield from _stream_events_from_openai_payload(
+            provider_id=request.provider_id,
+            model=request.model,
+            payload=payload,
+        )
+
+
+def _iter_ollama_stream_payloads(
+    transport_result: ProviderStreamingTransportResult,
+) -> Iterator[dict[str, Any]]:
+    for line in transport_result.iter_lines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ProviderUpstreamResponseError(
+                "Provider returned malformed streaming data."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ProviderUpstreamResponseError(
+                "Provider returned a non-object streaming response."
+            )
+        yield payload
+
+
 def _iter_openai_compatible_stream_payloads(
     transport_result: ProviderStreamingTransportResult,
 ) -> Iterator[dict[str, Any]]:
@@ -880,6 +935,33 @@ def _iter_openai_compatible_stream_payloads(
                 "Provider returned a non-object streaming response."
             )
         yield payload
+
+
+def _stream_event_from_ollama_payload(
+    *,
+    provider_id: str,
+    model: str,
+    payload: dict[str, Any],
+) -> ProviderStreamEvent | None:
+    if payload.get("error") is not None:
+        raise ProviderUpstreamResponseError("Provider returned a streaming error.")
+    message = payload.get("message", {})
+    if message is not None and not isinstance(message, dict):
+        raise ProviderUpstreamResponseError("Provider returned malformed streaming message.")
+    delta = ""
+    if isinstance(message, dict) and message.get("content") is not None:
+        delta = str(message.get("content", ""))
+    done = payload.get("done") is True
+    finish_reason = str(payload.get("done_reason")) if payload.get("done_reason") else None
+    if not delta and not done and finish_reason is None:
+        return None
+    return ProviderStreamEvent(
+        provider_id=provider_id,
+        model=model,
+        delta=delta,
+        finish_reason=finish_reason,
+        raw_response_metadata=_safe_ollama_stream_response_metadata(payload),
+    )
 
 
 def _stream_events_from_openai_payload(
@@ -908,6 +990,29 @@ def _stream_events_from_openai_payload(
                 finish_reason=finish_reason_text,
                 raw_response_metadata=_safe_stream_response_metadata(payload, choice),
             )
+
+
+def _safe_ollama_stream_response_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    safe_metadata = {
+        key: payload[key]
+        for key in (
+            "model",
+            "created_at",
+            "done",
+            "done_reason",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "eval_count",
+            "eval_duration",
+        )
+        if key in payload
+    }
+    message = payload.get("message")
+    if isinstance(message, dict) and "role" in message:
+        safe_metadata["message_role"] = message["role"]
+    return redact_metadata(safe_metadata)
 
 
 def _safe_stream_response_metadata(

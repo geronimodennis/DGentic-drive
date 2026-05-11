@@ -4,6 +4,52 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006f Ollama Streaming Generation
+
+Status: completed for the scoped Ollama streaming contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, cost accounting, and broader payload validation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected Ollama streaming as the next Sprint 12 slice after BL-006e because it closed the remaining local-provider streaming capability gap without expanding credential scope.
+- Completed: Architect/QA read-only explorers recommended adding an Ollama NDJSON parser under the existing stream endpoint, preserving OpenAI-compatible parsing for LM Studio/external providers, advertising Ollama streaming support, and covering safe log behavior.
+- Completed: Developer updated production source only for Ollama stream request construction, `application/x-ndjson` accept headers, Ollama NDJSON stream parsing, safe Ollama stream metadata, upstream Ollama error-object handling, and provider streaming capability advertisement.
+- Completed: QA updated tests only for Ollama stream request payloads, ordered chunk emission, terminal finish reasons, safe logs with prompt/delta sentinels, malformed stream failures, Ollama error-object handling before and after emitted chunks, API NDJSON output, provider listing support, and external-placeholder rejection.
+- Completed: Reviewer/Security found an Ollama error-object handling blocker; Developer remediated it and QA added focused runtime/API coverage.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /providers/generate/stream` now supports Ollama `/api/chat` streaming and returns downstream `application/x-ndjson` `ProviderStreamEvent` rows.
+- Implemented in this slice: Ollama stream requests map `temperature` and `max_tokens` into Ollama `options.temperature` and `options.num_predict`, preserve caller options, and send `Accept: application/x-ndjson`.
+- Implemented in this slice: Ollama NDJSON chunks emit text deltas from `message.content`; terminal chunks emit a final event with `done_reason` as `finish_reason`.
+- Implemented in this slice: malformed Ollama stream data and Ollama stream `error` objects fail safely before the first chunk, or produce a sanitized terminal error event after content has already been emitted.
+- Implemented in this slice: Ollama advertises `supports_streaming=True` and the `streaming` capability.
+
+Validation:
+- Focused Ollama runtime gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks tests\test_provider_runtime.py::test_ollama_streaming_malformed_first_chunk_raises_safe_error tests\test_provider_runtime.py::test_ollama_streaming_error_first_chunk_raises_safe_error tests\test_provider_runtime.py::test_ollama_streaming_failure_after_first_chunk_emits_sanitized_error_event tests\test_provider_runtime.py::test_ollama_streaming_error_after_first_chunk_emits_sanitized_error_event` passed with 5 tests.
+- Focused Ollama API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_provider_generate_stream_api_emits_ollama_ndjson_and_safe_logs tests\test_api.py::test_provider_generate_stream_api_maps_ollama_error_first_chunk_to_bad_gateway tests\test_api.py::test_provider_generate_stream_api_emits_sanitized_error_for_ollama_post_chunk_error` passed with 3 tests.
+- Broad provider regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 140 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_runtime.py src\dgentic\providers.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_runtime.py src\dgentic\providers.py tests\test_provider_runtime.py tests\test_api.py` passed with 4 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 581 tests and 2 skipped after rerunning a transient CLI cancellation timing failure that passed in isolation.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+- Whitespace gate: `git diff --check` passed.
+
+Residual risks:
+- Ollama tool-call streaming chunks are not surfaced as tool-call events; the current stream contract emits text deltas and finish/error events only.
+- Encrypted credential storage, provider-specific external adapters, circuit breakers, cost accounting, and broader payload validation remain future Sprint 12 work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/provider_runtime.py` and `src/dgentic/providers.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Run final full quality gates, commit/push the stable BL-006f checkpoint, then continue Sprint 12 with encrypted credential strategy, circuit-breaker/cost work, payload validation, or provider-specific external adapters depending on risk priority.
+
 ### Sprint 12 BL-006e Bound Provider Approval Records
 
 Status: completed for the scoped bound external provider approval-record contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, Ollama streaming, circuit breakers, cost accounting, and broader payload validation.

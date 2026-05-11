@@ -4,6 +4,54 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006i Provider Circuit Breaker
+
+Status: completed for the scoped in-process provider circuit-breaker contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, durable multi-worker circuit state, and provider-specific pricing/billing tables.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected circuit breaker behavior after BL-006h because retry/backoff existed but repeated exhausted failures could still repeatedly hit the same unhealthy provider.
+- Completed: Architect scoped the breaker as in-process per-provider state with configurable threshold/cooldown, explicitly deferring durable multi-worker breaker state to production deployment work.
+- Completed: Developer updated production source only for circuit-breaker settings, per-provider/base-URL in-memory state, retry-exhausted failure counting, fail-fast open-circuit checks before transport, single half-open cooldown probes, success reset, stream-open cleanup, approval-preserving external fail-fast ordering, pathful external base-URL keying, and API `503` mapping through provider configuration errors.
+- Completed: QA updated tests only for open/fail-fast behavior, cooldown probe/reset, provider isolation, base-URL isolation, pathful external base isolation, single half-open probe behavior, half-open concurrent rejection locking, half-open stream close cleanup, external approval preservation, and API `503` no-transport mapping.
+- Completed: Reviewer/Security found provider-id-only circuit scope, cooldown thundering-herd, half-open fail-fast latch mutation, streaming half-open close pinning, external approval consumption, and external pathful-keying risks; Developer remediated them and QA added focused coverage.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD` controls retry-exhausted failures needed before a provider circuit opens.
+- Implemented in this slice: `DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` controls when an open circuit allows a new probe attempt.
+- Implemented in this slice: provider circuits are keyed by provider id plus effective normalized base URL, reset on successful generation/stream completion, and do not block other providers or healthy alternate endpoints.
+- Implemented in this slice: expired open circuits allow a single half-open probe while concurrent callers continue to fail fast and stream iterator close/client disconnect reopens the circuit without pinning the probe latch.
+- Implemented in this slice: open circuits fail fast before outbound provider transport, preserve unexecuted bound external provider approvals, and API callers receive `503` with generic provider-circuit detail.
+
+Validation:
+- Focused circuit gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_provider_generation_opens_circuit_after_retry_exhaustion_and_fails_fast tests\test_provider_runtime.py::test_provider_generation_circuit_cooldown_allows_probe_and_reset tests\test_provider_runtime.py::test_provider_generation_circuit_is_per_provider tests\test_api.py::test_provider_generate_api_maps_open_circuit_to_503_without_transport` passed with 4 tests.
+- Focused remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_provider_generation_circuit_is_per_base_url tests\test_provider_runtime.py::test_provider_generation_open_circuit_allows_single_half_open_probe tests\test_provider_runtime.py::test_provider_generation_opens_circuit_after_retry_exhaustion_and_fails_fast tests\test_provider_runtime.py::test_provider_generation_circuit_cooldown_allows_probe_and_reset tests\test_api.py::test_provider_generate_api_maps_open_circuit_to_503_without_transport` passed with 5 tests.
+- Focused final remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_external_generation_circuit_is_per_configured_base_url_path tests\test_provider_runtime.py::test_external_generation_open_circuit_preserves_bound_approval_id tests\test_provider_runtime.py::test_provider_generation_circuit_is_per_base_url tests\test_provider_runtime.py::test_provider_stream_half_open_close_reopens_and_allows_next_probe tests\test_api.py::test_provider_generate_api_maps_open_circuit_to_503_without_transport` passed with 5 tests.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 181 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\settings.py src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\settings.py src\dgentic\provider_runtime.py tests\test_provider_runtime.py tests\test_api.py` passed with 4 files already formatted after formatting `src\dgentic\provider_runtime.py`.
+- Reviewer/Security recheck: final read-only review and Security/DevOps delta check reported no blockers after the pathful external base-URL keying fix.
+- Full test gate: `uv --cache-dir .uv-cache run pytest -q` passed with 622 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Residual risks:
+- Circuit state is process-local and resets on restart; durable multi-worker circuit state remains future deployment work.
+- The breaker counts retry-exhausted/rate-limit generation failures only; health probes remain single-attempt and do not mutate circuit state.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/provider_runtime.py` and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Commit/push the stable BL-006i checkpoint, then continue Sprint 12 with encrypted credential strategy or provider-specific external adapters depending on risk priority.
+
 ### Sprint 12 BL-006h Provider Usage And Cost Metadata
 
 Status: completed for the scoped normalized usage and static request-cost metadata contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, and provider-specific pricing/billing tables beyond static request estimates.

@@ -24,6 +24,7 @@ from dgentic.provider_transport import (
     ProviderRateLimitError,
     ProviderRetryPolicy,
     ProviderStreamingTransportResult,
+    ProviderTransportError,
     ProviderTransportRequest,
     ProviderTransportResult,
     ProviderUpstreamResponseError,
@@ -97,6 +98,10 @@ class ProviderConfigurationError(ValueError):
 
 class ProviderApprovalRequiredError(PermissionError):
     """Raised when provider generation requires explicit approval."""
+
+
+class ProviderCircuitOpenError(ProviderConfigurationError):
+    """Raised when a provider circuit breaker is open."""
 
 
 class ProviderApprovalStatus(StrEnum):
@@ -281,6 +286,8 @@ class ProviderStreamEvent(BaseModel):
 
 
 _provider_approvals = JsonCollection("provider-approvals", ProviderApproval)
+_provider_circuit_lock = Lock()
+_provider_circuit_state: dict[str, dict[str, bool | float | int | str]] = {}
 
 
 def create_provider_approval(
@@ -513,6 +520,7 @@ def generate_provider_completion(
     request: ProviderGenerationRequest,
 ) -> ProviderGenerationResult:
     started_at = perf_counter()
+    circuit_key = ""
     event_log.record(
         LogEventType.provider,
         "Started provider generation.",
@@ -526,6 +534,9 @@ def generate_provider_completion(
 
     try:
         url, payload, headers = _build_provider_request(request)
+        circuit_key = _provider_circuit_key(request, url)
+        _raise_if_provider_circuit_open(circuit_key)
+        _authorize_provider_request_for_transport(request)
         if headers:
             transport_result = _post_json(
                 url,
@@ -553,8 +564,10 @@ def generate_provider_completion(
             subject_id=request.provider_id,
             metadata=_completion_event_metadata(result, retry_metadata=retry_metadata),
         )
+        _reset_provider_circuit(circuit_key)
         return result
     except Exception as exc:
+        _record_provider_failure(circuit_key, request.provider_id, exc)
         event_log.record(
             LogEventType.provider,
             "Provider generation failed.",
@@ -576,6 +589,7 @@ def stream_provider_completion(
 ) -> Iterator[ProviderStreamEvent]:
     request = request.model_copy(update={"stream": True})
     started_at = perf_counter()
+    circuit_key = ""
     event_log.record(
         LogEventType.provider,
         "Started provider streaming generation.",
@@ -589,14 +603,18 @@ def stream_provider_completion(
 
     try:
         url, payload, headers = _build_provider_stream_request(request)
+        circuit_key = _provider_circuit_key(request, url)
+        _raise_if_provider_circuit_open(circuit_key)
+        _authorize_provider_request_for_transport(request)
         transport_result = _open_stream(
             url,
             payload,
             request.timeout_seconds,
             headers=headers,
         )
-        return _iter_provider_stream_events(request, started_at, transport_result)
+        return _iter_provider_stream_events(request, started_at, transport_result, circuit_key)
     except Exception as exc:
+        _record_provider_failure(circuit_key, request.provider_id, exc)
         event_log.record(
             LogEventType.provider,
             "Provider streaming generation failed.",
@@ -658,7 +676,6 @@ def _build_provider_request(
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
         settings = get_settings()
         _reject_external_runtime_base_url(request)
-        _authorize_external_provider_request(request, settings=settings)
         _validate_external_model(request.model, settings)
         base_url = _external_base_url(settings)
         headers = _external_headers(settings)
@@ -717,7 +734,6 @@ def _build_provider_stream_request(
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
         settings = get_settings()
         _reject_external_runtime_base_url(request)
-        _authorize_external_provider_request(request, settings=settings)
         _validate_external_model(request.model, settings)
         base_url = _external_base_url(settings)
         headers = _external_headers(settings)
@@ -1054,6 +1070,7 @@ def _iter_provider_stream_events(
     request: ProviderGenerationRequest,
     started_at: float,
     transport_result: ProviderStreamingTransportResult,
+    circuit_key: str,
 ) -> Iterator[ProviderStreamEvent]:
     chunk_count = 0
     content_length = 0
@@ -1087,7 +1104,12 @@ def _iter_provider_stream_events(
                 **_stream_transport_metadata(transport_result),
             },
         )
+        _reset_provider_circuit(circuit_key)
+    except GeneratorExit as exc:
+        _record_provider_failure(circuit_key, request.provider_id, exc)
+        raise
     except Exception as exc:
+        _record_provider_failure(circuit_key, request.provider_id, exc)
         event_log.record(
             LogEventType.provider,
             "Provider streaming generation failed.",
@@ -1330,6 +1352,100 @@ def _generation_retry_policy() -> ProviderRetryPolicy:
     )
 
 
+def _provider_circuit_key(request: ProviderGenerationRequest, url: str) -> str:
+    base_url = _base_url_from_request_url(request.provider_id, url)
+    return _canonical_json(
+        {
+            "provider_id": request.provider_id,
+            "base_url": base_url,
+        }
+    )
+
+
+def _base_url_from_request_url(provider_id: str, url: str) -> str:
+    if url.endswith("/api/chat"):
+        return url.removesuffix("/api/chat")
+    if provider_id == LM_STUDIO_PROVIDER_ID and url.endswith("/v1/chat/completions"):
+        return url.removesuffix("/v1/chat/completions")
+    if url.endswith("/chat/completions"):
+        return url.removesuffix("/chat/completions")
+    return url
+
+
+def _raise_if_provider_circuit_open(circuit_key: str) -> None:
+    if not circuit_key:
+        return
+    settings = get_settings()
+    now = perf_counter()
+    with _provider_circuit_lock:
+        state = _provider_circuit_state.get(circuit_key)
+        if not state:
+            return
+        opened_at = float(state.get("opened_at", 0.0))
+        if opened_at <= 0.0:
+            return
+        if now - opened_at >= settings.provider_circuit_breaker_cooldown_seconds:
+            if state.get("half_open_probe_in_flight") is True:
+                raise ProviderCircuitOpenError("Provider circuit is open.")
+            state["half_open_probe_in_flight"] = True
+            return
+        raise ProviderCircuitOpenError("Provider circuit is open.")
+
+
+def _record_provider_failure(circuit_key: str, provider_id: str, exc: BaseException) -> None:
+    if not circuit_key:
+        return
+    if isinstance(exc, ProviderCircuitOpenError):
+        return
+    settings = get_settings()
+    now = perf_counter()
+    with _provider_circuit_lock:
+        state = _provider_circuit_state.setdefault(circuit_key, _new_provider_circuit_state())
+        if state.get("half_open_probe_in_flight") is True:
+            state["provider_id"] = provider_id
+            state["half_open_probe_in_flight"] = False
+            if _provider_half_open_failure_reopens_circuit(exc):
+                state["opened_at"] = now
+            return
+        if not _provider_failure_counts_for_circuit(exc):
+            return
+        failure_count = int(state.get("failure_count", 0)) + 1
+        state["failure_count"] = failure_count
+        state["provider_id"] = provider_id
+        state["half_open_probe_in_flight"] = False
+        if failure_count >= settings.provider_circuit_breaker_failure_threshold:
+            state["opened_at"] = now
+
+
+def _reset_provider_circuit(circuit_key: str) -> None:
+    if not circuit_key:
+        return
+    with _provider_circuit_lock:
+        _provider_circuit_state.pop(circuit_key, None)
+
+
+def _new_provider_circuit_state() -> dict[str, bool | float | int | str]:
+    return {
+        "failure_count": 0,
+        "opened_at": 0.0,
+        "half_open_probe_in_flight": False,
+        "provider_id": "",
+    }
+
+
+def _provider_failure_counts_for_circuit(exc: BaseException) -> bool:
+    return isinstance(exc, ProviderRateLimitError) or bool(getattr(exc, "retry_exhausted", False))
+
+
+def _provider_half_open_failure_reopens_circuit(exc: BaseException) -> bool:
+    return isinstance(exc, (GeneratorExit, ProviderTransportError))
+
+
+def reset_provider_circuit_state() -> None:
+    with _provider_circuit_lock:
+        _provider_circuit_state.clear()
+
+
 def _transport_payload_and_metadata(
     transport_result: ProviderTransportResult | dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1424,6 +1540,11 @@ def _authorize_external_provider_request(
             "the approved boolean bypass is only allowed in development/test mode."
         )
     raise ProviderApprovalRequiredError("External provider requires explicit approval.")
+
+
+def _authorize_provider_request_for_transport(request: ProviderGenerationRequest) -> None:
+    if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        _authorize_external_provider_request(request, settings=get_settings())
 
 
 def _reject_external_runtime_base_url(request: ProviderGenerationRequest) -> None:
@@ -1688,6 +1809,7 @@ __all__ = [
     "ProviderApprovalRequiredError",
     "ProviderApprovalReview",
     "ProviderApprovalStatus",
+    "ProviderCircuitOpenError",
     "ProviderConfigurationError",
     "ProviderEgressPolicyError",
     "ProviderFeatureNotSupportedError",
@@ -1706,5 +1828,6 @@ __all__ = [
     "provider_approval_digest",
     "provider_generation_options_digest",
     "provider_messages_digest",
+    "reset_provider_circuit_state",
     "stream_provider_completion",
 ]

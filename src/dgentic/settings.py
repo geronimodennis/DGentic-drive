@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     provider_retry_initial_delay_seconds: float = Field(default=0.2, ge=0.0, le=30.0)
     provider_retry_max_delay_seconds: float = Field(default=2.0, ge=0.0, le=120.0)
     provider_retry_backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    provider_circuit_breaker_failure_threshold: int = Field(default=3, ge=1, le=100)
+    provider_circuit_breaker_cooldown_seconds: float = Field(default=30.0, ge=0.0, le=3600.0)
     external_openai_compatible_base_url: str = ""
     external_openai_compatible_api_key_env: str = ""
     external_openai_compatible_models: str = ""

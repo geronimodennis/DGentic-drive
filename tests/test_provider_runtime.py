@@ -78,6 +78,13 @@ class FakeStreamResponse:
         self.closed = True
 
 
+@pytest.fixture(autouse=True)
+def reset_provider_circuit_state():
+    provider_runtime.reset_provider_circuit_state()
+    yield
+    provider_runtime.reset_provider_circuit_state()
+
+
 def http_error(status_code: int, headers: dict | None = None) -> HTTPError:
     return HTTPError(
         "http://127.0.0.1:1234/v1/chat/completions",
@@ -645,6 +652,116 @@ def test_external_generation_accepts_bound_approval_id_in_production(
     get_settings.cache_clear()
 
 
+def test_external_generation_open_circuit_preserves_bound_approval_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    configure_external_provider(monkeypatch)
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise http_error(503)
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    first_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(first_approval.id, decided_by="reviewer")
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request.model_copy(update={"approval_id": first_approval.id}))
+
+    second_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(second_approval.id, decided_by="reviewer")
+    with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+        generate_provider_completion(request.model_copy(update={"approval_id": second_approval.id}))
+
+    approvals = {approval.id: approval for approval in provider_runtime.list_provider_approvals()}
+    assert approvals[first_approval.id].status == provider_runtime.ProviderApprovalStatus.executed
+    assert approvals[first_approval.id].executed_at is not None
+    assert approvals[second_approval.id].status == provider_runtime.ProviderApprovalStatus.approved
+    assert approvals[second_approval.id].executed_at is None
+    assert calls == ["https://provider.example.test/v1/chat/completions"]
+    get_settings.cache_clear()
+
+
+def test_external_generation_circuit_is_per_configured_base_url_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    configure_external_provider(monkeypatch, base_url="https://provider.example.test")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if request.full_url == "https://provider.example.test/chat/completions":
+            raise http_error(503)
+        return FakeResponse(lm_studio_response("Pathful endpoint remains available."))
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    first_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(first_approval.id, decided_by="reviewer")
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request.model_copy(update={"approval_id": first_approval.id}))
+
+    configure_external_provider(monkeypatch, base_url="https://provider.example.test/v1")
+    get_settings.cache_clear()
+    second_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(second_approval.id, decided_by="reviewer")
+    result = generate_provider_completion(
+        request.model_copy(update={"approval_id": second_approval.id})
+    )
+
+    assert result.content == "Pathful endpoint remains available."
+    assert calls == [
+        "https://provider.example.test/chat/completions",
+        "https://provider.example.test/v1/chat/completions",
+    ]
+    get_settings.cache_clear()
+
+
 def test_bound_provider_approval_rejects_request_drift_denied_and_expired(
     tmp_path,
     monkeypatch,
@@ -1133,6 +1250,376 @@ def test_provider_generation_exhausted_retryable_status_raises_safe_error(monkey
     serialized_event = json.dumps(event_log.records[-1], sort_keys=True, default=str)
     assert "provider-error-secret" not in serialized_event
     assert "raw failure content" not in serialized_event
+
+
+def test_provider_generation_opens_circuit_after_retry_exhaustion_and_fails_fast(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "2")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    get_settings.cache_clear()
+    event_log = RecordingEventLog()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise http_error(503)
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    for _ in range(2):
+        with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+            generate_provider_completion(request)
+
+    with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+        generate_provider_completion(request)
+
+    assert len(calls) == 2
+    assert event_log.records[-1]["metadata"]["error_type"] == "ProviderCircuitOpenError"
+    get_settings.cache_clear()
+
+
+def test_provider_generation_circuit_cooldown_allows_probe_and_reset(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "0")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(503)
+        return FakeResponse(lm_studio_response("Recovered after cooldown."))
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request)
+    result = generate_provider_completion(request)
+
+    assert result.content == "Recovered after cooldown."
+    assert len(calls) == 2
+    get_settings.cache_clear()
+
+
+def test_provider_generation_circuit_is_per_provider(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if request.full_url.endswith("/v1/chat/completions"):
+            raise http_error(503)
+        return FakeResponse(
+            json.dumps(
+                {
+                    "message": {"role": "assistant", "content": "Ollama remains available."},
+                    "done": True,
+                }
+            ).encode("utf-8")
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                base_url="http://127.0.0.1:1234",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+    result = generate_provider_completion(
+        ProviderGenerationRequest(
+            provider_id="ollama",
+            model="llama3.1",
+            base_url="http://127.0.0.1:11434",
+            messages=[{"role": "user", "content": "Say hello."}],
+        )
+    )
+
+    assert result.content == "Ollama remains available."
+    assert any(call.endswith("/api/chat") for call in calls)
+    get_settings.cache_clear()
+
+
+def test_provider_generation_circuit_is_per_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_ALLOWED_BASE_URLS", "http://127.0.0.1:4321")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if request.full_url.startswith("http://127.0.0.1:1234"):
+            raise http_error(503)
+        return FakeResponse(lm_studio_response("Alternate endpoint remains available."))
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                base_url="http://127.0.0.1:1234",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+    result = generate_provider_completion(
+        ProviderGenerationRequest(
+            provider_id="lm-studio",
+            model="local-model",
+            base_url="http://127.0.0.1:4321",
+            messages=[{"role": "user", "content": "Say hello."}],
+        )
+    )
+
+    assert result.content == "Alternate endpoint remains available."
+    assert any(call.startswith("http://127.0.0.1:4321") for call in calls)
+    get_settings.cache_clear()
+
+
+def test_provider_generation_open_circuit_allows_single_half_open_probe(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "0")
+    get_settings.cache_clear()
+    calls: list[str] = []
+    probe_started = False
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        nonlocal probe_started
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(503)
+        probe_started = True
+        with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+            generate_provider_completion(
+                ProviderGenerationRequest(
+                    provider_id="lm-studio",
+                    model="local-model",
+                    base_url="http://127.0.0.1:1234",
+                    messages=[{"role": "user", "content": "Concurrent call."}],
+                )
+            )
+        return FakeResponse(lm_studio_response("Half-open probe succeeded."))
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request)
+    result = generate_provider_completion(request)
+
+    assert probe_started is True
+    assert result.content == "Half-open probe succeeded."
+    assert len(calls) == 2
+    get_settings.cache_clear()
+
+
+def test_provider_generation_half_open_rejections_preserve_probe_lock(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "0")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(503)
+        if len(calls) == 2:
+            for _ in range(2):
+                with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+                    generate_provider_completion(
+                        ProviderGenerationRequest(
+                            provider_id="lm-studio",
+                            model="local-model",
+                            base_url="http://127.0.0.1:1234",
+                            messages=[{"role": "user", "content": "Concurrent call."}],
+                        )
+                    )
+            return FakeResponse(lm_studio_response("Half-open probe kept the lock."))
+        raise AssertionError("concurrent half-open call reached provider transport")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request)
+    result = generate_provider_completion(request)
+
+    assert result.content == "Half-open probe kept the lock."
+    assert len(calls) == 2
+    get_settings.cache_clear()
+
+
+def test_provider_generation_half_open_probe_failure_reopens_circuit(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(503)
+        return FakeResponse(b'{"choices": []}')
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Say hello."}],
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        generate_provider_completion(request)
+    for state in provider_runtime._provider_circuit_state.values():
+        state["opened_at"] = provider_runtime.perf_counter() - 61
+    with pytest.raises(provider_runtime.ProviderUpstreamResponseError):
+        generate_provider_completion(request)
+    with pytest.raises(provider_runtime.ProviderCircuitOpenError):
+        generate_provider_completion(request)
+
+    assert len(calls) == 2
+    get_settings.cache_clear()
+
+
+def test_provider_stream_half_open_close_reopens_and_allows_next_probe(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "0")
+    get_settings.cache_clear()
+    calls: list[str] = []
+    probe_responses: list[FakeStreamResponse] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise http_error(503)
+        if len(calls) == 2:
+            response = FakeStreamResponse(
+                openai_stream_lines(
+                    {
+                        "id": "chatcmpl-half-open",
+                        "model": "local-model",
+                        "choices": [
+                            {"index": 0, "delta": {"content": "Partial"}, "finish_reason": None}
+                        ],
+                    },
+                    done=False,
+                )
+            )
+            probe_responses.append(response)
+            return response
+        if len(calls) == 3:
+            return FakeStreamResponse(
+                openai_stream_lines(
+                    {
+                        "id": "chatcmpl-half-open-retry",
+                        "model": "local-model",
+                        "choices": [
+                            {"index": 0, "delta": {"content": "Recovered"}, "finish_reason": None}
+                        ],
+                    },
+                    {
+                        "id": "chatcmpl-half-open-retry",
+                        "model": "local-model",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    },
+                )
+            )
+        raise AssertionError("unexpected stream probe transport call")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    request = ProviderGenerationRequest(
+        provider_id="lm-studio",
+        model="local-model",
+        base_url="http://127.0.0.1:1234",
+        messages=[{"role": "user", "content": "Stream hello."}],
+    )
+
+    with pytest.raises(provider_transport.ProviderRetryExhaustedError):
+        list(provider_runtime.stream_provider_completion(request))
+    stream = provider_runtime.stream_provider_completion(request)
+    first_event = next(stream)
+    stream.close()
+    events = list(provider_runtime.stream_provider_completion(request))
+
+    assert first_event.delta == "Partial"
+    assert probe_responses[0].closed is True
+    assert [event.delta for event in events] == ["Recovered", ""]
+    assert len(calls) == 3
+    get_settings.cache_clear()
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 408])

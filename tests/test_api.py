@@ -42,6 +42,13 @@ def test_health_returns_service_status() -> None:
     assert response.json()["service"] == "DGentic"
 
 
+@pytest.fixture(autouse=True)
+def reset_provider_circuit_state_for_api():
+    provider_runtime.reset_provider_circuit_state()
+    yield
+    provider_runtime.reset_provider_circuit_state()
+
+
 def test_task_plan_contains_expected_execution_shape() -> None:
     client = TestClient(create_app())
 
@@ -3634,6 +3641,49 @@ def test_provider_generate_api_maps_exhausted_5xx_to_bad_gateway(monkeypatch) ->
     assert len(calls) == 2
     assert sleeps == [0.2]
     assert "server-error-secret" not in response.text
+
+
+def test_provider_generate_api_maps_open_circuit_to_503_without_transport(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1")
+    monkeypatch.setenv("DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "60")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise HTTPError(
+            request.full_url,
+            503,
+            "Provider unavailable.",
+            {},
+            BytesIO(b'{"token":"upstream-error-secret"}'),
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(
+        provider_runtime,
+        "_generation_retry_policy",
+        lambda: provider_transport.ProviderRetryPolicy(max_attempts=1),
+    )
+    client = TestClient(create_app())
+    payload = {
+        "provider_id": "lm-studio",
+        "model": "local-model",
+        "base_url": "http://127.0.0.1:1234",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    first_response = client.post("/providers/generate", json=payload)
+    second_response = client.post("/providers/generate", json=payload)
+
+    assert first_response.status_code == 502
+    assert second_response.status_code == 503
+    assert second_response.json()["detail"] == "Provider circuit is open."
+    assert len(calls) == 1
+    assert "upstream-error-secret" not in first_response.text + second_response.text
+    get_settings.cache_clear()
 
 
 @pytest.mark.parametrize("status_code", [401, 408])

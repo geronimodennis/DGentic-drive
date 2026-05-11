@@ -189,6 +189,8 @@ def test_create_app_fails_closed_when_production_auth_has_no_tokens(
         ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),
         ("/providers", "providers"),
+        ("/providers/external-openai-compatible/approvals", "approvals"),
+        ("/providers/approvals/provider-approval-1/approve", "approvals"),
         ("/agents/agent-1", "agents"),
         ("/api/v1/memory/metadata", "memory"),
         ("/tools/approvals/approval-1/approve", "approvals"),

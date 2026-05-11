@@ -45,7 +45,10 @@ from dgentic.guardrails import (
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_runtime import (
+    ProviderApproval,
     ProviderApprovalRequiredError,
+    ProviderApprovalReview,
+    ProviderApprovalStatus,
     ProviderConfigurationError,
     ProviderEgressPolicyError,
     ProviderFeatureNotSupportedError,
@@ -53,7 +56,12 @@ from dgentic.provider_runtime import (
     ProviderGenerationResult,
     ProviderRateLimitError,
     ProviderStreamEvent,
+    approve_provider_approval,
+    create_provider_approval,
+    deny_provider_approval,
     generate_provider_completion,
+    get_provider_approval_review,
+    list_provider_approvals,
     stream_provider_completion,
 )
 from dgentic.providers import (
@@ -490,6 +498,73 @@ def get_providers() -> list[ProviderConfig]:
 @router.get("/providers/{provider_id}/health", response_model=ProviderHealth)
 def get_provider_health(provider_id: str) -> ProviderHealth:
     return check_provider_health(provider_id)
+
+
+@router.post("/providers/{provider_id}/approvals", response_model=ProviderApproval, status_code=201)
+def create_external_provider_approval(
+    provider_id: str,
+    request: ProviderGenerationRequest,
+    requested_by: str | None = None,
+) -> ProviderApproval:
+    try:
+        return create_provider_approval(provider_id, request, requested_by=requested_by)
+    except ProviderEgressPolicyError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/providers/approvals", response_model=list[ProviderApproval])
+def get_external_provider_approvals(
+    status: ProviderApprovalStatus | None = None,
+) -> list[ProviderApproval]:
+    return list_provider_approvals(status)
+
+
+@router.get("/providers/approvals/{approval_id}/review", response_model=ProviderApprovalReview)
+def get_external_provider_approval_review(approval_id: str) -> ProviderApprovalReview:
+    try:
+        return get_provider_approval_review(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/providers/approvals/{approval_id}/approve", response_model=ProviderApproval)
+def approve_external_provider_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> ProviderApproval:
+    try:
+        return approve_provider_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/providers/approvals/{approval_id}/deny", response_model=ProviderApproval)
+def deny_external_provider_approval(
+    approval_id: str,
+    request: Request,
+    decision: CommandApprovalDecisionRequest,
+) -> ProviderApproval:
+    try:
+        return deny_provider_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/routing/decide", response_model=RoutingDecision)

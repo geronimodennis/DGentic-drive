@@ -64,7 +64,7 @@ Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
 - `auth.py`: Production/staging bearer-token authentication, route capability mapping, and startup fail-closed configuration validation.
-- `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, providers, routing, agents, memory, tools, sessions, and logs.
+- `api/routes.py`: HTTP routes for health checks, tasks, guardrails, CLI policy and approvals, provider approvals, providers, routing, agents, memory, tools, sessions, and logs.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, guardrails, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, and logs.
 - `command_policy.py`: Persisted CLI policy rule storage, optional agent-role rule scoping, executable, exact-command, contains, and argument-aware command matching, shell-wrapper inspection, cwd-aware evaluation, and read-only path operand rootDir boundary checks.
@@ -75,7 +75,7 @@ Current modules:
 - `provider_policy.py`: Shared provider endpoint policy, exact base URL normalization, allowlist validation, and redirect-blocking HTTP opener.
 - `provider_transport.py`: Shared provider JSON and streaming transport with bounded retry/backoff before response streaming starts, safe upstream error types, retry metadata, and no-retry health-probe support.
 - `providers.py`: Provider registry, policy-validated Ollama/LM Studio health and model probes, disabled external placeholder, config-only OpenAI-compatible external provider status, and scored routing decisions.
-- `provider_runtime.py`: Ollama, LM Studio, and OpenAI-compatible external chat/completion request execution with provider endpoint policy enforcement, OpenAI-compatible streaming, bounded retry/backoff, credential-safe headers, model allowlist checks, and safe response telemetry.
+- `provider_runtime.py`: Ollama, LM Studio, and OpenAI-compatible external chat/completion request execution with provider endpoint policy enforcement, OpenAI-compatible streaming, bounded retry/backoff, credential-safe headers, model allowlist checks, single-use bound external provider approvals, and safe response telemetry.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
 - `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, optional embedding service, and retrieval service contracts.
@@ -86,7 +86,7 @@ Current modules:
 - `events.py`: Central event log backed by local JSON state with response-time redaction for common secret patterns and structured sensitive metadata keys.
 - `migrations.py`: Minimal SQLAlchemy schema migration ledger for the current metadata, vector embedding, and tool registry baseline.
 - `database.py`: Configurable SQLAlchemy engine/session helper, migration initialization, cached database reset, SQLite path resolution, and file-backed SQLite backup/restore helpers.
-- `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine and restore helpers.
+- `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine/restore helpers and inter-process locked reads plus item update transactions for approval claims and decisions.
 - `settings.py`: Environment-based backend settings, including auth mode and bearer token capability configuration.
 
 ### `tests/`
@@ -176,7 +176,13 @@ Current endpoints:
 - `GET /cli/runs`: Lists persisted CLI command run history.
 - `GET /providers`: Lists configured providers with safe display base URLs and discovered local model names when reachable.
 - `GET /providers/{provider_id}/health`: Returns provider configuration health after endpoint policy validation.
-- `POST /providers/generate`: Runs an Ollama or LM Studio chat/completion request against an allowlisted base URL and returns whitelisted response metadata.
+- `POST /providers/generate`: Runs an Ollama, LM Studio, or approved configured OpenAI-compatible external chat/completion request against an allowlisted base URL and returns whitelisted response metadata.
+- `POST /providers/generate/stream`: Streams OpenAI-compatible generation chunks as newline-delimited JSON events for LM Studio or an approved configured OpenAI-compatible external provider.
+- `POST /providers/{provider_id}/approvals`: Creates a pending approval for configured external provider generation. Approval records include safe message review metadata, request/base URL/credential-env/model-allowlist HMAC digests, stream mode, timeout, requester, agent/task context, and expiry. When auth is enabled, this route requires the separate `approvals` capability.
+- `GET /providers/approvals`: Lists provider approval records. When auth is enabled, this route requires the `approvals` capability.
+- `GET /providers/approvals/{approval_id}/review`: Returns the safe provider approval review contract for UI consumers without raw prompt content or credential values.
+- `POST /providers/approvals/{approval_id}/approve`: Approves a pending provider request with an optional redacted decision reason. The transition is persisted through an inter-process locked JSON transaction.
+- `POST /providers/approvals/{approval_id}/deny`: Denies a pending provider request with an optional redacted decision reason. The transition is persisted through an inter-process locked JSON transaction.
 - `POST /routing/decide`: Returns a scored provider routing decision with candidate scores.
 - `POST /agents`: Registers a running sub-agent brief.
 - `GET /agents`: Lists registered sub-agent briefs.
@@ -305,11 +311,11 @@ Architect handoff:
 - Keep model-provider execution out of the first slice; the initial planner is deterministic and auditable.
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, local JSON manifest, optional validated local dependency path metadata, SQL registry entry, duplicate preflight checks, and memory artifact indexing.
-- Use local JSON collections for the MVP sprint surface; replace or migrate them before production use where concurrency, indexing, or schema migrations matter.
+- Use local JSON collections for the MVP sprint surface; inter-process locked reads and item updates protect provider approval decisions and claims, while broader indexing, querying, and schema migration needs still require a production database migration path.
 - Use SQLite-compatible SQLAlchemy models for the metadata index and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL remains the production target, while production driver packaging, migration expansion, JSON-store migration, scheduled backup automation, and vector storage remain follow-up work.
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery after exact provider base URL allowlist validation; report the OpenAI-compatible external adapter through config-only health so listing providers does not make authenticated external calls.
-- Execute Ollama, LM Studio, and configured OpenAI-compatible chat requests through provider runtime contracts using provider-scoped egress policy, redirect blocking, bounded retry/backoff for retryable generation failures before stream bytes begin, NDJSON downstream streaming for OpenAI-compatible chunks, safe response metadata, HTTPS-only credential-safe outbound headers, explicit approval checks for external generation, model allowlist checks, and generic upstream failure details; bound provider approval records, Ollama streaming, encrypted credential storage, circuit breakers, and cost accounting remain follow-up work.
+- Execute Ollama, LM Studio, and configured OpenAI-compatible chat requests through provider runtime contracts using provider-scoped egress policy, redirect blocking, bounded retry/backoff for retryable generation failures before stream bytes begin, NDJSON downstream streaming for OpenAI-compatible chunks, safe response metadata, HTTPS-only credential-safe outbound headers, single-use bound approvals for external generation outside development/test mode, model allowlist checks, and generic upstream failure details; Ollama streaming, encrypted credential storage, circuit breakers, and cost accounting remain follow-up work.
 - Perform filesystem operations only through guardrail evaluation; current runtime support includes text and base64 binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`, with protected state-file blocking, symlink escape checks, size limits, and audit logging.
 - Execute CLI commands only through configurable command policy evaluation, root-bound and cwd-aware working directories, controlled inherited environments plus explicit non-sensitive overrides, single-use approval records for approval-required commands outside development/test mode, sanitized output capture, persisted run history, and audit logging.
 - Support asynchronous CLI runs through persisted run records, redacted output chunks, supervision metadata, auditable lifecycle states, stale-running reconciliation, timeout handling, process-local cancellation, and conservative post-restart orphan termination when the persisted process identity still matches the live process. Full process adoption/resumable output after restart and production multi-worker supervision with durable leases remain follow-up work.

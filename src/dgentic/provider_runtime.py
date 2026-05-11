@@ -1,8 +1,15 @@
+import hashlib
+import hmac
 import json
+import secrets
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from os import environ
+from threading import Lock
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -23,15 +30,22 @@ from dgentic.provider_transport import (
     send_provider_json_request,
     transport_error_metadata,
 )
-from dgentic.redaction import redact_metadata
-from dgentic.schemas import LogEventType
+from dgentic.redaction import redact_metadata, redact_sensitive_values
+from dgentic.schemas import LogEventType, PermissionMode
 from dgentic.settings import get_settings
+from dgentic.storage import JsonCollection
 
 DEFAULT_GENERATION_TIMEOUT_SECONDS = 60.0
+DEFAULT_PROVIDER_APPROVAL_TTL_MINUTES = 30
 OLLAMA_PROVIDER_ID = "ollama"
 LM_STUDIO_PROVIDER_ID = "lm-studio"
 EXTERNAL_PLACEHOLDER_PROVIDER_ID = "external-placeholder"
 EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID = "external-openai-compatible"
+PROVIDER_APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
+REDACTED_LEGACY_DIGEST_MARKER = "[LEGACY_DIGEST_REDACTED]"
+_PROVIDER_APPROVAL_DIGEST_KEY_FILE = "provider-approval-digest.key"
+_PROVIDER_APPROVAL_DIGEST_LOCK = Lock()
+_provider_approval_lock = Lock()
 
 
 class ProviderFeatureNotSupportedError(NotImplementedError):
@@ -44,6 +58,13 @@ class ProviderConfigurationError(ValueError):
 
 class ProviderApprovalRequiredError(PermissionError):
     """Raised when provider generation requires explicit approval."""
+
+
+class ProviderApprovalStatus(StrEnum):
+    pending = "pending"
+    approved = "approved"
+    denied = "denied"
+    executed = "executed"
 
 
 class ProviderChatMessage(BaseModel):
@@ -62,7 +83,102 @@ class ProviderGenerationRequest(BaseModel):
     stream: bool = False
     approved: bool = False
     approval_id: str | None = None
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
     timeout_seconds: float = DEFAULT_GENERATION_TIMEOUT_SECONDS
+
+
+class ProviderApproval(BaseModel):
+    id: str
+    provider_id: str
+    model: str
+    stream: bool = False
+    message_count: int = 0
+    review_messages: list[dict[str, Any]] = Field(default_factory=list)
+    option_keys: list[str] = Field(default_factory=list)
+    temperature: float | None = None
+    max_tokens: int | None = None
+    timeout_seconds: float
+    permission_mode: PermissionMode = PermissionMode.approval_required
+    message_digest: str = ""
+    options_digest: str = ""
+    base_url_digest: str = ""
+    credential_env_digest: str = ""
+    model_allowlist_digest: str = ""
+    approval_digest: str = ""
+    status: ProviderApprovalStatus = ProviderApprovalStatus.pending
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    decided_by: str | None = None
+    decision_reason: str | None = None
+    denial_reason: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime = Field(
+        default_factory=lambda: (
+            datetime.now(UTC) + timedelta(minutes=DEFAULT_PROVIDER_APPROVAL_TTL_MINUTES)
+        )
+    )
+    decided_at: datetime | None = None
+    executed_at: datetime | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        self.review_messages = redact_metadata(self.review_messages)
+        self.requested_by = _redact_optional_sensitive_text(self.requested_by)
+        self.agent_id = _redact_optional_sensitive_text(self.agent_id)
+        self.agent_role = _redact_optional_sensitive_text(self.agent_role)
+        self.task_id = _redact_optional_sensitive_text(self.task_id)
+        self.decided_by = _redact_optional_sensitive_text(self.decided_by)
+        self.decision_reason = _redact_optional_sensitive_text(self.decision_reason)
+        self.denial_reason = _redact_optional_sensitive_text(self.denial_reason)
+        self.message_digest = _sanitize_provider_approval_digest(self.message_digest)
+        self.options_digest = _sanitize_provider_approval_digest(self.options_digest)
+        self.base_url_digest = _sanitize_provider_approval_digest(self.base_url_digest)
+        self.credential_env_digest = _sanitize_provider_approval_digest(self.credential_env_digest)
+        self.model_allowlist_digest = _sanitize_provider_approval_digest(
+            self.model_allowlist_digest
+        )
+        self.approval_digest = _sanitize_provider_approval_digest(self.approval_digest)
+
+
+class ProviderApprovalReview(BaseModel):
+    id: str
+    status: ProviderApprovalStatus
+    provider_id: str
+    model: str
+    stream: bool
+    message_count: int
+    review_messages: list[dict[str, Any]] = Field(default_factory=list)
+    option_keys: list[str] = Field(default_factory=list)
+    temperature: float | None = None
+    max_tokens: int | None = None
+    timeout_seconds: float
+    permission_mode: PermissionMode
+    message_digest: str = ""
+    options_digest: str = ""
+    base_url_digest: str = ""
+    credential_env_digest: str = ""
+    model_allowlist_digest: str = ""
+    approval_digest: str = ""
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    requires_bound_execution_request: bool = True
+    direct_execute_available: bool = False
+    review_warnings: list[str] = Field(default_factory=list)
+    decided_by: str | None = None
+    decision_reason: str | None = None
+    denial_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None = None
+    executed_at: datetime | None = None
 
 
 class ProviderGenerationResult(BaseModel):
@@ -82,6 +198,235 @@ class ProviderStreamEvent(BaseModel):
     raw_response_metadata: dict[str, Any] = Field(default_factory=dict)
     duration_ms: int | None = None
     error: str | None = None
+
+
+_provider_approvals = JsonCollection("provider-approvals", ProviderApproval)
+
+
+def create_provider_approval(
+    provider_id: str,
+    request: ProviderGenerationRequest,
+    *,
+    requested_by: str | None = None,
+) -> ProviderApproval:
+    request = _provider_request_for_path(provider_id, request)
+    if provider_id != EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        raise ValueError("Only approval-required external provider requests can be queued.")
+
+    settings = get_settings()
+    _reject_external_runtime_base_url(request)
+    _validate_external_model(request.model, settings)
+    base_url = _external_base_url(settings)
+    _external_headers(settings)
+    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    model_allowlist = _external_models(settings)
+    requested_by_value = requested_by or request.requested_by
+
+    message_digest = provider_messages_digest(request.messages)
+    options_digest = provider_generation_options_digest(request)
+    base_url_digest = _provider_hmac_digest(_canonical_json(base_url))
+    credential_env_digest = _provider_hmac_digest(_canonical_json(credential_env))
+    model_allowlist_digest = _provider_hmac_digest(_canonical_json(sorted(model_allowlist)))
+    approval_digest = provider_approval_digest(
+        provider_id=request.provider_id,
+        model=request.model,
+        stream=request.stream,
+        message_digest=message_digest,
+        options_digest=options_digest,
+        base_url_digest=base_url_digest,
+        credential_env_digest=credential_env_digest,
+        model_allowlist_digest=model_allowlist_digest,
+        timeout_seconds=request.timeout_seconds,
+        requested_by=requested_by_value,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        permission_mode=PermissionMode.approval_required,
+    )
+    approval = ProviderApproval(
+        id=f"provider-approval-{uuid4()}",
+        provider_id=request.provider_id,
+        model=request.model,
+        stream=request.stream,
+        message_count=len(request.messages),
+        review_messages=_provider_review_messages(request.messages),
+        option_keys=sorted(str(key) for key in request.options),
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        timeout_seconds=request.timeout_seconds,
+        permission_mode=PermissionMode.approval_required,
+        message_digest=message_digest,
+        options_digest=options_digest,
+        base_url_digest=base_url_digest,
+        credential_env_digest=credential_env_digest,
+        model_allowlist_digest=model_allowlist_digest,
+        approval_digest=approval_digest,
+        requested_by=requested_by_value,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    _provider_approvals.upsert(approval)
+    event_log.record(
+        LogEventType.approval,
+        "Created provider approval request.",
+        subject_id=approval.id,
+        metadata={
+            "provider_id": approval.provider_id,
+            "model": approval.model,
+            "stream": approval.stream,
+            "message_count": approval.message_count,
+            "option_keys": approval.option_keys,
+            "permission_mode": approval.permission_mode,
+            "requested_by": approval.requested_by,
+            "agent_id": approval.agent_id,
+            "agent_role": approval.agent_role,
+            "task_id": approval.task_id,
+            "message_digest": approval.message_digest,
+            "options_digest": approval.options_digest,
+            "base_url_digest": approval.base_url_digest,
+            "credential_env_digest": approval.credential_env_digest,
+            "model_allowlist_digest": approval.model_allowlist_digest,
+            "approval_digest": approval.approval_digest,
+            "expires_at": approval.expires_at.isoformat(),
+        },
+    )
+    return approval
+
+
+def list_provider_approvals(
+    status: ProviderApprovalStatus | str | None = None,
+) -> list[ProviderApproval]:
+    approvals = _provider_approvals.list()
+    if status is None:
+        return approvals
+    requested_status = ProviderApprovalStatus(status)
+    return [approval for approval in approvals if approval.status == requested_status]
+
+
+def get_provider_approval_review(approval_id: str) -> ProviderApprovalReview:
+    approval = _get_provider_approval_or_raise(approval_id)
+    warnings = [
+        "Provider approval stores request digests and safe message metadata; execute with "
+        "a bound request that resubmits the same provider payload."
+    ]
+    if _provider_approval_is_expired(approval):
+        warnings.append("Approval is expired.")
+    return ProviderApprovalReview(
+        id=approval.id,
+        status=approval.status,
+        provider_id=approval.provider_id,
+        model=approval.model,
+        stream=approval.stream,
+        message_count=approval.message_count,
+        review_messages=approval.review_messages,
+        option_keys=approval.option_keys,
+        temperature=approval.temperature,
+        max_tokens=approval.max_tokens,
+        timeout_seconds=approval.timeout_seconds,
+        permission_mode=approval.permission_mode,
+        message_digest=approval.message_digest,
+        options_digest=approval.options_digest,
+        base_url_digest=approval.base_url_digest,
+        credential_env_digest=approval.credential_env_digest,
+        model_allowlist_digest=approval.model_allowlist_digest,
+        approval_digest=approval.approval_digest,
+        requested_by=approval.requested_by,
+        agent_id=approval.agent_id,
+        agent_role=approval.agent_role,
+        task_id=approval.task_id,
+        direct_execute_available=False,
+        review_warnings=warnings,
+        decided_by=approval.decided_by,
+        decision_reason=_redact_optional_sensitive_text(approval.decision_reason),
+        denial_reason=_redact_optional_sensitive_text(approval.denial_reason),
+        created_at=approval.created_at,
+        updated_at=approval.updated_at,
+        expires_at=approval.expires_at,
+        decided_at=approval.decided_at,
+        executed_at=approval.executed_at,
+    )
+
+
+def approve_provider_approval(
+    approval_id: str,
+    *,
+    decided_by: str | None = None,
+    reason: str | None = None,
+) -> ProviderApproval:
+    redacted_reason = _redact_optional_sensitive_text(reason)
+
+    def approve(current: ProviderApproval) -> ProviderApproval:
+        if current.status != ProviderApprovalStatus.pending:
+            raise ValueError(
+                "Only pending provider approvals can be approved; "
+                f"current status is {current.status}."
+            )
+        if _provider_approval_is_expired(current):
+            raise ValueError(f"Provider approval {approval_id} has expired and cannot be approved.")
+
+        now = datetime.now(UTC)
+        current.status = ProviderApprovalStatus.approved
+        current.decided_by = _redact_optional_sensitive_text(decided_by)
+        current.decision_reason = redacted_reason
+        current.decided_at = now
+        current.updated_at = now
+        return current
+
+    approval = _provider_approvals.update(approval_id, approve)
+    event_log.record(
+        LogEventType.approval,
+        "Approved provider request.",
+        subject_id=approval.id,
+        actor=approval.decided_by or "system",
+        metadata={
+            "provider_id": approval.provider_id,
+            "model": approval.model,
+            "stream": approval.stream,
+            **({"reason": redacted_reason} if redacted_reason else {}),
+        },
+    )
+    return approval
+
+
+def deny_provider_approval(
+    approval_id: str,
+    *,
+    decided_by: str | None = None,
+    reason: str | None = None,
+) -> ProviderApproval:
+    redacted_reason = _redact_optional_sensitive_text(reason)
+
+    def deny(current: ProviderApproval) -> ProviderApproval:
+        if current.status != ProviderApprovalStatus.pending:
+            raise ValueError(
+                "Only pending provider approvals can be denied; "
+                f"current status is {current.status}."
+            )
+
+        now = datetime.now(UTC)
+        current.status = ProviderApprovalStatus.denied
+        current.decided_by = _redact_optional_sensitive_text(decided_by)
+        current.decision_reason = redacted_reason
+        current.denial_reason = redacted_reason
+        current.decided_at = now
+        current.updated_at = now
+        return current
+
+    approval = _provider_approvals.update(approval_id, deny)
+    event_log.record(
+        LogEventType.approval,
+        "Denied provider request.",
+        subject_id=approval.id,
+        actor=approval.decided_by or "system",
+        metadata={
+            "provider_id": approval.provider_id,
+            "model": approval.model,
+            "stream": approval.stream,
+            **({"reason": redacted_reason} if redacted_reason else {}),
+        },
+    )
+    return approval
 
 
 def generate_provider_completion(
@@ -670,9 +1015,16 @@ def _authorize_external_provider_request(
     settings: Any,
 ) -> None:
     if request.approval_id:
-        raise ProviderApprovalRequiredError(
-            "External provider approval_id execution is not implemented yet."
+        try:
+            approval = _get_provider_approval_or_raise(request.approval_id)
+        except KeyError as exc:
+            raise ProviderApprovalRequiredError(str(exc)) from exc
+        _claim_bound_provider_approval(
+            approval,
+            request=request,
+            settings=settings,
         )
+        return
     if request.approved and settings.environment.strip().lower() in {
         "development",
         "test",
@@ -703,12 +1055,252 @@ def _validate_base_url_for_provider(*, provider_id: str, base_url: str, settings
     return normalized
 
 
+def _provider_request_for_path(
+    provider_id: str,
+    request: ProviderGenerationRequest,
+) -> ProviderGenerationRequest:
+    if request.provider_id != provider_id:
+        raise ValueError("Provider approval path provider_id must match the request provider_id.")
+    return request
+
+
+def _claim_bound_provider_approval(
+    approval: ProviderApproval,
+    *,
+    request: ProviderGenerationRequest,
+    settings: Any,
+) -> None:
+    def claim(current: ProviderApproval) -> ProviderApproval:
+        _validate_bound_provider_approval(current, request=request, settings=settings)
+        now = datetime.now(UTC)
+        current.status = ProviderApprovalStatus.executed
+        current.executed_at = now
+        current.updated_at = now
+        return current
+
+    with _provider_approval_lock:
+        try:
+            _provider_approvals.update(approval.id, claim)
+        except KeyError as exc:
+            raise ProviderApprovalRequiredError(str(exc)) from exc
+    event_log.record(
+        LogEventType.approval,
+        "Claimed provider approval for execution.",
+        subject_id=approval.id,
+        metadata={
+            "provider_id": approval.provider_id,
+            "model": approval.model,
+            "stream": approval.stream,
+        },
+    )
+
+
+def _validate_bound_provider_approval(
+    approval: ProviderApproval,
+    *,
+    request: ProviderGenerationRequest,
+    settings: Any,
+) -> None:
+    if approval.status != ProviderApprovalStatus.approved:
+        raise ProviderApprovalRequiredError(
+            f"Provider approval {approval.id} is not executable; current status is "
+            f"{approval.status}."
+        )
+    if _provider_approval_is_expired(approval):
+        raise ProviderApprovalRequiredError(
+            f"Provider approval {approval.id} has expired and cannot be executed."
+        )
+
+    _reject_external_runtime_base_url(request)
+    _validate_external_model(request.model, settings)
+    base_url = _external_base_url(settings)
+    _external_headers(settings)
+    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    model_allowlist = _external_models(settings)
+    message_digest = provider_messages_digest(request.messages)
+    options_digest = provider_generation_options_digest(request)
+    base_url_digest = _provider_hmac_digest(_canonical_json(base_url))
+    credential_env_digest = _provider_hmac_digest(_canonical_json(credential_env))
+    model_allowlist_digest = _provider_hmac_digest(_canonical_json(sorted(model_allowlist)))
+    expected_approval_digest = provider_approval_digest(
+        provider_id=request.provider_id,
+        model=request.model,
+        stream=request.stream,
+        message_digest=message_digest,
+        options_digest=options_digest,
+        base_url_digest=base_url_digest,
+        credential_env_digest=credential_env_digest,
+        model_allowlist_digest=model_allowlist_digest,
+        timeout_seconds=request.timeout_seconds,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        permission_mode=PermissionMode.approval_required,
+    )
+    checks = [
+        approval.provider_id == request.provider_id,
+        approval.model == request.model,
+        approval.stream == request.stream,
+        approval.message_count == len(request.messages),
+        approval.option_keys == sorted(str(key) for key in request.options),
+        approval.temperature == request.temperature,
+        approval.max_tokens == request.max_tokens,
+        approval.timeout_seconds == request.timeout_seconds,
+        approval.permission_mode == PermissionMode.approval_required,
+        approval.message_digest == message_digest,
+        approval.options_digest == options_digest,
+        approval.base_url_digest == base_url_digest,
+        approval.credential_env_digest == credential_env_digest,
+        approval.model_allowlist_digest == model_allowlist_digest,
+        approval.approval_digest == expected_approval_digest,
+        approval.requested_by == _redact_optional_sensitive_text(request.requested_by),
+        approval.agent_id == _redact_optional_sensitive_text(request.agent_id),
+        approval.agent_role == _redact_optional_sensitive_text(request.agent_role),
+        approval.task_id == _redact_optional_sensitive_text(request.task_id),
+    ]
+    if not all(checks):
+        raise ProviderApprovalRequiredError(
+            f"Provider approval {approval.id} is not bound to this provider request."
+        )
+
+
+def _provider_approval_is_expired(approval: ProviderApproval) -> bool:
+    return approval.expires_at <= datetime.now(UTC)
+
+
+def _get_provider_approval_or_raise(approval_id: str) -> ProviderApproval:
+    approval = _provider_approvals.get(approval_id)
+    if approval is None:
+        raise KeyError(f"Provider approval not found: {approval_id}")
+    return approval
+
+
+def _redact_optional_sensitive_text(text: str | None) -> str | None:
+    if text is None:
+        return None
+    return redact_sensitive_values(text)
+
+
+def _provider_approval_digest_key() -> bytes:
+    settings = get_settings()
+    configured_key = settings.approval_digest_key.strip()
+    if configured_key:
+        return configured_key.encode("utf-8")
+
+    data_dir = settings.data_dir
+    if not data_dir.is_absolute():
+        data_dir = settings.root_dir / data_dir
+    key_path = data_dir / _PROVIDER_APPROVAL_DIGEST_KEY_FILE
+    with _PROVIDER_APPROVAL_DIGEST_LOCK:
+        if key_path.exists():
+            stored_key = key_path.read_text(encoding="utf-8").strip()
+            if stored_key:
+                return stored_key.encode("utf-8")
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        generated_key = secrets.token_hex(32)
+        key_path.write_text(generated_key + "\n", encoding="utf-8")
+        return generated_key.encode("utf-8")
+
+
+def _provider_hmac_digest(encoded_payload: str) -> str:
+    digest = hmac.new(
+        _provider_approval_digest_key(),
+        encoded_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{PROVIDER_APPROVAL_DIGEST_PREFIX}{digest}"
+
+
+def _sanitize_provider_approval_digest(digest: str) -> str:
+    if not digest:
+        return ""
+    if digest.startswith(PROVIDER_APPROVAL_DIGEST_PREFIX):
+        return digest
+    return REDACTED_LEGACY_DIGEST_MARKER
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def provider_messages_digest(messages: list[ProviderChatMessage]) -> str:
+    payload = [message.model_dump(mode="json") for message in messages]
+    return _provider_hmac_digest(_canonical_json(payload))
+
+
+def provider_generation_options_digest(request: ProviderGenerationRequest) -> str:
+    payload = {
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+        "options": request.options,
+    }
+    return _provider_hmac_digest(_canonical_json(payload))
+
+
+def provider_approval_digest(
+    *,
+    provider_id: str,
+    model: str,
+    stream: bool,
+    message_digest: str,
+    options_digest: str,
+    base_url_digest: str,
+    credential_env_digest: str,
+    model_allowlist_digest: str,
+    timeout_seconds: float,
+    requested_by: str | None,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+    permission_mode: PermissionMode,
+) -> str:
+    payload = {
+        "provider_id": provider_id,
+        "model": model,
+        "stream": stream,
+        "message_digest": message_digest,
+        "options_digest": options_digest,
+        "base_url_digest": base_url_digest,
+        "credential_env_digest": credential_env_digest,
+        "model_allowlist_digest": model_allowlist_digest,
+        "timeout_seconds": timeout_seconds,
+        "requested_by": requested_by,
+        "agent_id": agent_id,
+        "agent_role": agent_role,
+        "task_id": task_id,
+        "permission_mode": permission_mode,
+    }
+    return _provider_hmac_digest(_canonical_json(payload))
+
+
+def _provider_review_messages(
+    messages: list[ProviderChatMessage],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": redact_sensitive_values(message.role),
+            "content_length": len(message.content),
+        }
+        for message in messages
+    ]
+
+
 __all__ = [
     "EXTERNAL_PLACEHOLDER_PROVIDER_ID",
     "EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID",
     "LM_STUDIO_PROVIDER_ID",
     "OLLAMA_PROVIDER_ID",
+    "ProviderApproval",
     "ProviderApprovalRequiredError",
+    "ProviderApprovalReview",
+    "ProviderApprovalStatus",
     "ProviderConfigurationError",
     "ProviderEgressPolicyError",
     "ProviderFeatureNotSupportedError",
@@ -718,6 +1310,14 @@ __all__ = [
     "ProviderGenerationRequest",
     "ProviderGenerationResult",
     "ProviderStreamEvent",
+    "approve_provider_approval",
+    "create_provider_approval",
+    "deny_provider_approval",
     "generate_provider_completion",
+    "get_provider_approval_review",
+    "list_provider_approvals",
+    "provider_approval_digest",
+    "provider_generation_options_digest",
+    "provider_messages_digest",
     "stream_provider_completion",
 ]

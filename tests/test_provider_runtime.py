@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -262,9 +263,12 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
     assert "upstream-token-secret" not in serialized_event
 
 
+@pytest.mark.parametrize("environment", ["development", "test", "testing"])
 def test_external_openai_compatible_generation_posts_authorized_chat_completion(
+    environment,
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", environment)
     configure_external_provider(monkeypatch)
     event_log = RecordingEventLog()
     calls: list[dict] = []
@@ -345,6 +349,196 @@ def test_external_generation_requires_approval_before_transport(monkeypatch) -> 
                 messages=[{"role": "user", "content": "Say hello."}],
             )
         )
+
+    assert calls == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_external_generation_rejects_approved_boolean_outside_development(
+    environment,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", environment)
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="approval_id"):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+                approved=True,
+            )
+        )
+
+    assert calls == []
+    get_settings.cache_clear()
+
+
+def test_external_generation_accepts_bound_approval_id_in_production(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeResponse(lm_studio_response("Hello from approved external."))
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello. API_KEY=prompt-secret"}],
+        temperature=0.2,
+        max_tokens=128,
+        options={"top_p": 0.9},
+        requested_by="operator TOKEN=requester-secret",
+        agent_id="agent PASSWORD=agent-secret",
+        agent_role="developer SECRET=role-secret",
+        task_id="sprint-12 API_KEY=task-secret",
+    )
+
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    review = provider_runtime.get_provider_approval_review(approval.id)
+    approval_storage = (tmp_path / "state" / "provider-approvals.json").read_text(encoding="utf-8")
+
+    assert approval.status == provider_runtime.ProviderApprovalStatus.pending
+    assert review.review_messages == [{"role": "user", "content_length": 32}]
+    assert review.requires_bound_execution_request is True
+    assert review.direct_execute_available is False
+    assert "prompt-secret" not in approval_storage
+    assert "requester-secret" not in approval_storage
+    assert "agent-secret" not in approval_storage
+    assert "role-secret" not in approval_storage
+    assert "task-secret" not in approval_storage
+
+    provider_runtime.approve_provider_approval(
+        approval.id,
+        decided_by="reviewer TOKEN=reviewer-secret",
+        reason="approved TOKEN=reason-secret",
+    )
+    result = generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "Say hello. API_KEY=prompt-secret"}],
+                "stream": False,
+                "temperature": 0.2,
+                "max_tokens": 128,
+            },
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert result.content == "Hello from approved external."
+    executed = provider_runtime.list_provider_approvals()[0]
+    assert executed.status == provider_runtime.ProviderApprovalStatus.executed
+    assert executed.executed_at is not None
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="not executable"):
+        generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+
+    serialized_events = json.dumps(event_log.records, sort_keys=True, default=str)
+    approval_storage = (tmp_path / "state" / "provider-approvals.json").read_text(encoding="utf-8")
+    assert "external-api-key-secret" not in serialized_events
+    assert "Hello from approved external." not in serialized_events
+    assert "reviewer-secret" not in approval_storage
+    assert "reason-secret" not in approval_storage
+    get_settings.cache_clear()
+
+
+def test_bound_provider_approval_rejects_request_drift_denied_and_expired(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Bind this request."}],
+        options={"top_p": 0.9},
+        requested_by="operator",
+    )
+    drift_approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(drift_approval.id, decided_by="reviewer")
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="not bound"):
+        generate_provider_completion(
+            request.model_copy(
+                update={
+                    "model": "gpt-other",
+                    "approval_id": drift_approval.id,
+                }
+            )
+        )
+    with pytest.raises(ValueError, match="pending"):
+        provider_runtime.deny_provider_approval(drift_approval.id, decided_by="reviewer")
+
+    denied = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.deny_provider_approval(denied.id, decided_by="reviewer")
+    with pytest.raises(ValueError, match="pending"):
+        provider_runtime.approve_provider_approval(denied.id, decided_by="reviewer")
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="not executable"):
+        generate_provider_completion(request.model_copy(update={"approval_id": denied.id}))
+
+    expired = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(expired.id, decided_by="reviewer")
+    approval_path = tmp_path / "state" / "provider-approvals.json"
+    approvals = json.loads(approval_path.read_text(encoding="utf-8"))
+    for approval in approvals:
+        if approval["id"] == expired.id:
+            approval["expires_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    approval_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(provider_runtime.ProviderApprovalRequiredError, match="expired"):
+        generate_provider_completion(request.model_copy(update={"approval_id": expired.id}))
 
     assert calls == []
     get_settings.cache_clear()
@@ -990,6 +1184,79 @@ def test_external_streaming_sends_authorization_and_redacts_logs(monkeypatch) ->
     assert "external-api-key-secret" not in serialized
     assert "upstream-stream-secret" not in serialized
     assert "Secretless" not in serialized
+    get_settings.cache_clear()
+
+
+def test_external_streaming_accepts_bound_approval_id_in_production(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-approved-stream",
+                    "model": "gpt-test",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Approved"}, "finish_reason": None}
+                    ],
+                    "authorization": "Bearer upstream-stream-secret",
+                },
+                {
+                    "id": "chatcmpl-approved-stream",
+                    "model": "gpt-test",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Stream this response."}],
+        stream=True,
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+
+    events = list(
+        provider_runtime.stream_provider_completion(
+            request.model_copy(update={"approval_id": approval.id})
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "Stream this response."}],
+                "stream": True,
+            },
+        }
+    ]
+    assert [event.delta for event in events] == ["Approved", ""]
+    assert provider_runtime.list_provider_approvals()[0].status == (
+        provider_runtime.ProviderApprovalStatus.executed
+    )
     get_settings.cache_clear()
 
 

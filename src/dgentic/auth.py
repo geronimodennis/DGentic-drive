@@ -37,6 +37,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/filesystem", CAPABILITY_FILESYSTEM),
     ("/guardrails/commands", CAPABILITY_CLI),
     ("/cli", CAPABILITY_CLI),
+    ("/providers/approvals", CAPABILITY_APPROVALS),
     ("/providers", CAPABILITY_PROVIDERS),
     ("/routing", CAPABILITY_PROVIDERS),
     ("/agents", CAPABILITY_AGENTS),
@@ -80,6 +81,9 @@ def parse_token_map(raw_config: str) -> dict[str, frozenset[str]]:
 def capability_for_path(path: str) -> str | None:
     if path in PUBLIC_PATHS:
         return None
+    parts = path.strip("/").split("/")
+    if len(parts) >= 3 and parts[0] == "providers" and parts[2] == "approvals":
+        return CAPABILITY_APPROVALS
     for prefix, capability in CAPABILITY_PATHS:
         if path == prefix or path.startswith(f"{prefix}/"):
             return capability

@@ -1,4 +1,7 @@
 import json
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -27,7 +30,8 @@ class JsonCollection(Generic[ModelT]):
 
     def list(self) -> list[ModelT]:
         with self._lock:
-            return self._load_unlocked()
+            with self._file_lock():
+                return self._load_unlocked()
 
     def list_quarantined_files(self) -> list[Path]:
         path = self.path
@@ -39,27 +43,43 @@ class JsonCollection(Generic[ModelT]):
 
     def restore_quarantine(self, quarantine_path: Path | str | None = None) -> list[ModelT]:
         with self._lock:
-            path = self._resolve_quarantine_path(quarantine_path)
-            items = self._read_items_from_path(path)
-            if self.path.exists():
-                self._quarantine_unlocked(self.path, reason="pre-restore")
-            self._save_unlocked(items)
-            return items
+            with self._file_lock():
+                path = self._resolve_quarantine_path(quarantine_path)
+                items = self._read_items_from_path(path)
+                if self.path.exists():
+                    self._quarantine_unlocked(self.path, reason="pre-restore")
+                self._save_unlocked(items)
+                return items
 
     def upsert(self, item: ModelT) -> ModelT:
         with self._lock:
-            items = self._load_unlocked()
-            item_id = self._key(item)
-            updated = False
-            for index, existing in enumerate(items):
-                if self._key(existing) == item_id:
-                    items[index] = item
-                    updated = True
-                    break
-            if not updated:
-                items.append(item)
-            self._save_unlocked(items)
+            with self._file_lock():
+                items = self._load_unlocked()
+                item_id = self._key(item)
+                updated = False
+                for index, existing in enumerate(items):
+                    if self._key(existing) == item_id:
+                        items[index] = item
+                        updated = True
+                        break
+                if not updated:
+                    items.append(item)
+                self._save_unlocked(items)
         return item
+
+    def update(self, item_id: str, updater: Callable[[ModelT], ModelT]) -> ModelT:
+        with self._lock:
+            with self._file_lock():
+                items = self._load_unlocked()
+                for index, existing in enumerate(items):
+                    if self._key(existing) == item_id:
+                        updated = updater(existing)
+                        if self._key(updated) != item_id:
+                            raise ValueError("Updated item must preserve its collection key.")
+                        items[index] = updated
+                        self._save_unlocked(items)
+                        return updated
+        raise KeyError(f"Item not found in collection {self.name}: {item_id}")
 
     def get(self, item_id: str) -> ModelT | None:
         return next((item for item in self.list() if self._key(item) == item_id), None)
@@ -123,6 +143,31 @@ class JsonCollection(Generic[ModelT]):
                 return temp_path
             except FileExistsError:
                 counter += 1
+
+    @contextmanager
+    def _file_lock(self) -> Iterator[None]:
+        path = self.path
+        lock_path = path.with_name(f"{path.name}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                import msvcrt
+
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _resolve_quarantine_path(self, quarantine_path: Path | str | None) -> Path:
         candidates = self.list_quarantined_files()

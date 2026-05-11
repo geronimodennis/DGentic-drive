@@ -62,6 +62,38 @@ def test_json_collection_upsert_repairs_active_file_after_quarantine(collection)
     assert collection.list_quarantined_files()
 
 
+def test_json_collection_update_persists_existing_record(collection) -> None:
+    collection.upsert(StorageRecord(id="record-1", title="Original"))
+
+    updated = collection.update(
+        "record-1",
+        lambda item: item.model_copy(update={"title": "Updated"}),
+    )
+
+    assert updated.title == "Updated"
+    assert collection.get("record-1") == StorageRecord(id="record-1", title="Updated")
+    assert collection.path.with_name("records.json.lock").exists()
+
+
+def test_json_collection_update_rejects_missing_or_rekeyed_record(collection) -> None:
+    collection.upsert(StorageRecord(id="record-1", title="Original"))
+
+    with pytest.raises(KeyError, match="missing"):
+        collection.update(
+            "missing",
+            lambda item: item.model_copy(update={"title": "Never used"}),
+        )
+
+    with pytest.raises(ValueError, match="preserve"):
+        collection.update(
+            "record-1",
+            lambda item: item.model_copy(update={"id": "record-2"}),
+        )
+
+    assert collection.get("record-1") == StorageRecord(id="record-1", title="Original")
+    assert collection.get("record-2") is None
+
+
 def test_json_collection_restores_valid_quarantine(collection) -> None:
     path = collection.path
     path.parent.mkdir(parents=True)

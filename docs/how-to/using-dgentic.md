@@ -225,7 +225,27 @@ curl -X POST http://127.0.0.1:8000/providers/generate `
 
 Provider calls must target exact allowlisted base URLs. By default, DGentic allows only the configured Ollama and LM Studio endpoints; add trusted extra endpoints with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` when needed. Redirects are blocked, configured URLs with embedded credentials are not displayed, and logs keep provider usage metadata without persisting raw completion content. Generation uses bounded retry/backoff for retryable `429` and upstream `5xx` failures; health probes stay single-attempt.
 
-The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. The credential setting stores only the name of an environment variable; the actual API key value must be exported separately and is sent only as an outbound Authorization header. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`, while staging/production bound provider approval IDs remain future work.
+The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. The credential setting stores only the name of an environment variable; the actual API key value must be exported separately and is sent only as an outbound Authorization header. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`; staging/production requests need a single-use bound `approval_id`.
+
+Queue and approve a provider request before external generation in production-style mode:
+
+```powershell
+$approval = curl -X POST "http://127.0.0.1:8000/providers/external-openai-compatible/approvals?requested_by=operator" `
+  -H "Content-Type: application/json" `
+  -d '{"provider_id":"external-openai-compatible","model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello."}]}'
+
+curl http://127.0.0.1:8000/providers/approvals/[approval_id]/review
+
+curl -X POST http://127.0.0.1:8000/providers/approvals/[approval_id]/approve `
+  -H "Content-Type: application/json" `
+  -d '{"decided_by":"reviewer","reason":"Approved for this request."}'
+
+curl -X POST http://127.0.0.1:8000/providers/generate `
+  -H "Content-Type: application/json" `
+  -d '{"provider_id":"external-openai-compatible","model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello."}],"approval_id":"[approval_id]","requested_by":"operator"}'
+```
+
+Provider approval records store safe review metadata, request HMAC digests, requester/agent/task context, decision timestamps, and expiry without persisting raw prompt content or credential values. When auth is enabled, provider approval create/list/review/approve/deny routes require the separate `approvals` capability, while generation still requires `providers`. Approved records are claimed before outbound provider transport, so a failed provider call still consumes the approval.
 
 For OpenAI-compatible streaming, call `POST /providers/generate/stream`. The endpoint returns newline-delimited JSON chunk events for LM Studio and the configured external adapter, while `/providers/generate` remains the non-streaming JSON endpoint.
 
@@ -305,7 +325,7 @@ Configure local model providers first:
 
 - Local runtimes: Ollama and LM Studio.
 - Extra trusted endpoints: add exact comma-separated base URLs with `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`.
-- External providers: an OpenAI-compatible non-streaming and streaming adapter is available when explicitly configured with HTTPS, a model allowlist, an env-referenced credential, and development/test approval; bound provider approvals and dedicated Google AI, DeepSeek, Anthropic, Copilot, or other adapters remain future work.
+- External providers: an OpenAI-compatible non-streaming and streaming adapter is available when explicitly configured with HTTPS, a model allowlist, an env-referenced credential, and development/test approval or a staging/production bound provider approval ID; dedicated Google AI, DeepSeek, Anthropic, Copilot, or other adapters remain future work.
 - Routing rules: Cost, latency, reliability, privacy, role-to-model mapping, and task complexity.
 
 ### 3. Set Security Boundaries
@@ -368,7 +388,7 @@ DGentic should persist session state so future sessions can resume with context,
 - Production/staging API routes have a bearer-token capability gate and startup fail-closed token validation, but persisted identity management, token rotation, bound approval identities, and full audit actor propagation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger plus SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, expanded migrations, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded retry/backoff for retryable generation failures, and safe telemetry; LM Studio has OpenAI-compatible NDJSON streaming, while Ollama streaming remains future work.
-- The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls, while bound provider approval records, encrypted credential storage, and provider-specific external adapters remain future work.
+- The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode, while encrypted credential storage and provider-specific external adapters remain future work.
 - Guardrails enforce text and binary reads/writes, directory listing, metadata, and approval-gated delete/move/copy/rename inside `rootDir`; bound filesystem approval records, configurable persisted filesystem policy rules, deeper locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI guardrails can configure persisted and agent-role scoped policy rules, queue, approve, deny, execute with single-use bound approval IDs outside development/test mode, start asynchronous runs, poll run status/output chunks, reconcile stale running records, cancel process-local runs, conservatively terminate matching prior-supervisor orphan processes after restart, apply controlled environment overrides, audit agent/task context, and persist command runs, but there is not yet a user-facing approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision.
 - Hybrid retrieval works through deterministic local hash embeddings for MVP usage; production vector storage, optional model packaging, compression/summarization, and performance validation remain follow-up work.

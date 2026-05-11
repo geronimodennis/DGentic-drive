@@ -2545,6 +2545,92 @@ def test_external_provider_generate_stream_api_requires_approval_before_transpor
     get_settings.cache_clear()
 
 
+def test_external_provider_generate_stream_api_accepts_bound_approval_in_production(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-stream-approval-api",
+                    "model": "gpt-test",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Approved"}, "finish_reason": None}
+                    ],
+                    "token": "upstream-stream-token-secret",
+                },
+                {
+                    "id": "chatcmpl-stream-approval-api",
+                    "model": "gpt-test",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+    provider_id = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    approval_body = {
+        "provider_id": provider_id,
+        "model": "gpt-test",
+        "messages": [{"role": "user", "content": "stream hello"}],
+        "stream": True,
+        "requested_by": "tester",
+    }
+    create_response = client.post(
+        f"/providers/{provider_id}/approvals",
+        json=approval_body,
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/providers/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    response = client.post(
+        "/providers/generate/stream",
+        json={**approval_body, "stream": False, "approval_id": approval_id},
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "stream hello"}],
+                "stream": True,
+            },
+        }
+    ]
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["delta"] for event in events] == ["Approved", ""]
+    serialized = response.text + logs_response.text
+    assert "external-api-key-secret" not in serialized
+    assert "upstream-stream-token-secret" not in serialized
+    assert "Approved" in response.text
+    assert "Approved" not in logs_response.text
+    get_settings.cache_clear()
+
+
 def test_external_provider_generate_stream_api_missing_config_fails_before_transport(
     tmp_path,
     monkeypatch,
@@ -2806,6 +2892,220 @@ def test_external_provider_generate_api_requires_approval_before_transport(
     assert response.json()["detail"] == "External provider requires explicit approval."
     assert calls == []
     assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_requires_bound_approval_in_production(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    calls: list[dict] = []
+    raw_response = {
+        "id": "chatcmpl-provider-approval-api",
+        "model": "gpt-test",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Approved API response."},
+                "finish_reason": "stop",
+            }
+        ],
+        "token": "upstream-token-secret",
+    }
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(raw_response).encode("utf-8")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "payload": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+    provider_id = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    approval_body = {
+        "provider_id": provider_id,
+        "model": "gpt-test",
+        "messages": [{"role": "user", "content": "TOKEN=provider-api-prompt-secret"}],
+        "temperature": 0.2,
+        "max_tokens": 32,
+        "agent_role": "developer",
+        "task_id": "sprint-12",
+    }
+
+    bypass_response = client.post(
+        "/providers/generate",
+        json={**approval_body, "approved": True},
+    )
+    create_response = client.post(
+        f"/providers/{provider_id}/approvals?requested_by=tester",
+        json=approval_body,
+    )
+    approval_id = create_response.json()["id"]
+    list_response = client.get("/providers/approvals?status=pending")
+    review_response = client.get(f"/providers/approvals/{approval_id}/review")
+    approve_response = client.post(
+        f"/providers/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "Approved with --token provider-reason-secret."},
+    )
+    mismatch_response = client.post(
+        "/providers/generate",
+        json={
+            **approval_body,
+            "messages": [{"role": "user", "content": "different"}],
+            "approval_id": approval_id,
+            "requested_by": "tester",
+        },
+    )
+    execute_response = client.post(
+        "/providers/generate",
+        json={**approval_body, "approval_id": approval_id, "requested_by": "tester"},
+    )
+    second_execute_response = client.post(
+        "/providers/generate",
+        json={**approval_body, "approval_id": approval_id, "requested_by": "tester"},
+    )
+    logs_response = client.get("/logs?event_type=provider")
+
+    assert bypass_response.status_code == 403
+    assert "approval_id" in bypass_response.json()["detail"]
+    assert create_response.status_code == 201
+    assert create_response.json()["review_messages"] == [{"role": "user", "content_length": 32}]
+    assert "provider-api-prompt-secret" not in create_response.text
+    assert list_response.status_code == 200
+    assert any(item["id"] == approval_id for item in list_response.json())
+    assert review_response.status_code == 200
+    assert review_response.json()["direct_execute_available"] is False
+    assert "provider-api-prompt-secret" not in review_response.text
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+    assert "--token [REDACTED]" in approve_response.json()["decision_reason"]
+    assert "provider-reason-secret" not in approve_response.text
+    assert mismatch_response.status_code == 403
+    assert "not bound" in mismatch_response.json()["detail"]
+    assert execute_response.status_code == 200
+    assert execute_response.json()["content"] == "Approved API response."
+    assert second_execute_response.status_code == 403
+    assert "not executable" in second_execute_response.json()["detail"]
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-api-key-secret",
+            "payload": {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "TOKEN=provider-api-prompt-secret"}],
+                "stream": False,
+                "temperature": 0.2,
+                "max_tokens": 32,
+            },
+        }
+    ]
+    serialized = (
+        create_response.text
+        + list_response.text
+        + review_response.text
+        + approve_response.text
+        + execute_response.text
+        + logs_response.text
+    )
+    assert "external-api-key-secret" not in serialized
+    assert "upstream-token-secret" not in serialized
+    assert "provider-api-prompt-secret" not in serialized
+    assert "Approved API response." in execute_response.text
+    assert "Approved API response." not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_provider_approval_approve_api_requires_approvals_capability(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "provider-token=providers;approval-token=approvals",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    provider_headers = {"Authorization": "Bearer provider-token"}
+    approval_headers = {"Authorization": "Bearer approval-token"}
+    provider_id = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+
+    provider_create_response = client.post(
+        f"/providers/{provider_id}/approvals?requested_by=tester",
+        headers=provider_headers,
+        json={
+            "provider_id": provider_id,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    create_response = client.post(
+        f"/providers/{provider_id}/approvals?requested_by=tester",
+        headers=approval_headers,
+        json={
+            "provider_id": provider_id,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    approval_id = create_response.json()["id"]
+    provider_list_response = client.get("/providers/approvals", headers=provider_headers)
+    approval_list_response = client.get("/providers/approvals", headers=approval_headers)
+    provider_review_response = client.get(
+        f"/providers/approvals/{approval_id}/review",
+        headers=provider_headers,
+    )
+    provider_approve_response = client.post(
+        f"/providers/approvals/{approval_id}/approve",
+        headers=provider_headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+    provider_deny_response = client.post(
+        f"/providers/approvals/{approval_id}/deny",
+        headers=provider_headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+    approval_approve_response = client.post(
+        f"/providers/approvals/{approval_id}/approve",
+        headers=approval_headers,
+        json={"decided_by": "spoofed-reviewer"},
+    )
+
+    assert provider_create_response.status_code == 403
+    assert create_response.status_code == 201
+    assert provider_list_response.status_code == 403
+    assert approval_list_response.status_code == 200
+    assert provider_review_response.status_code == 403
+    assert provider_approve_response.status_code == 403
+    assert provider_deny_response.status_code == 403
+    assert approval_approve_response.status_code == 200
+    assert (
+        approval_approve_response.json()["decided_by"]
+        == (sha256(b"approval-token").hexdigest()[:12])
+    )
     get_settings.cache_clear()
 
 

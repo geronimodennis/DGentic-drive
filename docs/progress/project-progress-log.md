@@ -4,6 +4,56 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006e Bound Provider Approval Records
+
+Status: completed for the scoped bound external provider approval-record contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, Ollama streaming, circuit breakers, cost accounting, and broader payload validation.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected bound provider approval records as the next Sprint 12 slice after BL-006d because configured external generation still had no staging/production execution path.
+- Completed: Architect/QA read-only explorers recommended mirroring generated-tool approval records, binding stream and non-stream requests separately, using request/config HMAC digests, exposing safe review contracts, and enforcing the `approvals` capability for approval artifacts.
+- Completed: Developer updated production source only for provider approval models, create/list/review/approve/deny lifecycle helpers, approval-bound external generation and streaming, provider approval API routes, approval-capability routing, and inter-process locked JSON reads/item updates for approval decisions/claims.
+- Completed: QA updated tests only for development/test boolean bypass preservation, staging/production boolean rejection, bound non-streaming and streaming external approval execution, request drift, denied/expired/non-pending lifecycle states, provider approval API flow, approval capability separation, and JSON collection update transactions.
+- Completed: Reviewer/Security found and Developer remediated approval-capability and cross-process claim/decision blockers; final read-only review reported no remaining blockers for the provider approval lifecycle.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /providers/{provider_id}/approvals`, `GET /providers/approvals`, `GET /providers/approvals/{approval_id}/review`, `POST /providers/approvals/{approval_id}/approve`, and `POST /providers/approvals/{approval_id}/deny`.
+- Implemented in this slice: configured external OpenAI-compatible non-streaming and streaming generation can execute in staging/production with a single-use bound `approval_id`; `approved: true` remains limited to development/test.
+- Implemented in this slice: provider approvals bind provider id, model, stream mode, messages, generation options, timeout, configured base URL, credential environment name, model allowlist, requester, and agent/task context through HMAC digests.
+- Implemented in this slice: provider approval records and review responses store safe message metadata and digests without raw prompt content, credential values, or upstream response content.
+- Implemented in this slice: provider approval create/list/review/approve/deny routes require the `approvals` capability when auth is enabled; generation remains under the `providers` capability.
+- Implemented in this slice: JSON collection reads and item updates now support inter-process locking; provider approval decisions and execution claims use locked read/mutate/write transactions.
+
+Validation:
+- Focused provider approval runtime gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py -k "external and approval"` passed with 3 tests and 49 deselected.
+- Focused provider API approval gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "provider and approval"` passed with 5 tests and 76 deselected.
+- Focused auth capability gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py -k "capability_for_path"` passed with 16 tests and 21 deselected.
+- Focused lifecycle/storage remediation gates passed for provider bound lifecycle, provider approval capability separation, and `tests\test_storage.py`.
+- Broad touched-surface regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py tests\test_auth.py tests\test_tool_runtime.py tests\test_storage.py` passed with 210 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\storage.py src\dgentic\provider_runtime.py src\dgentic\api\routes.py src\dgentic\auth.py tests\test_storage.py tests\test_provider_runtime.py tests\test_api.py tests\test_auth.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\storage.py src\dgentic\provider_runtime.py src\dgentic\api\routes.py src\dgentic\auth.py tests\test_storage.py tests\test_provider_runtime.py tests\test_api.py tests\test_auth.py` passed with 8 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 574 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+- Whitespace gate: `git diff --check` passed.
+
+Residual risks:
+- Provider approvals are consumed before outbound provider transport begins; this is conservative for single-use security, but transient network failures require a new approval.
+- Approval records bind the configured credential environment variable name, not the secret value or a dedicated credential version; encrypted credential storage or secret-manager integration remains follow-up work.
+- Ollama streaming, provider-specific external adapters, circuit breakers, cost accounting, and broader payload validation remain future Sprint 12 work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/auth.py`, `src/dgentic/provider_runtime.py`, and `src/dgentic/storage.py`.
+- QA-owned files: `tests/test_api.py`, `tests/test_auth.py`, `tests/test_provider_runtime.py`, and `tests/test_storage.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Run final full quality gates, commit/push the stable BL-006e checkpoint, then continue Sprint 12 with encrypted credential strategy, Ollama streaming, circuit-breaker/cost work, payload validation, or provider-specific external adapters depending on risk priority.
+
 ### Sprint 12 BL-006d OpenAI-Compatible Streaming Generation Contract
 
 Status: completed for the scoped OpenAI-compatible streaming contract; Sprint 12 remains open for bound provider approval records, encrypted credential storage or secret-manager integration, provider-specific external adapters, Ollama streaming, circuit breakers, cost accounting, and broader payload validation.

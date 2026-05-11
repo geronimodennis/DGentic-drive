@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009g Authenticated Audit Actor Propagation
+
+Status: completed for the scoped authenticated audit actor propagation slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, network approval records, non-provider network surfaces, and task-scoped agent-context verification.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected audit actor propagation as the next bounded Sprint 15 security slice after credential resolver adapter plumbing.
+- Completed: Security/Reviewer scouts identified spoofable direct execution/requester paths and audit events that still defaulted to `system`.
+- Completed: Developer bound authenticated principals over body/query `requested_by` on direct CLI execution/runs, provider generation/streaming, and direct generated-tool execution while preserving unauthenticated development/test behavior.
+- Completed: Developer added authenticated actor audit propagation for direct CLI approval execution, filesystem operations and policy checks, CLI command-policy rule creation/update/evaluation, provider generation/streaming, generated-tool approval/execution events, task execution, agent lifecycle/reconciliation, memory operations, tool registration/generation/governance, and session summaries.
+- Completed: Developer blocked cross-principal direct CLI approval execution unless the authenticated principal has admin capability.
+- Completed: QA added focused authenticated-spoofing regressions for CLI approval creation/decision/execution, direct CLI execution and async runs, filesystem audit events, CLI policy audit events, provider generation/streaming audit events, and generated-tool execution audit events.
+- Completed: PM updated the backlog, README, setup/usage limitations, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: authenticated principals now override caller-supplied requester metadata on high-risk direct execution/generation APIs before runtime binding and audit persistence.
+- Implemented in this slice: audit `actor` fields now use the authenticated principal for the covered API-triggered filesystem, CLI, provider, tool, agent, memory, task, and session mutation surfaces.
+- Still out of scope after this slice: richer user/group identity workflows, encrypted local credential vaulting, first-class provider-specific secret-manager APIs, network approval records, non-provider network surfaces, and stronger verification for body-supplied orchestration agent context (`agent_id`, `agent_role`, `task_id`).
+
+Validation:
+- Focused actor propagation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_cli_approval_api_uses_authenticated_principal_as_reviewer tests\test_api.py::test_cli_approval_direct_execute_requires_bound_authenticated_requester tests\test_api.py::test_cli_execute_api_uses_authenticated_principal_over_body_requested_by tests\test_api.py::test_cli_runs_api_uses_authenticated_principal_over_body_requested_by tests\test_api.py::test_filesystem_api_uses_authenticated_principal_as_audit_actor tests\test_api.py::test_cli_policy_api_uses_authenticated_principal_as_audit_actor tests\test_api.py::test_external_provider_generate_api_uses_authenticated_principal_as_audit_actor tests\test_api.py::test_external_provider_generate_stream_api_uses_authenticated_principal_as_audit_actor tests\test_api.py::test_generated_tool_execute_api_uses_authenticated_principal_over_body_requested_by` passed with 9 tests.
+- API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py` passed with 154 tests.
+- Runtime/auth/policy gates: `uv --cache-dir .uv-cache run pytest -q tests\test_cli_runtime.py`, `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py`, `uv --cache-dir .uv-cache run pytest -q tests\test_command_policy.py`, and `uv --cache-dir .uv-cache run pytest -q tests\test_tool_runtime.py` passed with 62 passed/2 skipped, 64 passed, 273 passed, and 38 passed respectively.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 892 tests and 2 skipped.
+- Lint/format/diff gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with network approval records and non-provider network surfaces unless a dedicated key-management design is ready for encrypted local credential vaulting.
+
 ### Sprint 15 BL-009f Credential Resolver Adapter Plumbing
 
 Status: completed for the scoped external credential resolver adapter slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, network approval records, non-provider network surfaces, and broader audit actor propagation.

@@ -88,7 +88,9 @@ def _blocked_decision(
     )
 
 
-def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
+def evaluate_file_access(
+    request: FileAccessRequest, *, actor: str | None = None
+) -> FileAccessDecision:
     root_dir, protected_data_dir = _root_and_data_dirs()
     resolved = _resolve_guarded_path(request.path, root_dir)
     target_resolved: Path | None = None
@@ -137,6 +139,7 @@ def evaluate_file_access(request: FileAccessRequest) -> FileAccessDecision:
     event_log.record(
         LogEventType.filesystem,
         "Evaluated filesystem access policy.",
+        actor=actor or "system",
         metadata=decision.model_dump(mode="json"),
     )
     return decision
@@ -299,8 +302,10 @@ def _copy_path(source: Path, target: Path, *, overwrite: bool, recursive: bool) 
     return target.stat().st_size
 
 
-def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
-    decision = evaluate_file_access(_file_access_request(request, "read"))
+def read_guarded_text_file(
+    request: FileReadRequest, *, actor: str | None = None
+) -> FileReadResponse:
+    decision = evaluate_file_access(_file_access_request(request, "read"), actor=actor)
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -317,13 +322,16 @@ def read_guarded_text_file(request: FileReadRequest) -> FileReadResponse:
     event_log.record(
         LogEventType.filesystem,
         "Read guarded text file.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "bytes_read": response.bytes_read},
     )
     return response
 
 
-def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
-    decision = evaluate_file_access(_file_access_request(request, "write"))
+def write_guarded_text_file(
+    request: FileWriteRequest, *, actor: str | None = None
+) -> FileWriteResponse:
+    decision = evaluate_file_access(_file_access_request(request, "write"), actor=actor)
     _require_file_permission(decision)
     content_bytes = request.content.encode("utf-8")
     _ensure_payload_size(len(content_bytes))
@@ -338,13 +346,16 @@ def write_guarded_text_file(request: FileWriteRequest) -> FileWriteResponse:
     event_log.record(
         LogEventType.filesystem,
         "Wrote guarded text file.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "bytes_written": response.bytes_written},
     )
     return response
 
 
-def read_guarded_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
-    decision = evaluate_file_access(_file_access_request(request, "binary_read"))
+def read_guarded_binary_file(
+    request: FileBinaryReadRequest, *, actor: str | None = None
+) -> FileBinaryReadResponse:
+    decision = evaluate_file_access(_file_access_request(request, "binary_read"), actor=actor)
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -361,13 +372,16 @@ def read_guarded_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadRe
     event_log.record(
         LogEventType.filesystem,
         "Read guarded binary file.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "bytes_read": response.bytes_read},
     )
     return response
 
 
-def write_guarded_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
-    decision = evaluate_file_access(_file_access_request(request, "binary_write"))
+def write_guarded_binary_file(
+    request: FileBinaryWriteRequest, *, actor: str | None = None
+) -> FileWriteResponse:
+    decision = evaluate_file_access(_file_access_request(request, "binary_write"), actor=actor)
     _require_file_permission(decision)
     try:
         content = base64.b64decode(request.content_base64.encode("ascii"), validate=True)
@@ -381,13 +395,16 @@ def write_guarded_binary_file(request: FileBinaryWriteRequest) -> FileWriteRespo
     event_log.record(
         LogEventType.filesystem,
         "Wrote guarded binary file.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "bytes_written": response.bytes_written},
     )
     return response
 
 
-def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
-    decision = evaluate_file_access(_file_access_request(request, "delete"))
+def delete_guarded_path(
+    request: FileDeleteRequest, *, actor: str | None = None
+) -> FileDeleteResponse:
+    decision = evaluate_file_access(_file_access_request(request, "delete"), actor=actor)
     _require_file_permission(decision, approved=request.approved)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -402,6 +419,7 @@ def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
     event_log.record(
         LogEventType.filesystem,
         "Deleted guarded filesystem path.",
+        actor=actor or "system",
         metadata={
             "path": str(decision.path),
             "recursive": request.recursive,
@@ -411,8 +429,10 @@ def delete_guarded_path(request: FileDeleteRequest) -> FileDeleteResponse:
     return response
 
 
-def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
-    decision = evaluate_file_access(_file_access_request(request, "move", request.target_path))
+def move_guarded_path(request: FileMoveRequest, *, actor: str | None = None) -> FileMoveResponse:
+    decision = evaluate_file_access(
+        _file_access_request(request, "move", request.target_path), actor=actor
+    )
     _require_file_permission(decision, approved=request.approved)
     if decision.resolved_target_path is None:
         raise PermissionError("Move operation requires a target path.")
@@ -432,6 +452,7 @@ def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
     event_log.record(
         LogEventType.filesystem,
         "Moved guarded filesystem path.",
+        actor=actor or "system",
         metadata={
             "path": str(decision.path),
             "target_path": str(request.target_path),
@@ -442,8 +463,10 @@ def move_guarded_path(request: FileMoveRequest) -> FileMoveResponse:
     return response
 
 
-def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
-    decision = evaluate_file_access(_file_access_request(request, "copy", request.target_path))
+def copy_guarded_path(request: FileCopyRequest, *, actor: str | None = None) -> FileCopyResponse:
+    decision = evaluate_file_access(
+        _file_access_request(request, "copy", request.target_path), actor=actor
+    )
     _require_file_permission(decision, approved=request.approved)
     if decision.resolved_target_path is None:
         raise PermissionError("Copy operation requires a target path.")
@@ -465,6 +488,7 @@ def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
     event_log.record(
         LogEventType.filesystem,
         "Copied guarded filesystem path.",
+        actor=actor or "system",
         metadata={
             "path": str(decision.path),
             "target_path": str(request.target_path),
@@ -477,7 +501,9 @@ def copy_guarded_path(request: FileCopyRequest) -> FileCopyResponse:
     return response
 
 
-def rename_guarded_path(request: FileRenameRequest) -> FileRenameResponse:
+def rename_guarded_path(
+    request: FileRenameRequest, *, actor: str | None = None
+) -> FileRenameResponse:
     target_logical_path = request.path.parent / request.new_name
     move_request = FileMoveRequest(
         agent_id=request.agent_id,
@@ -488,12 +514,14 @@ def rename_guarded_path(request: FileRenameRequest) -> FileRenameResponse:
         overwrite=request.overwrite,
         approved=request.approved,
     )
-    moved = move_guarded_path(move_request)
+    moved = move_guarded_path(move_request, actor=actor)
     return FileRenameResponse(path=moved.path, target_path=moved.target_path, renamed=moved.moved)
 
 
-def get_guarded_path_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
-    decision = evaluate_file_access(_file_access_request(request, "metadata"))
+def get_guarded_path_metadata(
+    request: FileMetadataRequest, *, actor: str | None = None
+) -> FileMetadataResponse:
+    decision = evaluate_file_access(_file_access_request(request, "metadata"), actor=actor)
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -501,13 +529,16 @@ def get_guarded_path_metadata(request: FileMetadataRequest) -> FileMetadataRespo
     event_log.record(
         LogEventType.filesystem,
         "Read guarded filesystem metadata.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "type": response.type},
     )
     return response
 
 
-def list_guarded_directory(request: FileListRequest) -> FileListResponse:
-    decision = evaluate_file_access(_file_access_request(request, "list"))
+def list_guarded_directory(
+    request: FileListRequest, *, actor: str | None = None
+) -> FileListResponse:
+    decision = evaluate_file_access(_file_access_request(request, "list"), actor=actor)
     _require_file_permission(decision)
     if not decision.resolved_path.exists():
         raise FileNotFoundError(str(decision.path))
@@ -530,13 +561,18 @@ def list_guarded_directory(request: FileListRequest) -> FileListResponse:
     event_log.record(
         LogEventType.filesystem,
         "Listed guarded filesystem directory.",
+        actor=actor or "system",
         metadata={"path": str(decision.path), "entry_count": len(entries)},
     )
     return response
 
 
-def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
-    return evaluate_configured_command_policy(request)
+def evaluate_command_policy(
+    request: CommandPolicyRequest,
+    *,
+    actor: str | None = None,
+) -> CommandPolicyDecision:
+    return evaluate_configured_command_policy(request, actor=actor)
 
 
 def execute_guarded_command(request: CommandExecutionRequest) -> CommandExecutionResult:

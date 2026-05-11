@@ -380,6 +380,7 @@ def create_tool_approval(
     event_log.record(
         LogEventType.approval,
         "Created generated tool approval request.",
+        actor=approval.requested_by or "system",
         subject_id=approval.id,
         metadata={
             "tool_name": approval.tool_name,
@@ -632,8 +633,9 @@ def _claim_bound_tool_approval(
     event_log.record(
         LogEventType.approval,
         "Claimed generated tool approval for execution.",
+        actor=requested_by or approval.requested_by or "system",
         subject_id=approval.id,
-        metadata={"tool_name": manifest.name},
+        metadata={"tool_name": manifest.name, "requested_by": requested_by},
     )
 
 
@@ -1318,6 +1320,7 @@ def _record_execution_event(
     event_log.record(
         LogEventType.tool,
         "Executed generated tool.",
+        actor=requested_by or "system",
         subject_id=manifest.name,
         metadata={
             "tool_name": manifest.name,

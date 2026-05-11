@@ -16,7 +16,7 @@ from dgentic.storage import JsonCollection
 _records = JsonCollection("memory", MemoryRecord)
 
 
-def add_memory(record: MemoryRecord) -> MemoryRecord:
+def add_memory(record: MemoryRecord, *, actor: str | None = None) -> MemoryRecord:
     memory = record.model_copy(
         update={
             "id": record.id or f"memory-{uuid4()}",
@@ -27,13 +27,14 @@ def add_memory(record: MemoryRecord) -> MemoryRecord:
     event_log.record(
         LogEventType.memory,
         "Indexed memory record.",
+        actor=actor or "system",
         subject_id=memory.id,
         metadata={"tags": memory.tags, "kind": memory.kind},
     )
     return memory
 
 
-def search_memory(query: MemoryQuery) -> list[MemorySearchResult]:
+def search_memory(query: MemoryQuery, *, actor: str | None = None) -> list[MemorySearchResult]:
     text = query.text.lower().strip()
     tags = set(query.tags)
     results: list[MemorySearchResult] = []
@@ -53,6 +54,7 @@ def search_memory(query: MemoryQuery) -> list[MemorySearchResult]:
     event_log.record(
         LogEventType.memory,
         "Searched memory records.",
+        actor=actor or "system",
         metadata={"query": query.model_dump(), "matches": len(results)},
     )
     return results[: query.limit]

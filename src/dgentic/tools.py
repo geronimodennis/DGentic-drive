@@ -19,11 +19,12 @@ from dgentic.storage import JsonCollection
 _tools = JsonCollection("tools", ToolManifest, key_field="name")
 
 
-def register_tool(manifest: ToolManifest) -> ToolManifest:
+def register_tool(manifest: ToolManifest, *, actor: str | None = None) -> ToolManifest:
     _tools.upsert(manifest)
     event_log.record(
         LogEventType.tool,
         "Registered local tool manifest.",
+        actor=actor or "system",
         subject_id=manifest.name,
         metadata=manifest.model_dump(mode="json"),
     )
@@ -42,7 +43,9 @@ def save_tool_manifest(manifest: ToolManifest) -> ToolManifest:
     return _tools.upsert(manifest)
 
 
-def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
+def generate_tool(
+    request: ToolGenerationRequest, *, actor: str | None = None
+) -> ToolGenerationResult:
     if request.permission_mode == PermissionMode.blocked:
         raise PermissionError("Generated tools cannot be registered with blocked permission mode.")
 
@@ -80,7 +83,7 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     manifest_json = json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n"
     manifest_path.write_text(manifest_json, encoding="utf-8")
     readme_path.write_text(_readme(request, manifest), encoding="utf-8")
-    register_tool(manifest)
+    register_tool(manifest, actor=actor)
     add_memory(
         MemoryRecord(
             kind=MemoryKind.artifact,
@@ -88,7 +91,8 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
             content=manifest.description,
             tags=sorted(set(manifest.tags + ["tool", "localmcp"])),
             relevance=0.8,
-        )
+        ),
+        actor=actor,
     )
 
     result = ToolGenerationResult(
@@ -100,6 +104,7 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     event_log.record(
         LogEventType.tool,
         "Generated local tool.",
+        actor=actor or "system",
         subject_id=manifest.name,
         metadata={
             "tool_dir": str(tool_dir),
@@ -111,7 +116,12 @@ def generate_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
     return result
 
 
-def update_tool_governance(name: str, update: ToolGovernanceUpdate) -> ToolManifest | None:
+def update_tool_governance(
+    name: str,
+    update: ToolGovernanceUpdate,
+    *,
+    actor: str | None = None,
+) -> ToolManifest | None:
     tool = next((item for item in _tools.list() if item.name == name), None)
     if tool is None:
         return None
@@ -121,10 +131,11 @@ def update_tool_governance(name: str, update: ToolGovernanceUpdate) -> ToolManif
             "deprecated_reason": update.reason if update.status != ToolStatus.active else None,
         }
     )
-    register_tool(updated)
+    register_tool(updated, actor=actor)
     event_log.record(
         LogEventType.tool,
         "Updated local tool governance.",
+        actor=actor or "system",
         subject_id=name,
         metadata={"status": update.status, "reason": update.reason},
     )

@@ -2151,6 +2151,49 @@ def test_guarded_filesystem_binary_list_metadata_and_audit(tmp_path, monkeypatch
     get_settings.cache_clear()
 
 
+def test_filesystem_api_uses_authenticated_principal_as_audit_actor(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    token = "filesystem-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=filesystem,logs")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    write_response = client.post(
+        "/filesystem/write",
+        headers=headers,
+        json={"path": "notes/audit.txt", "content": "principal audit", "create_parent_dirs": True},
+    )
+    read_response = client.post(
+        "/filesystem/read",
+        headers=headers,
+        json={"path": "notes/audit.txt"},
+    )
+    logs_response = client.get("/logs?event_type=filesystem", headers=headers)
+
+    assert write_response.status_code == 200
+    assert read_response.status_code == 200
+    assert read_response.json()["content"] == "principal audit"
+    assert any(
+        event["message"] == "Evaluated filesystem access policy." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Wrote guarded text file." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Read guarded text file." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    get_settings.cache_clear()
+
+
 def test_guarded_filesystem_destructive_operations_require_approval(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
@@ -3219,8 +3262,67 @@ def test_cli_approval_api_uses_authenticated_principal_as_reviewer(
     )
 
     assert create_response.status_code == 201
+    assert create_response.json()["requested_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
     assert approve_response.status_code == 200
     assert approve_response.json()["decided_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
+    get_settings.cache_clear()
+
+
+def test_cli_approval_direct_execute_requires_bound_authenticated_requester(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    requester_token = "cli-requester-token"
+    executor_token = "cli-executor-token"
+    requester_actor = sha256(requester_token.encode("utf-8")).hexdigest()[:12]
+    executor_actor = sha256(executor_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        f"{requester_token}=cli,logs;{executor_token}=cli,logs",
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    requester_headers = {"Authorization": f"Bearer {requester_token}"}
+    executor_headers = {"Authorization": f"Bearer {executor_token}"}
+
+    create_response = client.post(
+        "/cli/approvals?requested_by=spoofed-query-actor",
+        json={"command": "python --version", "timeout_seconds": 10},
+        headers=requester_headers,
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+        headers=requester_headers,
+    )
+    cross_execute_response = client.post(
+        f"/cli/approvals/{approval_id}/execute",
+        headers=executor_headers,
+    )
+    execute_response = client.post(
+        f"/cli/approvals/{approval_id}/execute",
+        headers=requester_headers,
+    )
+    logs_response = client.get("/logs?event_type=cli", headers=requester_headers)
+
+    assert create_response.status_code == 201
+    assert create_response.json()["requested_by"] == requester_actor
+    assert approve_response.status_code == 200
+    assert cross_execute_response.status_code == 403
+    assert "different requester" in cross_execute_response.json()["detail"]
+    assert executor_actor not in logs_response.text
+    assert execute_response.status_code == 200
+    assert execute_response.json()["requested_by"] == requester_actor
+    assert any(
+        event["message"] == "Recorded CLI command run." and event["actor"] == requester_actor
+        for event in logs_response.json()
+    )
     get_settings.cache_clear()
 
 
@@ -3408,6 +3510,57 @@ def test_cli_runs_api_accepts_bound_approval_id_in_production(tmp_path, monkeypa
     get_settings.cache_clear()
 
 
+def test_cli_runs_api_uses_authenticated_principal_over_body_requested_by(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    token = "cli-run-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=cli,logs")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    start_response = client.post(
+        "/cli/runs",
+        headers=headers,
+        json={
+            "command": "cmd /c echo principal-run",
+            "approved": True,
+            "timeout_seconds": 10,
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+    run_id = start_response.json()["id"]
+
+    assert start_response.status_code == 202
+    assert start_response.json()["requested_by"] == actor_id
+
+    for _attempt in range(40):
+        final_response = client.get(f"/cli/runs/{run_id}", headers=headers)
+        if final_response.json()["completed_at"] is not None:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("Authenticated API command run did not finalize.")
+
+    logs_response = client.get("/logs?event_type=cli", headers=headers)
+
+    assert final_response.json()["requested_by"] == actor_id
+    assert "principal-run" in final_response.json()["stdout"]
+    assert "spoofed-body-actor" not in final_response.text + logs_response.text
+    assert any(
+        event["subject_id"] == run_id and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    get_settings.cache_clear()
+
+
 def test_cli_policy_rule_api_persists_and_controls_command_decisions(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
@@ -3451,6 +3604,66 @@ def test_cli_policy_rule_api_persists_and_controls_command_decisions(tmp_path, m
     assert update_response.status_code == 200
     assert update_response.json()["enabled"] is False
     assert disabled_decision_response.json()["permission_mode"] == "autopilot_safe"
+    get_settings.cache_clear()
+
+
+def test_cli_policy_api_uses_authenticated_principal_as_audit_actor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    token = "cli-policy-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=cli,logs")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create_response = client.post(
+        "/cli/policy/rules",
+        headers=headers,
+        json={
+            "name": "Audit block unsafe flag",
+            "match_type": "argument_contains",
+            "pattern": "--audit-unsafe",
+            "permission_mode": "blocked",
+            "reason": "Unsafe audit flag is blocked.",
+            "priority": 5,
+        },
+    )
+    rule_id = create_response.json()["id"]
+    decision_response = client.post(
+        "/guardrails/commands",
+        headers=headers,
+        json={"command": "cmd /c echo --audit-unsafe"},
+    )
+    update_response = client.patch(
+        f"/cli/policy/rules/{rule_id}",
+        headers=headers,
+        json={"enabled": False},
+    )
+    logs_response = client.get("/logs?event_type=cli", headers=headers)
+
+    assert create_response.status_code == 201
+    assert decision_response.status_code == 200
+    assert decision_response.json()["matched_rule_id"] == rule_id
+    assert update_response.status_code == 200
+    assert any(
+        event["message"] == "Created CLI command policy rule." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Evaluated CLI command policy." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Updated CLI command policy rule." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
     get_settings.cache_clear()
 
 
@@ -3687,6 +3900,44 @@ def test_cli_execute_api_records_context_and_environment_keys(tmp_path, monkeypa
     latest_run = runs_response.json()[-1]
     assert latest_run["environment_keys"] == ["DGENTIC_TEST_FLAG"]
     assert latest_run["agent_role"] == "developer"
+    get_settings.cache_clear()
+
+
+def test_cli_execute_api_uses_authenticated_principal_over_body_requested_by(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    token = "cli-execute-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=cli,logs")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.post(
+        "/cli/execute",
+        headers=headers,
+        json={
+            "command": "cmd /c echo principal-execute",
+            "approved": True,
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+    logs_response = client.get("/logs?event_type=cli", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["requested_by"] == actor_id
+    assert "principal-execute" in response.json()["stdout"]
+    assert "spoofed-body-actor" not in response.text + logs_response.text
+    assert any(
+        event["message"] == "Recorded CLI command run." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
     get_settings.cache_clear()
 
 
@@ -4819,6 +5070,54 @@ def test_tool_approval_approve_api_requires_approvals_capability(
     get_settings.cache_clear()
 
 
+def test_generated_tool_execute_api_uses_authenticated_principal_over_body_requested_by(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    token = "tool-execute-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=tools,logs")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    generate_response = client.post(
+        "/tools/generate",
+        headers=headers,
+        json={
+            "name": "api-principal-tool",
+            "description": "Records authenticated execution principal.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": "def run(payload):\n    return {'value': payload.get('value')}\n",
+        },
+    )
+    execute_response = client.post(
+        "/tools/api-principal-tool/execute",
+        headers=headers,
+        json={
+            "payload": {"value": "principal-tool"},
+            "requested_by": "spoofed-body-actor",
+            "timeout_seconds": 5,
+        },
+    )
+    logs_response = client.get("/logs?event_type=tool", headers=headers)
+
+    assert generate_response.status_code == 201
+    assert execute_response.status_code == 200
+    assert execute_response.json()["parsed_output"]["value"] == "principal-tool"
+    assert "spoofed-body-actor" not in execute_response.text + logs_response.text
+    assert any(
+        event["message"] == "Executed generated tool."
+        and event["actor"] == actor_id
+        and event["metadata"]["requested_by"] == actor_id
+        for event in logs_response.json()
+    )
+    get_settings.cache_clear()
+
+
 def test_generated_tool_execute_api_redacts_secret_outputs_and_audits(
     isolated_tool_api_state,
 ) -> None:
@@ -5525,6 +5824,72 @@ def test_external_provider_generate_stream_api_sends_authorization_and_redacts_l
     get_settings.cache_clear()
 
 
+def test_external_provider_generate_stream_api_uses_authenticated_principal_as_audit_actor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    token = "provider-stream-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=providers,logs")
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        return FakeStreamResponse(
+            openai_stream_lines(
+                {
+                    "id": "chatcmpl-stream-principal",
+                    "model": "gpt-test",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "Principal"}, "finish_reason": None}
+                    ],
+                },
+                {
+                    "id": "chatcmpl-stream-principal",
+                    "model": "gpt-test",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            )
+        )
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.post(
+        "/providers/generate/stream",
+        headers=headers,
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider", headers=headers)
+
+    assert response.status_code == 200
+    assert calls == ["https://provider.example.test/v1/chat/completions"]
+    assert "Principal" in response.text
+    assert "spoofed-body-actor" not in response.text + logs_response.text
+    assert any(
+        event["message"] == "Started provider streaming generation."
+        and event["actor"] == actor_id
+        and event["metadata"]["requested_by"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Completed provider streaming generation."
+        and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
+    get_settings.cache_clear()
+
+
 def test_external_provider_generate_stream_api_returns_configured_model_cost(
     tmp_path,
     monkeypatch,
@@ -5999,6 +6364,79 @@ def test_external_provider_generate_api_sends_authorization_and_redacts_logs(
         assert raw_secret not in serialized
     assert "Hello external API." in response.text
     assert "Hello external API." not in logs_response.text
+    get_settings.cache_clear()
+
+
+def test_external_provider_generate_api_uses_authenticated_principal_as_audit_actor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    token = "provider-direct-principal-token"
+    actor_id = sha256(token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=providers,logs")
+    configure_external_provider_api(monkeypatch)
+    calls: list[str] = []
+    raw_response = {
+        "id": "chatcmpl-direct-principal",
+        "model": "gpt-test",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Principal response."},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(raw_response).encode("utf-8")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.post(
+        "/providers/generate",
+        headers=headers,
+        json={
+            "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "approved": True,
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+    logs_response = client.get("/logs?event_type=provider", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "Principal response."
+    assert calls == ["https://provider.example.test/v1/chat/completions"]
+    assert "spoofed-body-actor" not in response.text + logs_response.text
+    assert any(
+        event["message"] == "Started provider generation."
+        and event["actor"] == actor_id
+        and event["metadata"]["requested_by"] == actor_id
+        for event in logs_response.json()
+    )
+    assert any(
+        event["message"] == "Completed provider generation." and event["actor"] == actor_id
+        for event in logs_response.json()
+    )
     get_settings.cache_clear()
 
 

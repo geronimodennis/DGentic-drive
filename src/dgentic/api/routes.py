@@ -208,6 +208,13 @@ def _approval_requester(http_request: Request, requested_by: str | None) -> str 
     return _principal_actor(http_request) or requested_by
 
 
+def _bind_principal_requester(payload, http_request: Request):
+    actor = _principal_actor(http_request)
+    if actor is None:
+        return payload
+    return payload.model_copy(update={"requested_by": actor})
+
+
 @router.get("/", response_model=HealthResponse)
 def root() -> HealthResponse:
     settings = get_settings()
@@ -350,8 +357,8 @@ def get_task_plans() -> list[TaskPlan]:
 
 
 @router.post("/tasks/execute", response_model=TaskRun, status_code=201)
-def execute_task_plan(plan: TaskPlan) -> TaskRun:
-    return execution_engine.execute_plan(plan)
+def execute_task_plan(plan: TaskPlan, request: Request) -> TaskRun:
+    return execution_engine.execute_plan(plan, actor=_principal_actor(request))
 
 
 @router.get("/tasks/runs", response_model=list[TaskRun])
@@ -646,6 +653,13 @@ def _orchestration_include_all(request: Request) -> bool:
     principal = getattr(request.state, "principal", None)
     if principal is None:
         return True
+    return _principal_is_admin(request)
+
+
+def _principal_is_admin(request: Request) -> bool:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return False
     return bool(set(principal.capabilities) & {"admin", "*"})
 
 
@@ -679,14 +693,14 @@ def _agent_brief_is_visible(agent: AgentBrief, request: Request) -> bool:
 
 
 @router.post("/guardrails/filesystem", response_model=FileAccessDecision)
-def check_filesystem_access(request: FileAccessRequest) -> FileAccessDecision:
-    return evaluate_file_access(request)
+def check_filesystem_access(payload: FileAccessRequest, request: Request) -> FileAccessDecision:
+    return evaluate_file_access(payload, actor=_principal_actor(request))
 
 
 @router.post("/filesystem/read", response_model=FileReadResponse)
-def read_file(request: FileReadRequest) -> FileReadResponse:
+def read_file(payload: FileReadRequest, request: Request) -> FileReadResponse:
     try:
-        return read_guarded_text_file(request)
+        return read_guarded_text_file(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -696,9 +710,9 @@ def read_file(request: FileReadRequest) -> FileReadResponse:
 
 
 @router.post("/filesystem/write", response_model=FileWriteResponse)
-def write_file(request: FileWriteRequest) -> FileWriteResponse:
+def write_file(payload: FileWriteRequest, request: Request) -> FileWriteResponse:
     try:
-        return write_guarded_text_file(request)
+        return write_guarded_text_file(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -708,9 +722,9 @@ def write_file(request: FileWriteRequest) -> FileWriteResponse:
 
 
 @router.post("/filesystem/read-binary", response_model=FileBinaryReadResponse)
-def read_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
+def read_binary_file(payload: FileBinaryReadRequest, request: Request) -> FileBinaryReadResponse:
     try:
-        return read_guarded_binary_file(request)
+        return read_guarded_binary_file(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -720,9 +734,9 @@ def read_binary_file(request: FileBinaryReadRequest) -> FileBinaryReadResponse:
 
 
 @router.post("/filesystem/write-binary", response_model=FileWriteResponse)
-def write_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
+def write_binary_file(payload: FileBinaryWriteRequest, request: Request) -> FileWriteResponse:
     try:
-        return write_guarded_binary_file(request)
+        return write_guarded_binary_file(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -733,9 +747,9 @@ def write_binary_file(request: FileBinaryWriteRequest) -> FileWriteResponse:
 
 
 @router.post("/filesystem/delete", response_model=FileDeleteResponse)
-def delete_file(request: FileDeleteRequest) -> FileDeleteResponse:
+def delete_file(payload: FileDeleteRequest, request: Request) -> FileDeleteResponse:
     try:
-        return delete_guarded_path(request)
+        return delete_guarded_path(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -745,9 +759,9 @@ def delete_file(request: FileDeleteRequest) -> FileDeleteResponse:
 
 
 @router.post("/filesystem/move", response_model=FileMoveResponse)
-def move_file(request: FileMoveRequest) -> FileMoveResponse:
+def move_file(payload: FileMoveRequest, request: Request) -> FileMoveResponse:
     try:
-        return move_guarded_path(request)
+        return move_guarded_path(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileExistsError as exc:
@@ -757,9 +771,9 @@ def move_file(request: FileMoveRequest) -> FileMoveResponse:
 
 
 @router.post("/filesystem/copy", response_model=FileCopyResponse)
-def copy_file(request: FileCopyRequest) -> FileCopyResponse:
+def copy_file(payload: FileCopyRequest, request: Request) -> FileCopyResponse:
     try:
-        return copy_guarded_path(request)
+        return copy_guarded_path(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileExistsError as exc:
@@ -773,9 +787,9 @@ def copy_file(request: FileCopyRequest) -> FileCopyResponse:
 
 
 @router.post("/filesystem/rename", response_model=FileRenameResponse)
-def rename_file(request: FileRenameRequest) -> FileRenameResponse:
+def rename_file(payload: FileRenameRequest, request: Request) -> FileRenameResponse:
     try:
-        return rename_guarded_path(request)
+        return rename_guarded_path(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileExistsError as exc:
@@ -785,9 +799,9 @@ def rename_file(request: FileRenameRequest) -> FileRenameResponse:
 
 
 @router.post("/filesystem/metadata", response_model=FileMetadataResponse)
-def get_file_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
+def get_file_metadata(payload: FileMetadataRequest, request: Request) -> FileMetadataResponse:
     try:
-        return get_guarded_path_metadata(request)
+        return get_guarded_path_metadata(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -795,9 +809,9 @@ def get_file_metadata(request: FileMetadataRequest) -> FileMetadataResponse:
 
 
 @router.post("/filesystem/list", response_model=FileListResponse)
-def list_directory(request: FileListRequest) -> FileListResponse:
+def list_directory(payload: FileListRequest, request: Request) -> FileListResponse:
     try:
-        return list_guarded_directory(request)
+        return list_guarded_directory(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except NotADirectoryError as exc:
@@ -807,8 +821,8 @@ def list_directory(request: FileListRequest) -> FileListResponse:
 
 
 @router.post("/guardrails/commands", response_model=CommandPolicyDecision)
-def check_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
-    return evaluate_command_policy(request)
+def check_command_policy(payload: CommandPolicyRequest, request: Request) -> CommandPolicyDecision:
+    return evaluate_command_policy(payload, actor=_principal_actor(request))
 
 
 @router.post("/guardrails/network", response_model=NetworkPolicyDecision)
@@ -828,8 +842,11 @@ def check_network_policy(request: NetworkPolicyRequest) -> NetworkPolicyDecision
 
 
 @router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)
-def create_cli_policy_rule(request: CommandPolicyRuleRequest) -> CommandPolicyRule:
-    return create_command_policy_rule(request)
+def create_cli_policy_rule(
+    payload: CommandPolicyRuleRequest,
+    request: Request,
+) -> CommandPolicyRule:
+    return create_command_policy_rule(payload, actor=_principal_actor(request))
 
 
 @router.get("/cli/policy/rules", response_model=list[CommandPolicyRule])
@@ -841,17 +858,21 @@ def get_cli_policy_rules() -> list[CommandPolicyRule]:
 def patch_cli_policy_rule(
     rule_id: str,
     update: CommandPolicyRuleUpdate,
+    request: Request,
 ) -> CommandPolicyRule:
-    rule = update_command_policy_rule(rule_id, update)
+    rule = update_command_policy_rule(rule_id, update, actor=_principal_actor(request))
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
     return rule
 
 
 @router.post("/cli/execute", response_model=CommandExecutionResult)
-def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
+def execute_command(
+    payload: CommandExecutionRequest,
+    request: Request,
+) -> CommandExecutionResult:
     try:
-        return cli_runtime_service.execute_command(request)
+        return cli_runtime_service.execute_command(_bind_principal_requester(payload, request))
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=408, detail="Command timed out.") from exc
     except KeyError as exc:
@@ -865,9 +886,12 @@ def execute_command(request: CommandExecutionRequest) -> CommandExecutionResult:
 
 
 @router.post("/cli/runs", response_model=CommandRun, status_code=202)
-def start_cli_run(request: CommandExecutionRequest) -> CommandRun:
+def start_cli_run(
+    payload: CommandExecutionRequest,
+    request: Request,
+) -> CommandRun:
     try:
-        return cli_runtime_service.start_command(request)
+        return cli_runtime_service.start_command(_bind_principal_requester(payload, request))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -900,9 +924,9 @@ def get_cli_run_output(run_id: str, after_sequence: int = 0) -> CommandRunOutput
 
 
 @router.post("/cli/runs/{run_id}/cancel", response_model=CommandRun)
-def cancel_cli_run(run_id: str) -> CommandRun:
+def cancel_cli_run(run_id: str, request: Request) -> CommandRun:
     try:
-        return cli_runtime_service.cancel_command_run(run_id)
+        return cli_runtime_service.cancel_command_run(run_id, actor=_principal_actor(request))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -976,9 +1000,13 @@ def deny_cli_approval(
 
 
 @router.post("/cli/approvals/{approval_id}/execute", response_model=CommandExecutionResult)
-def execute_cli_approval(approval_id: str) -> CommandExecutionResult:
+def execute_cli_approval(approval_id: str, request: Request) -> CommandExecutionResult:
     try:
-        return cli_runtime_service.execute_approved_command(approval_id)
+        return cli_runtime_service.execute_approved_command(
+            approval_id,
+            actor=_principal_actor(request),
+            allow_cross_actor=_principal_is_admin(request),
+        )
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=408, detail="Command timed out.") from exc
     except KeyError as exc:
@@ -1093,9 +1121,12 @@ def decide_route(request: RoutingRequest) -> RoutingDecision:
 
 
 @router.post("/providers/generate", response_model=ProviderGenerationResult)
-def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenerationResult:
+def generate_with_provider(
+    payload: ProviderGenerationRequest,
+    request: Request,
+) -> ProviderGenerationResult:
     try:
-        return generate_provider_completion(request)
+        return generate_provider_completion(_bind_principal_requester(payload, request))
     except ProviderEgressPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderApprovalRequiredError as exc:
@@ -1113,9 +1144,12 @@ def generate_with_provider(request: ProviderGenerationRequest) -> ProviderGenera
 
 
 @router.post("/providers/generate/stream")
-def stream_with_provider(request: ProviderGenerationRequest) -> StreamingResponse:
+def stream_with_provider(
+    payload: ProviderGenerationRequest,
+    request: Request,
+) -> StreamingResponse:
     try:
-        events = stream_provider_completion(request)
+        events = stream_provider_completion(_bind_principal_requester(payload, request))
         try:
             first_event = next(events)
         except StopIteration:
@@ -1148,8 +1182,8 @@ def _provider_stream_lines(events: Iterable[ProviderStreamEvent]) -> Iterator[st
 
 
 @router.post("/agents", response_model=AgentBrief, status_code=201)
-def create_agent(brief: AgentBrief) -> AgentBrief:
-    return spawn_agent(brief)
+def create_agent(brief: AgentBrief, request: Request) -> AgentBrief:
+    return spawn_agent(brief, actor=_principal_actor(request))
 
 
 @router.get("/agents", response_model=list[AgentBrief])
@@ -1179,36 +1213,39 @@ def update_agent_lifecycle_status(
     current = get_agent(agent_id)
     if current is None or not _agent_brief_is_visible(current, request):
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
-    agent = update_agent_status(agent_id, update)
+    agent = update_agent_status(agent_id, update, actor=_principal_actor(request))
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     return agent
 
 
 @router.post("/agents/reconcile", response_model=AgentReconciliation)
-def reconcile_agent_outputs(outputs: list[AgentOutput]) -> AgentReconciliation:
-    return reconcile_outputs(outputs)
+def reconcile_agent_outputs(outputs: list[AgentOutput], request: Request) -> AgentReconciliation:
+    return reconcile_outputs(outputs, actor=_principal_actor(request))
 
 
 @router.post("/memory", response_model=MemoryRecord, status_code=201)
-def create_memory(record: MemoryRecord) -> MemoryRecord:
-    return add_memory(record)
+def create_memory(record: MemoryRecord, request: Request) -> MemoryRecord:
+    return add_memory(record, actor=_principal_actor(request))
 
 
 @router.post("/memory/search", response_model=list[MemorySearchResult])
-def query_memory(query: MemoryQuery) -> list[MemorySearchResult]:
-    return search_memory(query)
+def query_memory(query: MemoryQuery, request: Request) -> list[MemorySearchResult]:
+    return search_memory(query, actor=_principal_actor(request))
 
 
 @router.post("/tools", response_model=ToolManifest, status_code=201)
-def create_tool(manifest: ToolManifest) -> ToolManifest:
-    return register_tool(manifest)
+def create_tool(manifest: ToolManifest, request: Request) -> ToolManifest:
+    return register_tool(manifest, actor=_principal_actor(request))
 
 
 @router.post("/tools/generate", response_model=ToolGenerationResult, status_code=201)
-def generate_local_tool(request: ToolGenerationRequest) -> ToolGenerationResult:
+def generate_local_tool(
+    payload: ToolGenerationRequest,
+    request: Request,
+) -> ToolGenerationResult:
     try:
-        return generate_tool(request)
+        return generate_tool(payload, actor=_principal_actor(request))
     except (FileExistsError, ToolVersionConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -1293,18 +1330,22 @@ def deny_local_tool_approval(
 
 
 @router.post("/tools/{name}/execute", response_model=ToolExecutionResult)
-def execute_local_tool(name: str, request: ToolExecutionRequest) -> ToolExecutionResult:
+def execute_local_tool(
+    name: str,
+    payload: ToolExecutionRequest,
+    request: Request,
+) -> ToolExecutionResult:
     try:
         return execute_tool(
             name,
-            request.payload,
-            approved=request.approved,
-            approval_id=request.approval_id,
-            timeout_seconds=request.timeout_seconds,
-            requested_by=request.requested_by,
-            agent_id=request.agent_id,
-            agent_role=request.agent_role,
-            task_id=request.task_id,
+            payload.payload,
+            approved=payload.approved,
+            approval_id=payload.approval_id,
+            timeout_seconds=payload.timeout_seconds,
+            requested_by=_approval_requester(request, payload.requested_by),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1317,16 +1358,20 @@ def execute_local_tool(name: str, request: ToolExecutionRequest) -> ToolExecutio
 
 
 @router.patch("/tools/{name}/governance", response_model=ToolManifest)
-def update_local_tool_governance(name: str, update: ToolGovernanceUpdate) -> ToolManifest:
-    tool = update_tool_governance(name, update)
+def update_local_tool_governance(
+    name: str,
+    update: ToolGovernanceUpdate,
+    request: Request,
+) -> ToolManifest:
+    tool = update_tool_governance(name, update, actor=_principal_actor(request))
     if tool is None:
         raise HTTPException(status_code=404, detail=f"Tool not found: {name}")
     return tool
 
 
 @router.post("/sessions/summary", response_model=SessionSummary, status_code=201)
-def create_summary(summary: SessionSummary) -> SessionSummary:
-    return create_session_summary(summary)
+def create_summary(summary: SessionSummary, request: Request) -> SessionSummary:
+    return create_session_summary(summary, actor=_principal_actor(request))
 
 
 @router.get("/sessions/summary", response_model=list[SessionSummary])

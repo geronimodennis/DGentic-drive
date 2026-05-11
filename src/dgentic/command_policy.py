@@ -257,7 +257,11 @@ _SENSITIVE_FLAG_PREFIX_RE = re.compile(
 _rules = JsonCollection("cli-command-policy-rules", CommandPolicyRule)
 
 
-def create_command_policy_rule(request: CommandPolicyRuleRequest) -> CommandPolicyRule:
+def create_command_policy_rule(
+    request: CommandPolicyRuleRequest,
+    *,
+    actor: str | None = None,
+) -> CommandPolicyRule:
     rule = CommandPolicyRule(
         id=f"cmdpolicy-{uuid4()}",
         name=request.name,
@@ -273,6 +277,7 @@ def create_command_policy_rule(request: CommandPolicyRuleRequest) -> CommandPoli
     event_log.record(
         LogEventType.cli,
         "Created CLI command policy rule.",
+        actor=actor or "system",
         subject_id=rule.id,
         metadata=rule.model_dump(mode="json"),
     )
@@ -286,6 +291,8 @@ def list_command_policy_rules() -> list[CommandPolicyRule]:
 def update_command_policy_rule(
     rule_id: str,
     update: CommandPolicyRuleUpdate,
+    *,
+    actor: str | None = None,
 ) -> CommandPolicyRule | None:
     rule = _rules.get(rule_id)
     if rule is None:
@@ -301,13 +308,18 @@ def update_command_policy_rule(
     event_log.record(
         LogEventType.cli,
         "Updated CLI command policy rule.",
+        actor=actor or "system",
         subject_id=rule.id,
         metadata=rule.model_dump(mode="json"),
     )
     return rule
 
 
-def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecision:
+def evaluate_command_policy(
+    request: CommandPolicyRequest,
+    *,
+    actor: str | None = None,
+) -> CommandPolicyDecision:
     command = request.command.strip()
     parsed = parse_command(command)
     orchestration_decision = authorize_cli_action(
@@ -318,7 +330,7 @@ def evaluate_command_policy(request: CommandPolicyRequest) -> CommandPolicyDecis
 
     def finish(decision: CommandPolicyDecision) -> CommandPolicyDecision:
         decision = decision.model_copy(update={"orchestration": orchestration_decision})
-        _record_decision(decision)
+        _record_decision(decision, actor=actor)
         return decision
 
     if not orchestration_decision.allowed:
@@ -2549,12 +2561,13 @@ def _normalize_agent_roles(agent_roles: list[str]) -> list[str]:
     return sorted({role.strip().lower() for role in agent_roles if role.strip()})
 
 
-def _record_decision(decision: CommandPolicyDecision) -> None:
+def _record_decision(decision: CommandPolicyDecision, *, actor: str | None = None) -> None:
     metadata = decision.model_dump(mode="json")
     metadata["command"] = _redact_sensitive_values(metadata["command"])
     event_log.record(
         LogEventType.cli,
         "Evaluated CLI command policy.",
+        actor=actor or "system",
         metadata=metadata,
     )
 

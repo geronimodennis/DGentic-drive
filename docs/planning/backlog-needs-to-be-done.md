@@ -394,7 +394,7 @@ User value:
 Needs to be done:
 - Add persisted operator identity records and role/capability assignment workflows.
 - Hash tokens at rest and add token rotation, expiry, revocation, and audit trails.
-- Bind approval decisions and audit events to authenticated actor identities.
+- Bind approval decisions, direct executions, and audit events to authenticated actor identities.
 - Add encrypted credential storage or external secret manager integration for provider and runtime credentials.
 - Add network/domain guardrail policy for web retrieval, provider calls, generated tools, and future UI/API clients.
 - Add allowlist, denylist, approval-required, and audit modes for outbound network access.
@@ -402,20 +402,20 @@ Needs to be done:
 
 Acceptance criteria:
 - Operators can create, rotate, revoke, and expire tokens without storing raw token values.
-- Approval records and audit logs identify the actor responsible for decisions and executions.
+- Approval records and audit logs identify the authenticated actor responsible for decisions and executions.
 - Provider credentials are stored or referenced through a secure secret strategy and are never returned in API responses.
 - Network access can be allowed, denied, or approval-required by domain/policy.
 - Tests prove secrets are masked and network policy is enforced.
 
 Definition of Done:
-- Tests cover identity persistence, token hashing/rotation/expiry/revocation, actor-bound approvals, secret masking, credential storage boundaries, and network policy decisions.
+- Tests cover identity persistence, token hashing/rotation/expiry/revocation, actor-bound approvals/executions/audits, secret masking, credential storage boundaries, and network policy decisions.
 - Security review validates identity, secret, and network exposure risk.
 - README, setup docs, architecture docs, usage docs, and progress log are updated.
 
 Current implementation status:
-- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, legacy persisted-token compatibility, persisted-token startup bootstrap after env-token removal, assignment-limited token issuance, deactivated-operator token rejection, operator-id actor binding for persisted-token approval decisions, persisted external credential references, OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values, shell-free external-process credential resolver adapters with timeout/output bounds, provider-call network/domain guardrails with allow, deny, approval-required, and audit decisions, and secret-shaped metadata redaction for operator display/role fields plus auth-token and credential-reference labels across responses, audit metadata, and new or mutated JSON state.
+- Partially implemented: production/staging bearer-token capability gates, startup fail-closed auth validation, no-echo invalid token behavior, principal attachment on request state, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, one-time raw token return, token listing without hashes, rotation, revocation, expiry, auth audit events, `DGENTIC_AUTH_TOKENS` compatibility, legacy persisted-token compatibility, persisted-token startup bootstrap after env-token removal, assignment-limited token issuance, deactivated-operator token rejection, operator-id actor binding for persisted-token approval decisions, authenticated principal binding for direct CLI execution/runs, direct CLI approval execution, filesystem and command-policy audit events, provider generation/streaming, generated-tool execution, task, agent, memory, tool, and session mutations, persisted external credential references, OpenAI-compatible provider resolution through a configured credential reference without storing raw secret values, shell-free external-process credential resolver adapters with timeout/output bounds, provider-call network/domain guardrails with allow, deny, approval-required, and audit decisions, and secret-shaped metadata redaction for operator display/role fields plus auth-token and credential-reference labels across responses, audit metadata, and new or mutated JSON state.
 - Risk updated after Sprint 9 hardening: built-in read-only CLI path operands now receive cwd-aware rootDir checks, symlink escape checks, shell expansion checks, and Windows/POSIX path-shape regressions; broader host-boundary risks remain for trusted custom policy rules, non-built-in exfiltration commands, and time-of-check/time-of-use workspace changes.
-- Remaining: richer user/group identity workflows beyond persisted operators, encrypted local credential vaulting, first-class external secret manager adapters beyond the generic process-adapter bridge, broader audit actor propagation beyond the current approval/orchestration surfaces, broader CLI host-boundary enforcement beyond the current built-in read-only command set, network approval records for approval-required decisions, and non-provider network surfaces such as web retrieval and generated-tool network access.
+- Remaining: richer user/group identity workflows beyond persisted operators, encrypted local credential vaulting, first-class external secret manager adapters beyond the generic process-adapter bridge, task-scoped verification for caller-supplied orchestration agent context, broader CLI host-boundary enforcement beyond the current built-in read-only command set, network approval records for approval-required decisions, and non-provider network surfaces such as web retrieval and generated-tool network access.
 
 ### BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience
 
@@ -677,7 +677,8 @@ Current Sprint 15 status:
 - Completed checkpoint: BL-009d persisted operator identity and assignment workflows are implemented and focused-validation clean. This slice covers `operators.json`, `/auth/operators` create/list/get/update APIs, role/display metadata, capability normalization, token issuance limited to active operator assignments, deactivated-operator token rejection, legacy persisted-token compatibility, and safe operator audit events.
 - Completed checkpoint: BL-009e cross-surface identity/credential metadata redaction is implemented and focused-validation clean. This slice covers secret-shaped redaction for operator display/role fields, auth-token labels, and credential-reference labels before API responses, audit metadata, new persistence, and legacy-state mutation rewrites.
 - Completed checkpoint: BL-009f credential resolver adapter plumbing is implemented and focused-validation clean. This slice covers env-reference compatibility plus shell-free `external_process` credential references, bounded adapter config, transport-time-only provider secret resolution, approval preservation on adapter failure, no-secret persistence/logging, and oversized adapter output rejection.
-- Remaining after BL-009f: richer user/group identity workflows, encrypted local credential vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, network approval records and non-provider network surfaces, and broader audit actor propagation.
+- Completed checkpoint: BL-009g authenticated audit actor propagation is implemented and focused-validation clean. This slice covers authenticated principal override for spoofed direct execution/generation requesters, cross-principal direct CLI approval execution blocking unless admin, and authenticated audit actors for filesystem, CLI policy, CLI runs, provider generation/streaming, generated tools, task, agent, memory, tool, and session mutation events.
+- Remaining after BL-009g: richer user/group identity workflows, encrypted local credential vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, network approval records and non-provider network surfaces, task-scoped verification for caller-supplied orchestration agent context, and broader CLI host-boundary enforcement.
 
 Exit criteria:
 - Tokens are hashed at rest and support rotation, expiry, and revocation.

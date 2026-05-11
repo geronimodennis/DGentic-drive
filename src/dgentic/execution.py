@@ -10,7 +10,7 @@ class ExecutionEngine:
     def __init__(self) -> None:
         self._runs = JsonCollection("task-runs", TaskRun)
 
-    def execute_plan(self, plan: TaskPlan) -> TaskRun:
+    def execute_plan(self, plan: TaskPlan, *, actor: str | None = None) -> TaskRun:
         results = [
             StepResult(
                 step_id=step.id,
@@ -35,6 +35,7 @@ class ExecutionEngine:
         event_log.record(
             LogEventType.task,
             "Executed deterministic task plan.",
+            actor=actor or "system",
             subject_id=plan.id,
             metadata={"run_id": run.id, "steps": len(results)},
         )

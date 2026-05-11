@@ -365,6 +365,7 @@ def create_provider_approval(
     event_log.record(
         LogEventType.approval,
         "Created provider approval request.",
+        actor=approval.requested_by or "system",
         subject_id=approval.id,
         metadata={
             "provider_id": approval.provider_id,
@@ -532,11 +533,13 @@ def generate_provider_completion(
     event_log.record(
         LogEventType.provider,
         "Started provider generation.",
+        actor=request.requested_by or "system",
         subject_id=request.provider_id,
         metadata={
             "provider_id": request.provider_id,
             "model": request.model,
             "message_count": len(request.messages),
+            "requested_by": request.requested_by,
         },
     )
 
@@ -576,6 +579,7 @@ def generate_provider_completion(
         event_log.record(
             LogEventType.provider,
             "Completed provider generation.",
+            actor=request.requested_by or "system",
             subject_id=request.provider_id,
             metadata=_completion_event_metadata(result, retry_metadata=retry_metadata),
         )
@@ -586,11 +590,13 @@ def generate_provider_completion(
         event_log.record(
             LogEventType.provider,
             "Provider generation failed.",
+            actor=request.requested_by or "system",
             subject_id=request.provider_id,
             metadata={
                 "provider_id": request.provider_id,
                 "model": request.model,
                 "duration_ms": _duration_ms(started_at),
+                "requested_by": request.requested_by,
                 "error_type": type(exc).__name__,
                 "error": _safe_error_message(exc),
                 **transport_error_metadata(exc),
@@ -608,11 +614,13 @@ def stream_provider_completion(
     event_log.record(
         LogEventType.provider,
         "Started provider streaming generation.",
+        actor=request.requested_by or "system",
         subject_id=request.provider_id,
         metadata={
             "provider_id": request.provider_id,
             "model": request.model,
             "message_count": len(request.messages),
+            "requested_by": request.requested_by,
         },
     )
 
@@ -636,11 +644,13 @@ def stream_provider_completion(
         event_log.record(
             LogEventType.provider,
             "Provider streaming generation failed.",
+            actor=request.requested_by or "system",
             subject_id=request.provider_id,
             metadata={
                 "provider_id": request.provider_id,
                 "model": request.model,
                 "duration_ms": _duration_ms(started_at),
+                "requested_by": request.requested_by,
                 "error_type": type(exc).__name__,
                 "error": _safe_error_message(exc),
                 **transport_error_metadata(exc),
@@ -1129,11 +1139,13 @@ def _iter_provider_stream_events(
         event_log.record(
             LogEventType.provider,
             "Completed provider streaming generation.",
+            actor=request.requested_by or "system",
             subject_id=request.provider_id,
             metadata={
                 "provider_id": request.provider_id,
                 "model": request.model,
                 "duration_ms": _duration_ms(started_at),
+                "requested_by": request.requested_by,
                 "chunk_count": chunk_count,
                 "content_length": content_length,
                 "finish_reasons": finish_reasons,
@@ -1151,11 +1163,13 @@ def _iter_provider_stream_events(
         event_log.record(
             LogEventType.provider,
             "Provider streaming generation failed.",
+            actor=request.requested_by or "system",
             subject_id=request.provider_id,
             metadata={
                 "provider_id": request.provider_id,
                 "model": request.model,
                 "duration_ms": _duration_ms(started_at),
+                "requested_by": request.requested_by,
                 "chunk_count": chunk_count,
                 "content_length": content_length,
                 "error_type": type(exc).__name__,
@@ -1687,6 +1701,7 @@ def _claim_bound_provider_approval(
     event_log.record(
         LogEventType.approval,
         "Claimed provider approval for execution.",
+        actor=request.requested_by or approval.requested_by or "system",
         subject_id=approval.id,
         metadata={
             "provider_id": approval.provider_id,

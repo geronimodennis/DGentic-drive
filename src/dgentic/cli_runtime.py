@@ -571,6 +571,7 @@ class CliRuntimeService:
         requested_by: str | None = None,
     ) -> CommandApproval:
         cwd = resolve_command_cwd(request.cwd)
+        requested_by_value = requested_by or request.requested_by
         decision = evaluate_command_policy(
             CommandPolicyRequest(
                 command=request.command,
@@ -578,7 +579,8 @@ class CliRuntimeService:
                 agent_role=request.agent_role,
                 agent_id=request.agent_id,
                 task_id=request.task_id,
-            )
+            ),
+            actor=requested_by_value,
         )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
@@ -586,7 +588,6 @@ class CliRuntimeService:
             raise ValueError("Only approval-required commands can be queued for approval.")
         environment_keys = validate_command_environment(request.environment)
         environment_digest = command_environment_digest(request.environment)
-        requested_by_value = requested_by or request.requested_by
         command_digest = command_approval_digest(
             command=decision.command,
             cwd=cwd,
@@ -625,6 +626,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.approval,
             "Created CLI command approval request.",
+            actor=approval.requested_by or "system",
             subject_id=approval.id,
             metadata={
                 "command": redact_sensitive_values(approval.command),
@@ -797,8 +799,21 @@ class CliRuntimeService:
         )
         return approval.command_digest == expected_command_digest
 
-    def execute_approved_command(self, approval_id: str) -> CommandExecutionResult:
+    def execute_approved_command(
+        self,
+        approval_id: str,
+        *,
+        actor: str | None = None,
+        allow_cross_actor: bool = False,
+    ) -> CommandExecutionResult:
         approval = self._get_approval_or_raise(approval_id)
+        if (
+            actor is not None
+            and approval.requested_by is not None
+            and actor != approval.requested_by
+            and not allow_cross_actor
+        ):
+            raise PermissionError(f"Approval {approval_id} is bound to a different requester.")
         if approval.status != CommandApprovalStatus.approved:
             raise PermissionError(
                 f"Approval {approval_id} is not executable; current status is {approval.status}."
@@ -831,12 +846,21 @@ class CliRuntimeService:
             agent_role=approval.agent_role,
             task_id=approval.task_id,
         )
-        return self.execute_command(request)
+        return self.execute_command(request, actor=actor or approval.requested_by)
 
-    def execute_command(self, request: CommandExecutionRequest) -> CommandExecutionResult:
-        result, run = self._execute_request(request)
+    def execute_command(
+        self,
+        request: CommandExecutionRequest,
+        *,
+        actor: str | None = None,
+    ) -> CommandExecutionResult:
+        result, run = self._execute_request(request, actor=actor)
         if run.approval_id is not None:
-            self._mark_approval_executed(run.approval_id, run.id)
+            self._mark_approval_executed(
+                run.approval_id,
+                run.id,
+                actor=actor or request.requested_by,
+            )
         return result
 
     def start_command(self, request: CommandExecutionRequest) -> CommandRun:
@@ -864,11 +888,12 @@ class CliRuntimeService:
         )
         self._runs.upsert(run)
         if approval_id is not None:
-            self._mark_approval_executed(approval_id, run.id)
+            self._mark_approval_executed(approval_id, run.id, actor=run.requested_by)
 
         event_log.record(
             LogEventType.cli,
             "Recorded asynchronous CLI command launch intent.",
+            actor=run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "command": redact_sensitive_values(run.command),
@@ -925,6 +950,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Started asynchronous CLI command run.",
+            actor=run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "command": redact_sensitive_values(run.command),
@@ -970,7 +996,7 @@ class CliRuntimeService:
             next_sequence=next_sequence,
         )
 
-    def cancel_command_run(self, run_id: str) -> CommandRun:
+    def cancel_command_run(self, run_id: str, *, actor: str | None = None) -> CommandRun:
         run = self._get_run_or_raise(run_id)
         if run.status not in {CommandRunStatus.starting, CommandRunStatus.running}:
             raise ValueError(
@@ -1028,6 +1054,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Cancellation requested for CLI command run.",
+            actor=actor or run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "process_id": run.process_id,
@@ -1190,6 +1217,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Reconciled stale CLI command run.",
+            actor=run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "command": redact_sensitive_values(run.command),
@@ -1239,6 +1267,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Failed asynchronous CLI command launch.",
+            actor=run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "command": redact_sensitive_values(run.command),
@@ -1267,7 +1296,8 @@ class CliRuntimeService:
                 agent_role=request.agent_role,
                 agent_id=request.agent_id,
                 task_id=request.task_id,
-            )
+            ),
+            actor=request.requested_by,
         )
         if decision.permission_mode == PermissionMode.blocked:
             raise PermissionError(decision.reason)
@@ -1319,6 +1349,8 @@ class CliRuntimeService:
     def _execute_request(
         self,
         request: CommandExecutionRequest,
+        *,
+        actor: str | None = None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
         decision, cwd, env, environment_keys, approval_id = self._prepare_request(request)
         started_at = datetime.now(UTC)
@@ -1353,9 +1385,14 @@ class CliRuntimeService:
                 agent_role=request.agent_role,
                 task_id=request.task_id,
                 environment_keys=environment_keys,
+                actor=actor,
             )
             if run.approval_id is not None:
-                self._mark_approval_executed(run.approval_id, run.id)
+                self._mark_approval_executed(
+                    run.approval_id,
+                    run.id,
+                    actor=actor or request.requested_by,
+                )
             raise
 
         duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
@@ -1374,6 +1411,7 @@ class CliRuntimeService:
             agent_role=request.agent_role,
             task_id=request.task_id,
             environment_keys=environment_keys,
+            actor=actor,
         )
 
     def _record_run(
@@ -1394,6 +1432,7 @@ class CliRuntimeService:
         agent_role: str | None = None,
         task_id: str | None = None,
         environment_keys: list[str] | None = None,
+        actor: str | None = None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
         environment_keys = environment_keys or []
         sanitized_stdout, stdout_truncated = sanitize_output(
@@ -1432,6 +1471,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Recorded CLI command run.",
+            actor=actor or requested_by or "system",
             subject_id=run.id,
             metadata={
                 "approval_id": approval_id,
@@ -1637,6 +1677,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.cli,
             "Finalized asynchronous CLI command run.",
+            actor=run.requested_by or "system",
             subject_id=run.id,
             metadata={
                 "command": redact_sensitive_values(run.command),
@@ -1737,13 +1778,20 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.approval,
             "Claimed CLI command approval for execution.",
+            actor=request.requested_by or approval.requested_by or "system",
             subject_id=approval.id,
         )
 
     def _approval_is_expired(self, approval: CommandApproval) -> bool:
         return approval.expires_at <= datetime.now(UTC)
 
-    def _mark_approval_executed(self, approval_id: str, run_id: str) -> None:
+    def _mark_approval_executed(
+        self,
+        approval_id: str,
+        run_id: str,
+        *,
+        actor: str | None = None,
+    ) -> None:
         with self._active_lock:
             approval = self._get_approval_or_raise(approval_id)
             if approval.run_id is not None:
@@ -1758,6 +1806,7 @@ class CliRuntimeService:
         event_log.record(
             LogEventType.approval,
             "Executed CLI command approval.",
+            actor=actor or approval.requested_by or "system",
             subject_id=approval.id,
             metadata={"run_id": run_id},
         )

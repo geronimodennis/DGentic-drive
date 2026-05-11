@@ -5,6 +5,7 @@ from dgentic.schemas import (
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationTask,
+    OrchestrationTaskRecoveryRequest,
     OrchestrationTaskSpec,
     OrchestrationTaskUpdate,
     PlanStatus,
@@ -615,6 +616,209 @@ def test_orchestration_retry_exhaustion_creates_blocker_and_follow_up(
     ]
 
 
+def test_orchestration_recovers_blocked_task_after_safe_reassignment(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Recover out-of-bound task assignment.",
+            tasks=[
+                _task(
+                    "qa-source-edit",
+                    role="QA",
+                    paths=["src/dgentic/orchestration.py"],
+                )
+            ],
+        )
+    )
+
+    recovered = service.recover_task(
+        run.id,
+        "qa-source-edit",
+        OrchestrationTaskRecoveryRequest(
+            resolution="Reassigned source work to Developer.",
+            role="Developer",
+            declared_write_paths=["src/dgentic/orchestration.py"],
+        ),
+    )
+    task = _task_by_id(recovered, "qa-source-edit")
+
+    assert recovered.blockers == []
+    assert recovered.follow_ups == []
+    assert recovered.scheduled_task_ids == ["qa-source-edit"]
+    assert task.status == StepStatus.running
+    assert task.role == "Developer"
+    assert task.declared_write_paths == ["src/dgentic/orchestration.py"]
+    assert task.error is None
+    assert task.agent_id
+    assert recovered.role_boundary_decisions[0].allowed is True
+
+
+def test_orchestration_recovery_waits_for_dependencies_before_rescheduling(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Recover blocked dependent work.",
+            tasks=[
+                _task("dev-implementation", role="Developer", paths=["src/dgentic/tools.py"]),
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    dependencies=["dev-implementation"],
+                    paths=["src/dgentic/orchestration.py"],
+                ),
+            ],
+        )
+    )
+
+    recovered = service.recover_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskRecoveryRequest(
+            resolution="Corrected QA write scope.",
+            declared_write_paths=["tests/test_orchestration.py"],
+        ),
+    )
+    waiting_task = _task_by_id(recovered, "qa-validation")
+
+    assert waiting_task.status == StepStatus.pending
+    assert waiting_task.agent_id is None
+    assert recovered.scheduled_task_ids == []
+    assert recovered.blockers == []
+    assert recovered.follow_ups == []
+
+    advanced = service.update_task(
+        recovered.id,
+        "dev-implementation",
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"source": "done"}),
+    )
+
+    assert advanced.scheduled_task_ids == ["qa-validation"]
+    assert _task_by_id(advanced, "qa-validation").status == StepStatus.running
+
+
+def test_orchestration_recovery_rejects_still_invalid_or_non_blocked_tasks(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject unsafe blocked-task recovery.",
+            tasks=[
+                _task(
+                    "qa-source-edit",
+                    role="QA",
+                    paths=["src/dgentic/orchestration.py"],
+                ),
+                _task("qa-running", role="QA", paths=["tests/test_orchestration.py"]),
+            ],
+        )
+    )
+
+    with pytest.raises(OrchestrationError, match="role-boundary validation still fails"):
+        service.recover_task(
+            run.id,
+            "qa-source-edit",
+            OrchestrationTaskRecoveryRequest(resolution="Try without correcting scope."),
+        )
+    with pytest.raises(OrchestrationError, match="only blocked tasks can be recovered"):
+        service.recover_task(
+            run.id,
+            "qa-running",
+            OrchestrationTaskRecoveryRequest(resolution="Already running."),
+        )
+
+    unchanged = service.get_run(run.id)
+    assert unchanged is not None
+    assert _task_by_id(unchanged, "qa-source-edit").status == StepStatus.blocked
+    assert unchanged.blockers
+
+
+def test_orchestration_recovery_requires_meaningful_resolution(
+    orchestration_state,
+) -> None:
+    with pytest.raises(ValueError, match="resolution must not be blank"):
+        OrchestrationTaskRecoveryRequest(resolution="   ")
+
+
+def test_orchestration_recovery_preserves_manual_blockers(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Preserve manual blocker review.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.blocked, error="Needs security review."),
+    )
+
+    with pytest.raises(OrchestrationError, match="requires separate review"):
+        service.recover_task(
+            blocked.id,
+            "qa-validation",
+            OrchestrationTaskRecoveryRequest(resolution="Security reviewed."),
+        )
+
+    unchanged = service.get_run(blocked.id)
+    assert unchanged is not None
+    assert _task_by_id(unchanged, "qa-validation").status == StepStatus.blocked
+    assert [(blocker.task_id, blocker.severity) for blocker in unchanged.blockers] == [
+        ("qa-validation", "blocked")
+    ]
+    assert [(follow_up.task_id, follow_up.assigned_role) for follow_up in unchanged.follow_ups] == [
+        ("qa-validation", "QA")
+    ]
+
+
+def test_orchestration_recovery_can_reset_retry_count(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Recover retry-exhausted work.",
+            tasks=[
+                _task(
+                    "qa-validation",
+                    role="QA",
+                    paths=["tests/test_orchestration.py"],
+                    retry_limit=0,
+                )
+            ],
+        )
+    )
+    blocked = service.update_task(
+        run.id,
+        "qa-validation",
+        OrchestrationTaskUpdate(status=StepStatus.failed, error="Validation failed."),
+    )
+    assert _task_by_id(blocked, "qa-validation").retry_count == 1
+    assert _task_by_id(blocked, "qa-validation").status == StepStatus.blocked
+
+    recovered = service.recover_task(
+        blocked.id,
+        "qa-validation",
+        OrchestrationTaskRecoveryRequest(
+            resolution="Fixed fixture setup.",
+            reset_retry_count=True,
+        ),
+    )
+    task = _task_by_id(recovered, "qa-validation")
+
+    assert task.status == StepStatus.running
+    assert task.retry_count == 0
+    assert recovered.blockers == []
+    assert recovered.follow_ups == []
+
+
 def test_orchestration_close_requires_completed_tasks_and_dod_evidence(
     orchestration_state,
 ) -> None:
@@ -695,6 +899,12 @@ def test_orchestration_rejects_updates_after_close(
             closed.id,
             "qa-validation",
             OrchestrationTaskUpdate(status=StepStatus.failed, error="late failure"),
+        )
+    with pytest.raises(OrchestrationError, match="closed orchestration"):
+        service.recover_task(
+            closed.id,
+            "qa-validation",
+            OrchestrationTaskRecoveryRequest(resolution="late recovery"),
         )
 
 

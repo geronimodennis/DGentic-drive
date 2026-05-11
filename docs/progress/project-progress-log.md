@@ -4,6 +4,55 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 14 BL-008e Blocked Orchestration Task Recovery
+
+Status: completed for the scoped recoverable-blocker slice; Sprint 14 remains active for autonomous execution, project-document mutation, shared context/memory coordination, manual/security blocker resolution workflow, and production scheduling hardening.
+
+Current story:
+- BL-008: Agent Orchestration Autonomy.
+
+Checklist:
+- Completed: PM/Architect selected blocked task recovery as the next Sprint 14 slice because the control plane already created blockers/follow-ups but could not safely requeue corrected blocked work.
+- Completed: Developer updated production source only for the recovery schema, orchestration service recovery behavior, and `/tasks/orchestrations/{run_id}/tasks/{task_id}/recover`.
+- Completed: Developer updated implementation docs for the new recovery contract.
+- Completed: QA updated tests only for service-level recovery, retry recovery, dependency-gated rescheduling, invalid recovery rejection, manual blocker preservation, closed-run mutation rejection, API persistence, owner/admin access, and recovery audit redaction.
+- Completed: Reviewer found no blockers and requested closed-run and non-blank resolution coverage.
+- Completed: Security found a blocker where recovery could clear arbitrary task blockers; Developer remediated by limiting recovery to system-generated `role_boundary` and `retry_exhausted` blockers, preserving manual blockers, using generic unsafe-recovery denials, and adding redacted before/after audit metadata.
+- Completed: QA added regressions for manual blocker preservation, non-blank resolution, closed-run recovery rejection, and audit metadata redaction.
+- Completed: PM updated README, backlog, usage docs, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: blocked orchestration tasks can be recovered through `POST /tasks/orchestrations/{run_id}/tasks/{task_id}/recover`.
+- Implemented in this slice: recovery requires a non-blank resolution note and revalidates role-boundary policy before any task is requeued.
+- Implemented in this slice: recovery can correct task role and declared write paths for role-boundary-blocked tasks.
+- Implemented in this slice: retry-exhausted tasks can be recovered and optionally reset retry count before rescheduling.
+- Implemented in this slice: recovery clears only system-generated role-boundary and retry-exhaustion blockers for the task; manual blockers remain unresolved for separate review.
+- Implemented in this slice: recovered tasks reset to pending and are rescheduled only when dependencies are completed.
+- Implemented in this slice: recovery follows existing authenticated owner/admin orchestration scoping and rejects closed runs.
+- Implemented in this slice: recovery audit events redact secret-shaped resolution text and include safe before/after role and declared-path metadata.
+
+Remaining Sprint 14 work:
+- Add a real autonomous execution loop beyond scheduling briefs.
+- Add automatic backlog/progress document mutation from orchestration events.
+- Add shared context/memory coordination across running agents.
+- Add manual/security blocker resolution workflow.
+- Harden production multi-agent scheduling and lease semantics.
+- Add UI or operations surfacing for orchestration runs.
+
+Validation:
+- Focused recovery service gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py -k "recover or recovery or retry or close"` passed with 9 tests and 37 deselected.
+- Focused recovery API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "orchestration_api and (recover or recovery or lifecycle or owner)"` passed with 4 tests and 118 deselected.
+- Focused orchestration/API gate: `uv --cache-dir .uv-cache run pytest -q tests\test_orchestration.py tests\test_api.py` passed with 168 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\schemas.py src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\schemas.py src\dgentic\orchestration.py src\dgentic\api\routes.py tests\test_orchestration.py tests\test_api.py` passed with 5 files already formatted.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 752 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 57 files already formatted.
+- Whitespace gate: `git diff --check` passed with only LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 14 with the autonomous execution loop or automatic progress/backlog update slice, depending on risk and implementation surface.
+
 ### Sprint 14 BL-008d Orchestration-Bound Generated Tool Actions
 
 Status: completed for the scoped generated-tool runtime-binding slice; Sprint 14 remains active for autonomous execution, project-document mutation, shared context/memory coordination, blocked-run recovery, and production scheduling hardening.

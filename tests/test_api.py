@@ -298,6 +298,88 @@ def test_orchestration_api_rejects_cycles_and_reports_role_boundary_follow_ups(
     assert forged_state_response.status_code == 422
 
 
+def test_orchestration_api_recovers_blocked_task_and_persists_state(
+    isolated_tool_api_state,
+) -> None:
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Recover blocked orchestration task.",
+            "required_dod_evidence": ["tests"],
+            "tasks": [
+                {
+                    "id": "qa-source-edit",
+                    "title": "QA source edit",
+                    "description": "QA attempts source work.",
+                    "role": "QA",
+                    "declared_write_paths": ["src/dgentic/orchestration.py"],
+                    "validation": "Recovery should correct ownership.",
+                }
+            ],
+        },
+    )
+    run_id = create_response.json()["id"]
+
+    unsafe_recover_response = client.post(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-source-edit/recover",
+        json={"resolution": "No ownership correction yet."},
+    )
+    recover_response = client.post(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-source-edit/recover",
+        json={
+            "resolution": "API_KEY=secret-value reassigned to Developer.",
+            "role": "Developer",
+            "declared_write_paths": ["src/dgentic/orchestration.py"],
+            "reset_retry_count": True,
+        },
+    )
+    persisted_response = client.get(f"/tasks/orchestrations/{run_id}")
+    completed_response = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-source-edit",
+        json={"status": "completed", "output": {"source": "done"}},
+    )
+    close_response = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        json={"evidence": {"tests": "pytest tests/test_api.py passed"}},
+    )
+    logs_response = client.get("/logs")
+
+    assert create_response.status_code == 201
+    assert create_response.json()["tasks"][0]["status"] == "blocked"
+    assert unsafe_recover_response.status_code == 400
+    assert "role-boundary validation still fails" in unsafe_recover_response.json()["detail"]
+    assert recover_response.status_code == 200
+    recovered = recover_response.json()
+    assert recovered["blockers"] == []
+    assert recovered["follow_ups"] == []
+    assert recovered["scheduled_task_ids"] == ["qa-source-edit"]
+    assert recovered["role_boundary_decisions"][0]["allowed"] is True
+    assert recovered["tasks"][0]["status"] == "running"
+    assert recovered["tasks"][0]["role"] == "Developer"
+    assert recovered["tasks"][0]["declared_write_paths"] == ["src/dgentic/orchestration.py"]
+    assert persisted_response.json()["tasks"][0]["status"] == "running"
+    assert completed_response.status_code == 200
+    assert close_response.status_code == 200
+    assert close_response.json()["status"] == "completed"
+    recovery_event = next(
+        event
+        for event in logs_response.json()
+        if event["subject_id"] == run_id
+        and event["message"] == "Recovered blocked orchestration task."
+    )
+    assert recovery_event["metadata"]["resolution"] == "API_KEY=[REDACTED] reassigned to Developer."
+    assert recovery_event["metadata"]["previous_role"] == "QA"
+    assert recovery_event["metadata"]["recovered_role"] == "Developer"
+    assert recovery_event["metadata"]["previous_declared_write_paths"] == [
+        "src/dgentic/orchestration.py"
+    ]
+    assert recovery_event["metadata"]["recovered_declared_write_paths"] == [
+        "src/dgentic/orchestration.py"
+    ]
+    assert "secret-value" not in json.dumps(recovery_event)
+
+
 def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv(
@@ -346,6 +428,64 @@ def test_orchestration_api_filters_runs_by_authenticated_task_owner(tmp_path, mo
     assert beta_get.status_code == 404
     assert admin_list.status_code == 200
     assert [run["id"] for run in admin_list.json()] == [alpha_create.json()["id"]]
+    get_settings.cache_clear()
+
+
+def test_orchestration_api_recovery_respects_authenticated_task_owner(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "alpha-token=tasks;beta-token=tasks;admin-token=admin",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped recovery.",
+        "tasks": [
+            {
+                "id": "qa-source-edit",
+                "title": "QA source edit",
+                "description": "Blocked source edit.",
+                "role": "QA",
+                "declared_write_paths": ["src/dgentic/orchestration.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = alpha_create.json()["id"]
+    beta_recover = client.post(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-source-edit/recover",
+        headers={"Authorization": "Bearer beta-token"},
+        json={
+            "resolution": "Try to recover another owner run.",
+            "role": "Developer",
+            "declared_write_paths": ["src/dgentic/orchestration.py"],
+        },
+    )
+    admin_recover = client.post(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-source-edit/recover",
+        headers={"Authorization": "Bearer admin-token"},
+        json={
+            "resolution": "Admin corrected ownership.",
+            "role": "Developer",
+            "declared_write_paths": ["src/dgentic/orchestration.py"],
+        },
+    )
+
+    assert alpha_create.status_code == 201
+    assert beta_recover.status_code == 404
+    assert admin_recover.status_code == 200
+    assert admin_recover.json()["tasks"][0]["status"] == "running"
     get_settings.cache_clear()
 
 

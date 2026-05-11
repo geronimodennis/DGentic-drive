@@ -116,6 +116,7 @@ from dgentic.schemas import (
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
     OrchestrationRun,
+    OrchestrationTaskRecoveryRequest,
     OrchestrationTaskUpdate,
     ProviderConfig,
     ProviderHealth,
@@ -260,6 +261,28 @@ def update_orchestration_task(
             run_id,
             task_id,
             update,
+            actor=_orchestration_actor(request),
+            include_all=_orchestration_include_all(request),
+        )
+    except OrchestrationError as exc:
+        raise _orchestration_http_error(exc) from exc
+
+
+@router.post(
+    "/tasks/orchestrations/{run_id}/tasks/{task_id}/recover",
+    response_model=OrchestrationRun,
+)
+def recover_orchestration_task(
+    run_id: str,
+    task_id: str,
+    payload: OrchestrationTaskRecoveryRequest,
+    request: Request,
+) -> OrchestrationRun:
+    try:
+        return orchestration_service.recover_task(
+            run_id,
+            task_id,
+            payload,
             actor=_orchestration_actor(request),
             include_all=_orchestration_include_all(request),
         )

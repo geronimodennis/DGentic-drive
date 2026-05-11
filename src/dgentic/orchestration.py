@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from dgentic.agents import spawn_agent, update_agent_status
 from dgentic.events import event_log
+from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import (
     AgentBrief,
     AgentStatus,
@@ -18,6 +19,7 @@ from dgentic.schemas import (
     OrchestrationFollowUp,
     OrchestrationRun,
     OrchestrationTask,
+    OrchestrationTaskRecoveryRequest,
     OrchestrationTaskSpec,
     OrchestrationTaskUpdate,
     PlanStatus,
@@ -29,6 +31,7 @@ from dgentic.storage import JsonCollection
 MAX_READY_TASKS_PER_ADVANCE = 20
 TERMINAL_RUN_STATUSES = {PlanStatus.completed, PlanStatus.failed}
 TASK_UPDATE_STATUSES = {StepStatus.completed, StepStatus.failed, StepStatus.blocked}
+RECOVERABLE_TASK_BLOCKER_SEVERITIES = {"role_boundary", "retry_exhausted"}
 WRITE_FILE_ACTIONS = {
     "write",
     "binary_write",
@@ -197,6 +200,113 @@ class OrchestrationService:
             _update_agent_for_task(task.agent_id, update.status, update.error)
         if updated_task.status in {StepStatus.completed, StepStatus.pending}:
             run = self._schedule_ready_tasks(run, actor=actor)
+        return self._persist(run)
+
+    def recover_task(
+        self,
+        run_id: str,
+        task_id: str,
+        request: OrchestrationTaskRecoveryRequest,
+        *,
+        actor: str | None = None,
+        include_all: bool = True,
+    ) -> OrchestrationRun:
+        run = self._require_run(run_id, actor=actor, include_all=include_all)
+        _ensure_run_open(run)
+        task = _task_by_id(run, task_id)
+        if task.status != StepStatus.blocked:
+            raise OrchestrationError(
+                f"Cannot recover task {task_id} from {task.status}; "
+                "only blocked tasks can be recovered."
+            )
+        task_blockers = [blocker for blocker in run.blockers if blocker.task_id == task_id]
+        if not task_blockers:
+            raise OrchestrationError(
+                f"Cannot recover task {task_id}; no recoverable blockers are recorded."
+            )
+        unsupported_blockers = [
+            blocker
+            for blocker in task_blockers
+            if blocker.severity not in RECOVERABLE_TASK_BLOCKER_SEVERITIES
+        ]
+        if unsupported_blockers:
+            severities = ", ".join(sorted({blocker.severity for blocker in unsupported_blockers}))
+            raise OrchestrationError(
+                f"Cannot recover task {task_id}; unresolved blocker severity requires "
+                f"separate review: {severities}"
+            )
+
+        candidate = task.model_copy(
+            update={
+                "role": request.role or task.role,
+                "declared_write_paths": (
+                    list(request.declared_write_paths)
+                    if request.declared_write_paths is not None
+                    else list(task.declared_write_paths)
+                ),
+            }
+        )
+        decision = _role_boundary_decision(candidate)
+        if not decision.allowed:
+            raise OrchestrationError(
+                f"Cannot recover task {task_id}; role-boundary validation still fails."
+            )
+
+        patch = {
+            "role": candidate.role,
+            "declared_write_paths": candidate.declared_write_paths,
+            "status": StepStatus.pending,
+            "agent_id": None,
+            "output": {},
+            "error": None,
+            "completed_at": None,
+        }
+        if request.reset_retry_count:
+            patch["retry_count"] = 0
+
+        recovered_task = task.model_copy(update=patch)
+        tasks = [recovered_task if existing.id == task_id else existing for existing in run.tasks]
+        blockers = [
+            blocker
+            for blocker in run.blockers
+            if not (
+                blocker.task_id == task_id
+                and blocker.severity in RECOVERABLE_TASK_BLOCKER_SEVERITIES
+            )
+        ]
+        follow_ups = [follow_up for follow_up in run.follow_ups if follow_up.task_id != task_id]
+        decisions = _replace_role_boundary_decision(run.role_boundary_decisions, decision)
+        run = run.model_copy(
+            update={
+                "tasks": tasks,
+                "blockers": blockers,
+                "follow_ups": follow_ups,
+                "role_boundary_decisions": decisions,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        event_log.record(
+            LogEventType.task,
+            "Recovered blocked orchestration task.",
+            actor=actor or "system",
+            subject_id=run.id,
+            metadata={
+                "task_id": task_id,
+                "resolution": redact_sensitive_values(request.resolution),
+                "reset_retry_count": request.reset_retry_count,
+                "previous_role": _redact_metadata_value(task.role),
+                "recovered_role": _redact_metadata_value(recovered_task.role),
+                "previous_declared_write_paths": _redact_metadata_values(task.declared_write_paths),
+                "recovered_declared_write_paths": _redact_metadata_values(
+                    recovered_task.declared_write_paths
+                ),
+                "role_changed": recovered_task.role != task.role,
+                "declared_write_paths_changed": (
+                    recovered_task.declared_write_paths != task.declared_write_paths
+                ),
+            },
+        )
+        run = self._schedule_ready_tasks(run, actor=actor)
         return self._persist(run)
 
     def close_run(
@@ -855,6 +965,32 @@ def _task_by_id(run: OrchestrationRun, task_id: str) -> OrchestrationTask:
         if task.id == task_id:
             return task
     raise OrchestrationError(f"Task not found in orchestration: {task_id}")
+
+
+def _replace_role_boundary_decision(
+    decisions: list[RoleBoundaryDecision],
+    replacement: RoleBoundaryDecision,
+) -> list[RoleBoundaryDecision]:
+    replaced = False
+    updated: list[RoleBoundaryDecision] = []
+    for decision in decisions:
+        if decision.task_id == replacement.task_id:
+            if not replaced:
+                updated.append(replacement)
+                replaced = True
+            continue
+        updated.append(decision)
+    if not replaced:
+        updated.append(replacement)
+    return updated
+
+
+def _redact_metadata_value(value: str) -> str:
+    return redact_sensitive_values(value)
+
+
+def _redact_metadata_values(values: list[str]) -> list[str]:
+    return [_redact_metadata_value(value) for value in values]
 
 
 def _blocker(task_id: str, reason: str, *, severity: str) -> OrchestrationBlocker:

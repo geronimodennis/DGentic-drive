@@ -35,6 +35,7 @@ dgentic/
         models.py
         retrieval_service.py
         schemas.py
+        vector_backend.py
       planner.py
       provider_policy.py
       provider_pricing.py
@@ -81,7 +82,7 @@ Current modules:
 - `provider_runtime.py`: Ollama, LM Studio, and OpenAI-compatible external chat/completion request execution with provider endpoint policy enforcement, Ollama/OpenAI-compatible streaming, bounded retry/backoff, in-process circuit breakers, deferred credential-safe headers for external fail-fast paths, model allowlist checks, single-use bound external provider approvals, advisory usage-based cost estimates, and safe response telemetry.
 - `agents.py`: Sub-agent brief registry, parent-child lifecycle tracking, status updates, and output reconciliation.
 - `memory.py`: Legacy in-memory memory record indexing and search module. The active import path is reconciled through the `dgentic.memory` package.
-- `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, lifecycle policy service, optional embedding service, and retrieval service contracts.
+- `memory/`: SQLAlchemy metadata index models, schemas, metadata CRUD service, lifecycle policy service, optional embedding service, vector backend contract/default SQLite implementation, and retrieval service contracts.
 - `tools.py`: Legacy local tool manifest registration, guarded tool generation, duplicate detection, and governance module. The active import path is reconciled through the `dgentic.tools` package.
 - `tools/`: SQLAlchemy-backed tool registry service plus generated-tool integration with duplicate preflight checks, auto-registration, monotonic same-name version migration, usage tracking, reliability scoring, and source-path validation.
 - `tool_runtime.py`: Generated tool approval records, bound approval validation, process-group subprocess execution and timeout cleanup, SQL registry permission/deprecation checks, local-only dependency import isolation, reduced inherited execution environment, redacted output/audit events, SQL reliability counter sync, and runtime reliability policy automation.
@@ -94,7 +95,7 @@ Current modules:
 
 ### `tests/`
 
-Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, retrieval inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
+Automated tests for backend behavior. The current tests validate health checks, task planning, persisted task history, deterministic execution, guardrail checks, configurable and agent-role scoped CLI policy rules, shell-wrapper command policy hardening, CLI approvals, single-use approval ID binding, asynchronous CLI status/output polling, supervision metadata, stale-running reconciliation, cancellation and timeout lifecycle behavior, controlled command environments, command context auditing, run history, provider routing and generation runtime, dynamic tool generation, tool execution and governance, memory lifecycle policy, vector backend contracts, retrieval inactive-state filtering, memory/database migrations, agent lifecycle APIs, session summaries, and logs.
 
 ### `localmcp/`
 
@@ -315,7 +316,7 @@ Architect handoff:
 - Define Pydantic schemas early so future UI, extension, memory, routing, and tool runtime work can share stable contracts.
 - Generate tools only under `rootDir/localmcp/[tool_name]/`, with source, wrapper, manifest, README, local JSON manifest, optional validated local dependency path metadata, SQL registry entry, duplicate preflight checks, and memory artifact indexing.
 - Use local JSON collections for the MVP sprint surface; inter-process locked reads and item updates protect provider approval decisions and claims, while broader indexing, querying, and schema migration needs still require a production database migration path.
-- Use SQLite-compatible SQLAlchemy models for the metadata index, memory lifecycle metadata, and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL remains the production target, while production driver packaging, JSON-store migration, scheduled backup automation, and vector storage remain follow-up work.
+- Use SQLite-compatible SQLAlchemy models for the metadata index, memory lifecycle metadata, JSON-vector default backend, and tool registry MVP slice, with configurable database URLs, a schema migration ledger, and local SQLite backup/restore smoke helpers. PostgreSQL with pgvector remains the production target, while production driver packaging, JSON-store migration, scheduled backup automation, and pgvector storage remain follow-up work.
 - Require bearer-token capability checks by default in staging and production while keeping development mode auth-off unless explicitly enabled. Production/staging startup fails closed when auth is enabled without configured bearer tokens.
 - Probe Ollama and LM Studio through lightweight local HTTP health/model discovery after exact provider base URL allowlist validation; report the OpenAI-compatible external adapter through config-only health so listing providers does not make authenticated external calls.
 - Execute Ollama, LM Studio, and configured OpenAI-compatible chat requests through provider runtime contracts using provider-scoped egress policy, redirect blocking, bounded request and provider-specific success-payload validation, bounded retry/backoff for retryable generation failures before stream bytes begin, in-process per-provider circuit breakers for retry-exhausted generation failures, NDJSON downstream streaming for Ollama and OpenAI-compatible chunks, safe response metadata, normalized usage metadata, an exact provider/model pricing catalog for advisory usage-based and routing cost estimates, role-to-provider/model routing preferences that still honor privacy/capability/cost/model eligibility, HTTPS-only credential-safe outbound headers that are resolved only after external pricing/config/circuit/approval gates allow transport, single-use bound approvals for external generation outside development/test mode, model allowlist checks, and generic upstream failure details; encrypted credential storage, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters remain follow-up work.

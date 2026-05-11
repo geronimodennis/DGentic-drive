@@ -82,7 +82,7 @@ tool_manifest {
 
 ## 2. Database Selection: PostgreSQL + pgvector
 
-Implementation note: the reconciled MVP service layer currently uses SQLite-compatible SQLAlchemy models in `.dgentic/dgentic.db` so tests and local development do not require PostgreSQL or pgvector. PostgreSQL plus pgvector remains the production-oriented target pending a database decision and migration plan.
+Implementation note: the reconciled MVP service layer currently uses SQLite-compatible SQLAlchemy models and a SQLite JSON-vector backend in `.dgentic/dgentic.db` so tests and local development do not require PostgreSQL or pgvector. PostgreSQL plus pgvector remains the production-oriented target pending production driver packaging and migration rollout.
 
 **Rationale:**
 - PostgreSQL provides ACID transactions and reliability
@@ -428,6 +428,8 @@ Sprint 7 uses a deterministic hashed bag-of-words embedding as the default seman
 
 Operators can still configure a sentence-transformers model name when the optional dependency is installed. PostgreSQL plus pgvector and a production embedding model remain the target for a production retrieval backend.
 
+**Vector backend boundary:** Sprint 13 adds a `VectorBackend` contract and `SQLiteVectorBackend` default implementation. Retrieval code now stores, fetches, deletes, and searches embeddings through that backend boundary. The current backend still scans JSON vectors in SQLite for local MVP compatibility; pgvector can replace the backend behind the same retrieval contract in a later production slice.
+
 **Rationale:**
 - Default retrieval is dependency-light and deterministic for CI and local development.
 - 384-dimensional vectors keep the MVP compatible with the planned pgvector shape.
@@ -460,6 +462,7 @@ dgentic/
 │   ├── metadata_service.py    # CRUD for metadata
 │   ├── retrieval_service.py   # Hybrid search logic
 │   ├── embedding_service.py   # Vector generation
+│   ├── vector_backend.py      # Vector backend contract/default
 │   └── schemas.py             # Pydantic request/response models
 ├── tools/
 │   ├── __init__.py
@@ -477,7 +480,7 @@ dgentic/
 
 **Story 6.1:** ✓ Metadata schema defined | ✓ Database backend selected | ✓ API contracts defined
 
-**Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | Compression strategy remains future summarization work
+**Story 6.2:** ✓ Dependency-light vector generation implemented | ✓ Retrieval API defined | ✓ Vector backend abstraction implemented | Compression strategy remains future summarization work
 
 **Story 7.1:** ✓ Tool manifest schema defined | ✓ API contracts defined | ✓ Duplicate detection endpoint
 
@@ -498,6 +501,10 @@ dgentic/
 | Hybrid retrieval | <200ms | Parallel queries + merge |
 | Tool registry lookup | <50ms | Primary key lookup |
 | Duplicate detection | <500ms | Signature hashing + comparison |
+
+Baseline performance smoke:
+- The SQLite JSON-vector backend has a deterministic smoke test for top-10 vector retrieval over 75 stored embeddings with a generous CI-safe timing budget.
+- This is not the production performance target. It is a regression baseline until pgvector search is integrated.
 
 ---
 

@@ -1,6 +1,5 @@
 """Hybrid retrieval service for semantic and metadata search."""
 
-import json
 import time
 
 from sqlalchemy import or_
@@ -8,16 +7,23 @@ from sqlalchemy.orm import Session
 
 from dgentic.memory.embedding_service import EmbeddingService
 from dgentic.memory.lifecycle_service import ACTIVE_LIFECYCLE_STATES, metadata_is_retrievable
-from dgentic.memory.models import MemoryMetadata, VectorEmbedding
+from dgentic.memory.models import MemoryMetadata
 from dgentic.memory.schemas import HybridRetrievalRequest, RetrievalResult
+from dgentic.memory.vector_backend import VectorBackend
 
 
 class RetrievalService:
     """Service for hybrid vector plus metadata retrieval."""
 
-    def __init__(self, session: Session, embedding_service: EmbeddingService):
+    def __init__(
+        self,
+        session: Session,
+        embedding_service: EmbeddingService,
+        vector_backend: VectorBackend | None = None,
+    ):
         self.session = session
         self.embedding_service = embedding_service
+        self.vector_backend = vector_backend or embedding_service.vector_backend
 
     def hybrid_search(self, request: HybridRetrievalRequest) -> tuple[list[RetrievalResult], float]:
         start_time = time.time()
@@ -31,17 +37,16 @@ class RetrievalService:
 
         results: list[RetrievalResult] = []
         for metadata in metadata_items:
-            vector_record = (
-                self.session.query(VectorEmbedding)
-                .filter(VectorEmbedding.metadata_id == metadata.id)
-                .first()
-            )
-            stored_embedding = (
-                json.loads(vector_record.embedding)
-                if vector_record
+            stored_embedding = self.vector_backend.get_embedding_values(metadata.id)
+            candidate_embedding = (
+                stored_embedding
+                if stored_embedding is not None
                 else self.embedding_service.generate_embedding(self._metadata_text(metadata))
             )
-            similarity_score = EmbeddingService.cosine_similarity(query_embedding, stored_embedding)
+            similarity_score = EmbeddingService.cosine_similarity(
+                query_embedding,
+                candidate_embedding,
+            )
             if similarity_score < request.similarity_threshold:
                 continue
 
@@ -73,17 +78,15 @@ class RetrievalService:
     ) -> tuple[list[RetrievalResult], float]:
         start_time = time.time()
         query_embedding = self.embedding_service.generate_embedding(query)
-        all_embeddings = self.session.query(VectorEmbedding).all()
+        matches = self.vector_backend.search(
+            query_embedding,
+            similarity_threshold=similarity_threshold,
+        )
 
         results: list[RetrievalResult] = []
-        for vector_record in all_embeddings:
-            stored_embedding = json.loads(vector_record.embedding)
-            similarity = EmbeddingService.cosine_similarity(query_embedding, stored_embedding)
-            if similarity < similarity_threshold:
-                continue
-
-            metadata = vector_record.memory_metadata
-            if metadata is None or (not include_inactive and not metadata_is_retrievable(metadata)):
+        for match in matches:
+            metadata = match.metadata
+            if not include_inactive and not metadata_is_retrievable(metadata):
                 continue
             results.append(
                 RetrievalResult(
@@ -91,16 +94,17 @@ class RetrievalService:
                     entity_type=metadata.entity_type,
                     entity_id=metadata.entity_id,
                     description=metadata.description,
-                    similarity_score=round(similarity, 3),
+                    similarity_score=round(match.similarity_score, 3),
                     metadata_relevance=1.0,
-                    combined_score=round(similarity, 3),
+                    combined_score=round(match.similarity_score, 3),
                     source="vector_search",
                 )
             )
+            if len(results) >= limit:
+                break
 
-        results.sort(key=lambda result: result.combined_score, reverse=True)
         query_time_ms = (time.time() - start_time) * 1000
-        return results[:limit], query_time_ms
+        return results, query_time_ms
 
     def metadata_search(
         self,

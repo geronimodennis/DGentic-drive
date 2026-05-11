@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 13 BL-007b Vector Backend Abstraction And Retrieval Baseline
+
+Status: completed for the scoped vector-backend abstraction and baseline performance smoke slice; Sprint 13 remains active for pgvector integration, compression execution, scheduled lifecycle jobs, broader performance validation, and source-attribution/scoring improvements.
+
+Current story:
+- BL-007: Memory And Retrieval Production Lifecycle.
+
+Checklist:
+- Completed: PM/Architect selected vector backend abstraction as the next smallest Sprint 13 slice after lifecycle policy, deferring compression until embedding reindexing and backend boundaries are stable.
+- Completed: Developer updated production source only for a vector backend contract, SQLite/JSON default vector backend, embedding-service backend delegation, retrieval-service backend use, and memory package exports.
+- Completed: QA updated tests only for backend store/fetch/search/delete behavior, retrieval use of the configured backend, lifecycle-aware retrieval behavior preservation, and a deterministic 75-record retrieval performance smoke.
+- Completed: PM updated README, backlog, memory architecture, repository architecture, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `SQLiteVectorBackend` preserves the current dependency-light JSON vector storage while hiding direct retrieval coupling to `VectorEmbedding` rows.
+- Implemented in this slice: `RetrievalService.vector_search()` now searches through the configured vector backend and applies lifecycle filtering after backend results.
+- Implemented in this slice: hybrid retrieval fetches stored embedding values through the backend and keeps the existing metadata-text fallback when no vector is stored.
+- Implemented in this slice: the baseline smoke validates top-10 vector retrieval over 75 deterministic embeddings within a generous non-flaky timing budget.
+
+Validation:
+- Focused vector backend gate: `uv --cache-dir .uv-cache run pytest -q tests\test_vector_backend.py tests\test_retrieval_service.py` passed with 9 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\memory tests\test_vector_backend.py tests\test_retrieval_service.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\memory tests\test_vector_backend.py tests\test_retrieval_service.py` passed with 10 files already formatted.
+- Focused post-doc gate: `uv --cache-dir .uv-cache run pytest -q tests\test_vector_backend.py tests\test_retrieval_service.py tests\test_memory_lifecycle_service.py tests\test_api.py -k "vector or retrieval or lifecycle or memory"` passed with 17 tests and 104 deselected.
+- Final focused gate: `uv --cache-dir .uv-cache run pytest -q tests\test_vector_backend.py tests\test_retrieval_service.py` passed with 9 tests.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 661 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 53 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Next:
+- Continue Sprint 13 with either pgvector production backend integration design/implementation or compression/summarization execution once backend reindexing behavior is defined.
+
 ### Sprint 13 BL-007a Memory Lifecycle Policy Foundation
 
 Status: completed for the scoped SQL-backed lifecycle policy slice; Sprint 13 remains active for vector backend integration, compression execution, scheduled lifecycle jobs, performance validation, and source-attribution/scoring improvements.

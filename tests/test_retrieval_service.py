@@ -9,6 +9,7 @@ from dgentic.memory.metadata_service import MetadataService
 from dgentic.memory.models import Base, MemoryMetadata
 from dgentic.memory.retrieval_service import RetrievalService
 from dgentic.memory.schemas import HybridRetrievalRequest, MetadataCreateRequest
+from dgentic.memory.vector_backend import VectorSearchMatch
 
 
 @pytest.fixture
@@ -217,3 +218,83 @@ def test_vector_and_hybrid_retrieval_include_inactive_only_when_requested(
         "active-vector",
         "archived-vector",
     }
+
+
+def test_vector_search_uses_configured_backend(db_session: Session) -> None:
+    metadata = MetadataService(db_session).create(
+        MetadataCreateRequest(
+            entity_type="memory",
+            entity_id="backend-routed-vector",
+            description="Backend-routed vector search.",
+        )
+    )
+    stored = db_session.query(MemoryMetadata).filter(MemoryMetadata.id == metadata.id).one()
+    embedding_service = EmbeddingService(db_session)
+    backend = RecordingVectorBackend(stored)
+    retrieval_service = RetrievalService(db_session, embedding_service, vector_backend=backend)
+
+    results, _ = retrieval_service.vector_search("backend routed vector", similarity_threshold=0.5)
+
+    assert backend.search_called is True
+    assert results[0].entity_id == "backend-routed-vector"
+    assert results[0].combined_score == 0.9
+
+
+def test_retrieval_performance_smoke_records_baseline_timing(db_session: Session) -> None:
+    metadata_service = MetadataService(db_session)
+    embedding_service = EmbeddingService(db_session)
+    retrieval_service = RetrievalService(db_session, embedding_service)
+
+    for index in range(75):
+        metadata = metadata_service.create(
+            MetadataCreateRequest(
+                entity_type="memory",
+                entity_id=f"performance-memory-{index}",
+                tags=["performance"],
+                category="retrieval",
+                description=(
+                    "Semantic retrieval baseline candidate "
+                    f"{index} with deterministic vector content."
+                ),
+            )
+        )
+        embedding_service.embed_and_store(metadata.id, metadata.description)
+
+    results, query_time_ms = retrieval_service.vector_search(
+        "semantic retrieval baseline deterministic vector content",
+        limit=10,
+        similarity_threshold=0.0,
+    )
+
+    assert len(results) == 10
+    assert query_time_ms >= 0
+    assert query_time_ms < 1_000
+    assert results == sorted(results, key=lambda result: result.combined_score, reverse=True)
+
+
+class RecordingVectorBackend:
+    def __init__(self, metadata: MemoryMetadata):
+        self.metadata = metadata
+        self.search_called = False
+
+    def store_embedding(self, metadata_id, model, embedding):  # pragma: no cover
+        raise NotImplementedError
+
+    def get_embedding(self, metadata_id):  # pragma: no cover
+        raise NotImplementedError
+
+    def get_embedding_values(self, metadata_id):
+        return None
+
+    def delete_embedding(self, metadata_id):  # pragma: no cover
+        raise NotImplementedError
+
+    def search(self, query_embedding, *, similarity_threshold=0.7, limit=None):
+        self.search_called = True
+        return [
+            VectorSearchMatch(
+                metadata=self.metadata,
+                similarity_score=0.9,
+                vector_record=None,
+            )
+        ]

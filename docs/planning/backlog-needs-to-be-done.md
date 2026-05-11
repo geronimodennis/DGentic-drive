@@ -323,7 +323,8 @@ Needs to be done:
 
 Current implementation status:
 - Completed: BL-007a adds additive lifecycle metadata fields, a migration ledger entry, deterministic lifecycle preview/apply APIs, retention-aware promote/archive/soft-prune decisions, advisory compression-candidate detection, default retrieval exclusion for archived/soft-pruned records, and explicit `include_inactive` opt-in retrieval.
-- Remaining: production vector backend selection/integration, real compression/summarization execution, scheduled lifecycle jobs, retrieval performance validation, source attribution, and scoring improvements.
+- Completed: BL-007b adds a vector backend contract, keeps the current SQLite/JSON vector backend as the default implementation, routes vector retrieval through the backend boundary, and adds a deterministic baseline retrieval performance smoke test.
+- Remaining: pgvector production backend integration, real compression/summarization execution, scheduled lifecycle jobs, broader retrieval performance validation, source attribution, and scoring improvements.
 
 Acceptance criteria:
 - Retrieval works against the selected production vector backend.
@@ -613,7 +614,8 @@ Exit criteria:
 
 Current Sprint 13 status:
 - Active: BL-007a SQL-backed lifecycle policy foundation is implemented and validated.
-- Remaining: production vector backend selection/integration, compression/summarization execution, scheduled lifecycle runs, performance smoke validation, and source-attribution/scoring improvements.
+- Active: BL-007b vector backend abstraction and baseline retrieval performance smoke are implemented and validated.
+- Remaining: pgvector production backend integration, compression/summarization execution, scheduled lifecycle runs, broader performance validation, and source-attribution/scoring improvements.
 
 ### Sprint 14: Autonomous Agent Orchestration
 

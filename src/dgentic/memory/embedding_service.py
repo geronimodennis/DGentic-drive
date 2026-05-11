@@ -1,7 +1,6 @@
 """Embedding service for vector generation and storage."""
 
 import hashlib
-import json
 import math
 import re
 from uuid import UUID
@@ -9,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from dgentic.memory.models import VectorEmbedding
+from dgentic.memory.vector_backend import SQLiteVectorBackend, VectorBackend, cosine_similarity
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -24,9 +24,15 @@ class EmbeddingService:
     DEFAULT_MODEL = "dgentic-hash-embedding-v1"
     EMBEDDING_DIMENSION = 384
 
-    def __init__(self, session: Session, model_name: str | None = None):
+    def __init__(
+        self,
+        session: Session,
+        model_name: str | None = None,
+        vector_backend: VectorBackend | None = None,
+    ):
         self.session = session
         self.model_name = model_name or self.DEFAULT_MODEL
+        self.vector_backend = vector_backend or SQLiteVectorBackend(session)
         self._model = None
 
     @property
@@ -67,43 +73,18 @@ class EmbeddingService:
         return [value / norm for value in vector]
 
     def store_embedding(self, metadata_id: UUID | str, embedding: list[float]) -> VectorEmbedding:
-        vector_record = VectorEmbedding(
-            metadata_id=str(metadata_id),
-            model=self.model_name,
-            embedding=json.dumps(embedding),
-        )
-        self.session.add(vector_record)
-        self.session.commit()
-        self.session.refresh(vector_record)
-        return vector_record
+        return self.vector_backend.store_embedding(metadata_id, self.model_name, embedding)
 
     def embed_and_store(self, metadata_id: UUID | str, text: str) -> VectorEmbedding:
         embedding = self.generate_embedding(text)
         return self.store_embedding(metadata_id, embedding)
 
     def get_embedding(self, metadata_id: UUID | str) -> VectorEmbedding | None:
-        return (
-            self.session.query(VectorEmbedding)
-            .filter(VectorEmbedding.metadata_id == str(metadata_id))
-            .first()
-        )
+        return self.vector_backend.get_embedding(metadata_id)
 
     def delete_embedding(self, metadata_id: UUID | str) -> bool:
-        record = self.get_embedding(metadata_id)
-        if not record:
-            return False
-
-        self.session.delete(record)
-        self.session.commit()
-        return True
+        return self.vector_backend.delete_embedding(metadata_id)
 
     @staticmethod
     def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
-        norm1 = math.sqrt(sum(a * a for a in vec1))
-        norm2 = math.sqrt(sum(b * b for b in vec2))
-
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        return dot_product / (norm1 * norm2)
+        return cosine_similarity(vec1, vec2)

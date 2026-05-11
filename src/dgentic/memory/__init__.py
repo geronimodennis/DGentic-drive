@@ -8,6 +8,7 @@ from dgentic.memory.embedding_service import EmbeddingService
 from dgentic.memory.lifecycle_service import MemoryLifecycleService
 from dgentic.memory.metadata_service import MetadataService
 from dgentic.memory.retrieval_service import RetrievalService
+from dgentic.memory.vector_backend import SQLiteVectorBackend, VectorBackend
 from dgentic.schemas import LogEventType, MemoryQuery, MemoryRecord, MemorySearchResult
 from dgentic.storage import JsonCollection
 
@@ -61,6 +62,8 @@ __all__ = [
     "MemoryLifecycleService",
     "MetadataService",
     "RetrievalService",
+    "SQLiteVectorBackend",
+    "VectorBackend",
     "add_memory",
     "search_memory",
 ]

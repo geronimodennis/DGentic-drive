@@ -170,6 +170,8 @@ def test_ollama_generation_posts_chat_payload_and_returns_content(monkeypatch) -
         "message": {"role": "assistant", "content": "Hello from Ollama."},
         "done": True,
         "total_duration": 12345,
+        "prompt_eval_count": 8,
+        "eval_count": 5,
     }
 
     def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
@@ -207,9 +209,17 @@ def test_ollama_generation_posts_chat_payload_and_returns_content(monkeypatch) -
     assert result.provider_id == "ollama"
     assert result.model == "llama3.1"
     assert result.content == "Hello from Ollama."
+    assert result.usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert result.estimated_cost_usd == 0.0
     assert result.raw_response_metadata == {
         "done": True,
         "total_duration": 12345,
+        "prompt_eval_count": 8,
+        "eval_count": 5,
         "message_role": "assistant",
     }
     assert result.duration_ms >= 0
@@ -221,6 +231,8 @@ def test_ollama_generation_posts_chat_payload_and_returns_content(monkeypatch) -
     completion_metadata = event_log.records[-1]["metadata"]
     assert "content" not in completion_metadata
     assert completion_metadata["content_length"] == len("Hello from Ollama.")
+    assert completion_metadata["usage_metadata"] == result.usage_metadata
+    assert completion_metadata["estimated_cost_usd"] == 0.0
 
 
 def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> None:
@@ -276,6 +288,12 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
     assert result.provider_id == "lm-studio"
     assert result.model == "local-model"
     assert result.content == "Hello from LM Studio."
+    assert result.usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert result.estimated_cost_usd == 0.0
     assert result.raw_response_metadata == {
         "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
         "choice_count": 1,
@@ -288,6 +306,8 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
     assert "Hello from LM Studio." in serialized
     serialized_event = json.dumps(event_log.records[-1], sort_keys=True, default=str)
     assert "content" not in event_log.records[-1]["metadata"]
+    assert event_log.records[-1]["metadata"]["usage_metadata"] == result.usage_metadata
+    assert event_log.records[-1]["metadata"]["estimated_cost_usd"] == 0.0
     assert "Hello from LM Studio." not in serialized_event
     assert "upstream-response-secret" not in serialized_event
     assert "upstream-token-secret" not in serialized_event
@@ -330,6 +350,7 @@ def test_lm_studio_generation_posts_chat_completions_payload(monkeypatch) -> Non
                     "prompt_tokens": 2,
                     "completion_tokens": 3,
                     "eval_count": 10**309,
+                    "load_duration": -1,
                     "prompt": "usage-secret",
                     "total_tokens": "usage-total-secret",
                 },
@@ -460,6 +481,12 @@ def test_external_openai_compatible_generation_posts_authorized_chat_completion(
     ]
     assert result.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
     assert result.content == "Hello from external."
+    assert result.usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert result.estimated_cost_usd == 0.01
     assert result.raw_response_metadata["usage"] == {
         "prompt_tokens": 8,
         "completion_tokens": 5,
@@ -1210,6 +1237,13 @@ def test_lm_studio_streaming_emits_ordered_chunks_and_safe_logs(monkeypatch) -> 
                 "model": "local-model",
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             },
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "model": "local-model",
+                "choices": [],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
+            },
         )
     )
 
@@ -1254,12 +1288,21 @@ def test_lm_studio_streaming_emits_ordered_chunks_and_safe_logs(monkeypatch) -> 
             "timeout_seconds": 60.0,
         }
     ]
-    assert [event.delta for event in events] == ["Hel", "lo", ""]
-    assert events[-1].finish_reason == "stop"
+    assert [event.delta for event in events] == ["Hel", "lo", "", ""]
+    assert events[-2].finish_reason == "stop"
+    assert events[-2].estimated_cost_usd is None
+    assert events[-1].usage_metadata == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert events[-1].estimated_cost_usd == 0.0
     assert stream_response.closed is True
     completion_metadata = event_log.records[-1]["metadata"]
-    assert completion_metadata["chunk_count"] == 3
+    assert completion_metadata["chunk_count"] == 4
     assert completion_metadata["content_length"] == len("Hello")
+    assert completion_metadata["usage_metadata"] == events[-1].usage_metadata
+    assert completion_metadata["estimated_cost_usd"] == 0.0
     assert completion_metadata["finish_reasons"] == ["stop"]
     serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
     assert "Hello" not in serialized_event
@@ -1295,6 +1338,8 @@ def test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks(
                     "done": True,
                     "done_reason": "stop",
                     "total_duration": 12345,
+                    "prompt_eval_count": 4,
+                    "eval_count": 2,
                 }
             )
             + "\n",
@@ -1344,10 +1389,18 @@ def test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks(
     ]
     assert [event.delta for event in events] == ["delta-secret-", "abc", ""]
     assert events[-1].finish_reason == "stop"
+    assert events[-1].usage_metadata == {
+        "prompt_tokens": 4,
+        "completion_tokens": 2,
+        "total_tokens": 6,
+    }
+    assert events[-1].estimated_cost_usd == 0.0
     assert events[-1].raw_response_metadata == {
         "done": True,
         "done_reason": "stop",
         "total_duration": 12345,
+        "prompt_eval_count": 4,
+        "eval_count": 2,
         "message_role": "assistant",
     }
     assert stream_response.closed is True
@@ -1355,6 +1408,8 @@ def test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks(
     assert completion_metadata["chunk_count"] == 3
     assert completion_metadata["content_length"] == len("delta-secret-abc")
     assert completion_metadata["finish_reasons"] == ["stop"]
+    assert completion_metadata["usage_metadata"] == events[-1].usage_metadata
+    assert completion_metadata["estimated_cost_usd"] == 0.0
     serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
     assert "prompt-secret-123" not in serialized_event
     assert "delta-secret-abc" not in serialized_event

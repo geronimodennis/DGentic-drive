@@ -170,6 +170,12 @@ def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
 
     if required and not required.issubset(capabilities):
         return 0.0
+    if (
+        policy.max_cost_usd is not None
+        and provider.estimated_cost_usd is not None
+        and provider.estimated_cost_usd > policy.max_cost_usd
+    ):
+        return 0.0
 
     score += 0.2
     if provider.model_names:
@@ -185,7 +191,7 @@ def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
     if policy.max_latency_ms and provider.estimated_latency_ms:
         score += 0.1 if provider.estimated_latency_ms <= policy.max_latency_ms else -0.1
     if policy.max_cost_usd is not None and provider.estimated_cost_usd is not None:
-        score += 0.1 if provider.estimated_cost_usd <= policy.max_cost_usd else -0.2
+        score += 0.1
     if provider.permission_mode == PermissionMode.autopilot_safe:
         score += 0.1
 

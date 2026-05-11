@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -194,6 +195,15 @@ class RoutingRequest(BaseModel):
     max_latency_ms: int | None = None
     max_cost_usd: float | None = None
     required_capabilities: list[str] = Field(default_factory=list)
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def max_cost_must_be_finite_and_non_negative(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("max_cost_usd must be finite and non-negative.")
+        return value
 
 
 class RoutingDecision(BaseModel):

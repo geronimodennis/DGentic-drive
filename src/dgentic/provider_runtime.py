@@ -261,6 +261,8 @@ class ProviderGenerationResult(BaseModel):
     provider_id: str
     model: str
     content: str
+    usage_metadata: dict[str, int | float] = Field(default_factory=dict)
+    estimated_cost_usd: float | None = None
     raw_response_metadata: dict[str, Any] = Field(default_factory=dict)
     duration_ms: int
 
@@ -271,6 +273,8 @@ class ProviderStreamEvent(BaseModel):
     event: str = "chunk"
     delta: str = ""
     finish_reason: str | None = None
+    usage_metadata: dict[str, int | float] = Field(default_factory=dict)
+    estimated_cost_usd: float | None = None
     raw_response_metadata: dict[str, Any] = Field(default_factory=dict)
     duration_ms: int | None = None
     error: str | None = None
@@ -533,10 +537,13 @@ def generate_provider_completion(
             transport_result = _post_json(url, payload, request.timeout_seconds)
         raw_response, retry_metadata = _transport_payload_and_metadata(transport_result)
         duration_ms = _duration_ms(started_at)
+        usage_metadata = _normalized_usage_metadata(request.provider_id, raw_response)
         result = ProviderGenerationResult(
             provider_id=request.provider_id,
             model=request.model,
             content=_extract_content(request.provider_id, raw_response),
+            usage_metadata=usage_metadata,
+            estimated_cost_usd=_estimated_provider_cost_usd(request.provider_id),
             raw_response_metadata=_safe_response_metadata(request.provider_id, raw_response),
             duration_ms=duration_ms,
         )
@@ -914,6 +921,46 @@ def _safe_provider_usage(value: Any) -> dict[str, int | float]:
     }
 
 
+def _normalized_usage_metadata(
+    provider_id: str, response: dict[str, Any]
+) -> dict[str, int | float]:
+    if provider_id == OLLAMA_PROVIDER_ID:
+        prompt_tokens = response.get("prompt_eval_count")
+        completion_tokens = response.get("eval_count")
+        usage: dict[str, int | float] = {}
+        if _is_safe_provider_numeric_value(prompt_tokens):
+            usage["prompt_tokens"] = prompt_tokens
+        if _is_safe_provider_numeric_value(completion_tokens):
+            usage["completion_tokens"] = completion_tokens
+        if usage:
+            usage["total_tokens"] = usage.get("prompt_tokens", 0) + usage.get(
+                "completion_tokens",
+                0,
+            )
+        return usage
+
+    if provider_id in {LM_STUDIO_PROVIDER_ID, EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}:
+        safe_usage = _safe_provider_usage(response.get("usage"))
+        return {
+            key: safe_usage[key]
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if key in safe_usage
+        }
+
+    return {}
+
+
+def _estimated_provider_cost_usd(provider_id: str) -> float | None:
+    if provider_id in {OLLAMA_PROVIDER_ID, LM_STUDIO_PROVIDER_ID}:
+        return 0.0
+    if provider_id in {
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        EXTERNAL_PLACEHOLDER_PROVIDER_ID,
+    }:
+        return 0.01
+    return None
+
+
 def _safe_provider_finish_reason(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -934,8 +981,8 @@ def _is_safe_provider_numeric_value(value: Any) -> bool:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return False
     if isinstance(value, int):
-        return abs(value) <= MAX_PROVIDER_METADATA_ABS_NUMERIC
-    return math.isfinite(value) and abs(value) <= MAX_PROVIDER_METADATA_ABS_NUMERIC
+        return 0 <= value <= MAX_PROVIDER_METADATA_ABS_NUMERIC
+    return math.isfinite(value) and 0 <= value <= MAX_PROVIDER_METADATA_ABS_NUMERIC
 
 
 def _completion_event_metadata(
@@ -948,6 +995,8 @@ def _completion_event_metadata(
         "model": result.model,
         "duration_ms": result.duration_ms,
         "content_length": len(result.content),
+        "usage_metadata": result.usage_metadata,
+        "estimated_cost_usd": result.estimated_cost_usd,
         "raw_response_metadata": result.raw_response_metadata,
         **retry_metadata,
     }
@@ -1009,12 +1058,18 @@ def _iter_provider_stream_events(
     chunk_count = 0
     content_length = 0
     finish_reasons: list[str] = []
+    usage_metadata: dict[str, int | float] = {}
+    estimated_cost_usd: float | None = None
     try:
         for event in _stream_events_for_provider(request, transport_result):
             chunk_count += 1
             content_length += len(event.delta)
             if event.finish_reason is not None:
                 finish_reasons.append(event.finish_reason)
+            if event.usage_metadata:
+                usage_metadata = event.usage_metadata
+            if event.estimated_cost_usd is not None:
+                estimated_cost_usd = event.estimated_cost_usd
             yield event
         event_log.record(
             LogEventType.provider,
@@ -1027,6 +1082,8 @@ def _iter_provider_stream_events(
                 "chunk_count": chunk_count,
                 "content_length": content_length,
                 "finish_reasons": finish_reasons,
+                "usage_metadata": usage_metadata,
+                "estimated_cost_usd": estimated_cost_usd,
                 **_stream_transport_metadata(transport_result),
             },
         )
@@ -1151,6 +1208,10 @@ def _stream_event_from_ollama_payload(
         model=model,
         delta=delta,
         finish_reason=finish_reason,
+        usage_metadata=_normalized_usage_metadata(provider_id, payload),
+        estimated_cost_usd=(
+            _estimated_provider_cost_usd(provider_id) if finish_reason is not None else None
+        ),
         raw_response_metadata=_safe_ollama_stream_response_metadata(payload),
     )
 
@@ -1163,7 +1224,19 @@ def _stream_events_from_openai_payload(
 ) -> Iterator[ProviderStreamEvent]:
     _raise_if_provider_error_response(payload)
     choices = payload.get("choices", [])
-    if not isinstance(choices, list) or not choices:
+    if not isinstance(choices, list):
+        raise ProviderUpstreamResponseError("Provider returned malformed streaming choices.")
+    usage_metadata = _normalized_usage_metadata(provider_id, payload)
+    if not choices:
+        if usage_metadata:
+            yield ProviderStreamEvent(
+                provider_id=provider_id,
+                model=model,
+                usage_metadata=usage_metadata,
+                estimated_cost_usd=_estimated_provider_cost_usd(provider_id),
+                raw_response_metadata=_safe_stream_response_metadata(payload, {}),
+            )
+            return
         raise ProviderUpstreamResponseError("Provider returned malformed streaming choices.")
     for choice in choices:
         if not isinstance(choice, dict):
@@ -1187,6 +1260,10 @@ def _stream_events_from_openai_payload(
                 model=model,
                 delta=delta,
                 finish_reason=finish_reason_text,
+                usage_metadata=usage_metadata,
+                estimated_cost_usd=(
+                    _estimated_provider_cost_usd(provider_id) if usage_metadata else None
+                ),
                 raw_response_metadata=_safe_stream_response_metadata(payload, choice),
             )
 

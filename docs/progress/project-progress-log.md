@@ -4,6 +4,56 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006h Provider Usage And Cost Metadata
+
+Status: completed for the scoped normalized usage and static request-cost metadata contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, and provider-specific pricing/billing tables beyond static request estimates.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected usage/cost metadata after BL-006g because provider logs already carried latency and retry evidence but lacked a normalized token/cost surface.
+- Completed: Architect scoped cost as static request-level estimates from existing provider configuration, not provider-specific billing tables.
+- Completed: Developer updated production source only for provider result/event usage and cost fields, completion log usage/cost metadata, normalized Ollama/OpenAI-compatible token extraction, OpenAI-compatible usage-only streaming chunks, and hard finite/non-negative `max_cost_usd` routing ceilings.
+- Completed: QA updated tests only for local/external non-streaming usage/cost metadata, Ollama streaming terminal usage/cost metadata, OpenAI-compatible usage-only streaming chunks, provider log usage/cost metadata, over-budget routing rejection, and invalid max-cost policy rejection.
+- Completed: Reviewer/Security found usage-only stream chunk and non-finite max-cost blockers; Developer remediated them and QA added focused coverage.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `ProviderGenerationResult` now includes `usage_metadata` and `estimated_cost_usd`.
+- Implemented in this slice: `ProviderStreamEvent` now includes `usage_metadata` and `estimated_cost_usd` where a chunk carries usable token metadata or a request-level estimate applies.
+- Implemented in this slice: provider completion logs include normalized usage metadata and static request-level cost estimates without raw prompts, completions, credentials, provider ids, or provider-controlled model strings.
+- Implemented in this slice: Ollama `prompt_eval_count`/`eval_count` normalize to `prompt_tokens`/`completion_tokens`/`total_tokens`; OpenAI-compatible `usage` normalizes matching numeric token counters.
+- Implemented in this slice: OpenAI-compatible usage-only streaming chunks with empty choices now emit a metadata event instead of a sanitized error event.
+- Implemented in this slice: `max_cost_usd` now rejects non-finite/negative values and excludes providers above the requested ceiling instead of applying only a score penalty.
+
+Validation:
+- Focused usage/cost gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py::test_ollama_generation_posts_chat_payload_and_returns_content tests\test_provider_runtime.py::test_lm_studio_generation_posts_chat_completions_payload tests\test_provider_runtime.py::test_external_openai_compatible_generation_posts_authorized_chat_completion tests\test_provider_runtime.py::test_ollama_streaming_posts_chat_payload_and_emits_ordered_chunks tests\test_api.py::test_routing_rejects_provider_above_max_cost tests\test_api.py::test_external_provider_generate_api_sends_authorization_and_redacts_logs tests\test_api.py::test_provider_generate_api_returns_safe_metadata_and_logs tests\test_api.py::test_provider_generate_stream_api_emits_ollama_ndjson_and_safe_logs` passed with 10 tests.
+- Focused remediation gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py::test_routing_rejects_provider_above_max_cost tests\test_api.py::test_routing_rejects_invalid_max_cost_before_scoring tests\test_api.py::test_provider_generate_api_returns_safe_metadata_and_logs tests\test_provider_runtime.py::test_provider_generation_handles_malformed_or_untrusted_success_payloads tests\test_provider_runtime.py::test_lm_studio_streaming_emits_ordered_chunks_and_safe_logs` passed with 11 tests.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 170 tests.
+- Final Reviewer recheck: no blockers after usage-only stream chunk remediation.
+- Final Security recheck: no blockers after finite/non-negative max-cost validation and bounded non-negative usage metadata remediation.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\schemas.py src\dgentic\provider_runtime.py src\dgentic\providers.py tests\test_provider_runtime.py tests\test_api.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\schemas.py src\dgentic\provider_runtime.py src\dgentic\providers.py tests\test_provider_runtime.py tests\test_api.py` passed with 5 files already formatted after formatting touched files.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 611 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 47 files already formatted.
+- Whitespace gate: `git diff --check` passed.
+
+Residual risks:
+- Cost estimates are static request-level estimates, not provider-specific billing calculations.
+- Usage metadata is provider-reported telemetry and must not be treated as authoritative billing evidence until provider-specific verification exists.
+- Circuit breaker behavior, encrypted credential storage, and provider-specific external adapters remain future Sprint 12 work.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/provider_runtime.py`, `src/dgentic/providers.py`, and `src/dgentic/schemas.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Complete final Reviewer/Security rechecks, run final full gates, commit/push the stable BL-006h checkpoint, then continue Sprint 12 with circuit breakers, encrypted credential strategy, or provider-specific external adapters depending on risk priority.
+
 ### Sprint 12 BL-006g Provider Payload Validation
 
 Status: completed for the scoped provider request and upstream response payload-validation contract; Sprint 12 remains open for encrypted credential storage or secret-manager integration, provider-specific external adapters, circuit breakers, and cost accounting.

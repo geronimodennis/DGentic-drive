@@ -568,6 +568,62 @@ def test_routing_selects_configured_external_when_requested(tmp_path, monkeypatc
     get_settings.cache_clear()
 
 
+def test_routing_rejects_provider_above_max_cost(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={
+            "privacy_required": False,
+            "required_capabilities": ["external"],
+            "max_cost_usd": 0.0,
+        },
+    )
+
+    assert response.status_code == 404
+    assert "No provider satisfies" in response.text
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("max_cost_usd", ["NaN", "Infinity", -0.01])
+def test_routing_rejects_invalid_max_cost_before_scoring(
+    max_cost_usd,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        raise AssertionError("provider probes should not run for invalid routing policy")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={
+            "privacy_required": False,
+            "required_capabilities": ["external"],
+            "max_cost_usd": max_cost_usd,
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+
+
 def test_routing_prefers_local_when_privacy_required_with_external_configured(
     tmp_path,
     monkeypatch,
@@ -2448,6 +2504,12 @@ def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
                     "model": "local-model",
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 },
+                {
+                    "id": "chatcmpl-api-stream",
+                    "model": "local-model",
+                    "choices": [],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13},
+                },
             )
         )
 
@@ -2484,8 +2546,15 @@ def test_provider_generate_stream_api_emits_ordered_ndjson_and_safe_logs(
         }
     ]
     events = [json.loads(line) for line in response.text.splitlines()]
-    assert [event["delta"] for event in events] == ["Hel", "lo", ""]
-    assert events[-1]["finish_reason"] == "stop"
+    assert [event["delta"] for event in events] == ["Hel", "lo", "", ""]
+    assert events[-2]["finish_reason"] == "stop"
+    assert events[-2]["estimated_cost_usd"] is None
+    assert events[-1]["usage_metadata"] == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
+    assert events[-1]["estimated_cost_usd"] == 0.0
     assert "Hello" not in logs_response.text
     get_settings.cache_clear()
 
@@ -2532,6 +2601,8 @@ def test_provider_generate_stream_api_emits_ollama_ndjson_and_safe_logs(
                         "done": True,
                         "done_reason": "stop",
                         "total_duration": 12345,
+                        "prompt_eval_count": 4,
+                        "eval_count": 2,
                     }
                 )
                 + "\n",
@@ -2572,6 +2643,12 @@ def test_provider_generate_stream_api_emits_ollama_ndjson_and_safe_logs(
     events = [json.loads(line) for line in response.text.splitlines()]
     assert [event["delta"] for event in events] == ["delta-secret-", "abc", ""]
     assert events[-1]["finish_reason"] == "stop"
+    assert events[-1]["usage_metadata"] == {
+        "prompt_tokens": 4,
+        "completion_tokens": 2,
+        "total_tokens": 6,
+    }
+    assert events[-1]["estimated_cost_usd"] == 0.0
     assert "prompt-secret-123" not in logs_response.text
     assert "delta-secret-abc" not in logs_response.text
     assert "delta-secret-" not in logs_response.text
@@ -3091,6 +3168,12 @@ def test_external_provider_generate_api_sends_authorization_and_redacts_logs(
         }
     ]
     assert response.json()["content"] == "Hello external API."
+    assert response.json()["usage_metadata"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 4,
+        "total_tokens": 7,
+    }
+    assert response.json()["estimated_cost_usd"] == 0.01
     serialized = response.text + logs_response.text
     for raw_secret in [
         "external-api-key-secret",
@@ -3677,6 +3760,7 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
             "prompt_tokens": 3,
             "completion_tokens": 4,
             "total_tokens": 7,
+            "load_duration": -1,
             "eval_count": 10**309,
             "prompt": "usage-prompt-secret",
             "total": "usage-total-secret",
@@ -3721,6 +3805,12 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
     ]
     body = response.json()
     assert body["content"] == "Hello from provider API."
+    assert body["usage_metadata"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 4,
+        "total_tokens": 7,
+    }
+    assert body["estimated_cost_usd"] == 0.0
     assert body["raw_response_metadata"] == {
         "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         "choice_count": 1,
@@ -3741,6 +3831,8 @@ def test_provider_generate_api_returns_safe_metadata_and_logs(tmp_path, monkeypa
     provider_events = logs_response.json()
     assert provider_events[-1]["message"] == "Completed provider generation."
     assert "content" not in provider_events[-1]["metadata"]
+    assert provider_events[-1]["metadata"]["usage_metadata"] == body["usage_metadata"]
+    assert provider_events[-1]["metadata"]["estimated_cost_usd"] == 0.0
     serialized_logs = json.dumps(provider_events, sort_keys=True)
     assert "Hello from provider API." not in serialized_logs
     for raw_secret in raw_secrets + metadata_secrets:

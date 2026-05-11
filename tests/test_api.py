@@ -1896,6 +1896,64 @@ def test_network_approval_api_lifecycle_redacts_safe_metadata(tmp_path, monkeypa
     get_settings.cache_clear()
 
 
+def test_network_approval_api_blocks_partial_active_orchestration_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    create_run_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block partial network approval context.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate network approval context binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Network approval context is verified.",
+                }
+            ],
+        },
+    )
+    task = create_run_response.json()["tasks"][0]
+
+    response = client.post(
+        "/network/approvals",
+        json={
+            "url": "https://provider.example.test/v1",
+            "surface": "provider",
+            "action": "generate",
+            "requested_by": "operator",
+            "agent_id": task["agent_id"],
+        },
+    )
+
+    assert create_run_response.status_code == 201
+    assert response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in response.json()["detail"]
+    get_settings.cache_clear()
+
+
 def test_guardrails_classify_powershell_slash_command_wrapper() -> None:
     client = TestClient(create_app())
 
@@ -5429,6 +5487,53 @@ def test_provider_generate_api_rejects_unsupported_provider() -> None:
     assert response.status_code == 400
 
 
+def test_provider_generate_api_blocks_partial_active_orchestration_context(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+    create_run_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block partial provider context.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate provider context binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Provider context is verified.",
+                }
+            ],
+        },
+    )
+    task = create_run_response.json()["tasks"][0]
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "agent_id": task["agent_id"],
+        },
+    )
+
+    assert create_run_response.status_code == 201
+    assert response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in response.json()["detail"]
+    assert calls == []
+    get_settings.cache_clear()
+
+
 @pytest.mark.parametrize("path", ["/providers/generate", "/providers/generate/stream"])
 def test_provider_generate_api_returns_422_for_invalid_payload_before_transport(
     path,
@@ -5489,6 +5594,27 @@ def test_provider_generate_api_rejects_disallowed_base_url_before_post(
     assert response.status_code == 403
     assert calls == []
     assert "169.254.169.254" not in response.text
+
+
+def test_provider_generate_api_sanitizes_os_permission_errors(monkeypatch) -> None:
+    def fake_post_json(url: str, payload: dict, timeout_seconds: float) -> dict:
+        raise PermissionError("access denied: C:/secret/provider-key.txt")
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/providers/generate",
+        json={
+            "provider_id": "lm-studio",
+            "model": "local-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Provider request failed."
+    assert "provider-key" not in response.text
 
 
 def test_provider_generate_api_allows_extra_trusted_base_url(monkeypatch) -> None:

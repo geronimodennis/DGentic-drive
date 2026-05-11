@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009i Task-Scoped Orchestration Agent Context Verification
+
+Status: completed for the scoped active-task verification slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, non-provider network enforcement surfaces, and broader CLI host-boundary enforcement.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected task-scoped verification for caller-supplied orchestration agent context as the next bounded Sprint 15 security slice after provider network approval records.
+- Completed: Architect/Security review confirmed CLI/tool active-context behavior was partially strict, while provider and network approval paths stored/digested `agent_id`, `agent_role`, and `task_id` without proving they matched a running orchestration task.
+- Completed: Developer added a shared orchestration context verifier for CLI, generated-tool, provider, and network approval surfaces.
+- Completed: Developer wired provider approval/generation/streaming and network approval create/validate/claim paths so partial or unmatched caller-supplied orchestration context fails closed while orchestration tasks are running.
+- Completed: QA updated CLI/tool orchestration expectations and added provider, network approval, and API regressions for partial, mismatched, and matching active task context.
+- Completed: Reviewer/Security found two P2 follow-ups: avoid broad API `PermissionError` catches on provider routes and document/test stale known-task CLI context. Developer introduced a dedicated orchestration-context authorization exception, preserved sanitized OS permission failures, and QA added stale known-task CLI regressions.
+- Completed: PM updated README, architecture, setup/usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: a shared task-context authorization helper now requires complete `agent_id`, `agent_role`, and `task_id` when supplied context is evaluated during active orchestration work.
+- Implemented in this slice: CLI, generated-tool, provider, and network approval surfaces reject partial or unmatched supplied orchestration context while any running orchestration task exists, and allow exact active task matches.
+- Implemented in this slice: provider and network approval digests still bind request payloads to the supplied actor/task context, but approval creation and execution now also verify that active orchestration context before credential lookup, transport, or approval claim side effects.
+- Still out of scope after this slice: deriving agent/task identity from server-side agent-scoped credentials instead of request bodies, richer user/group identity workflows, encrypted local credential vaulting, first-class provider-specific secret-manager APIs, non-provider network enforcement surfaces, and broader CLI host-boundary enforcement.
+
+Validation:
+- Focused active-context and reviewer-follow-up gates: `python -m pytest -q tests\test_orchestration.py -k "cli_binding or known_non_running or provider_and_network_context"`, `python -m pytest -q tests\test_command_policy.py -k "orchestration_context or known_non_running"`, `python -m pytest -q tests\test_cli_runtime.py -k "orchestration_context or known_non_running"`, and `python -m pytest -q tests\test_api.py -k "partial_active_orchestration_context or sanitizes_os_permission_errors"` passed with 29 focused tests.
+- Broader affected suites: `python -m pytest -q tests\test_orchestration.py tests\test_command_policy.py tests\test_cli_runtime.py tests\test_tool_runtime.py tests\test_provider_runtime.py tests\test_network_policy.py` passed with 616 tests and 2 skipped; `python -m pytest -q tests\test_api.py` passed with 158 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 913 tests and 2 skipped after an earlier full-suite attempt timed out without pytest output.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with non-provider network enforcement surfaces or encrypted credential vaulting only after key-management design is ready.
+
 ### Sprint 15 BL-009h Network Approval Records
 
 Status: completed for the scoped provider-call network approval record slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, non-provider network enforcement surfaces, task-scoped agent-context verification, and broader CLI host-boundary enforcement.

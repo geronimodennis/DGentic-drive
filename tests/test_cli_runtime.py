@@ -33,7 +33,9 @@ from dgentic.schemas import (
     CommandPolicyRuleRequest,
     OrchestrationCreateRequest,
     OrchestrationTaskSpec,
+    OrchestrationTaskUpdate,
     PermissionMode,
+    StepStatus,
 )
 from dgentic.settings import get_settings
 
@@ -205,6 +207,30 @@ def test_cli_runtime_allows_matching_orchestration_context_under_normal_policy(r
     assert result.exit_code == 0
     assert "bound-ok" in result.stdout
     assert result.permission_mode == PermissionMode.autopilot_safe
+
+
+def test_cli_runtime_blocks_known_non_running_orchestration_context(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+    orchestration = OrchestrationService()
+    run = _create_running_orchestration_task_for_runtime(orchestration)
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+    orchestration.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    with pytest.raises(PermissionError, match="not running"):
+        service.execute_command(
+            CommandExecutionRequest(
+                command="cmd /c echo stale-context",
+                agent_role=task.role,
+                agent_id=task.agent_id,
+                task_id=task.id,
+            )
+        )
+
+    assert service.list_command_runs() == []
 
 
 def test_create_approval_evaluates_policy_with_request_cwd(runtime) -> None:
@@ -1935,8 +1961,10 @@ def test_stale_reconciliation_preserves_output_cursor_and_approval_id(runtime) -
     assert "TOKEN=[REDACTED]" in output.chunks[0].text
 
 
-def _create_running_orchestration_task_for_runtime():
-    return OrchestrationService().create_run(
+def _create_running_orchestration_task_for_runtime(
+    service: OrchestrationService | None = None,
+):
+    return (service or OrchestrationService()).create_run(
         OrchestrationCreateRequest(
             objective="Bind CLI runtime execution to a running QA task.",
             tasks=[

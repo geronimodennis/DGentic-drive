@@ -20,6 +20,10 @@ from dgentic.credentials import (
     credential_secret_for_reference,
 )
 from dgentic.events import event_log
+from dgentic.orchestration import (
+    OrchestrationContextAuthorizationError,
+    authorize_provider_action,
+)
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
     validate_provider_base_url,
@@ -312,6 +316,7 @@ def create_provider_approval(
     request = _provider_request_for_path(provider_id, request)
     if provider_id != EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
         raise ValueError("Only approval-required external provider requests can be queued.")
+    _authorize_provider_context_or_raise(request)
 
     settings = get_settings()
     _reject_external_runtime_base_url(request)
@@ -548,6 +553,7 @@ def generate_provider_completion(
     )
 
     try:
+        _authorize_provider_context_or_raise(request)
         _validate_provider_pricing_config()
         url, payload, headers = _build_provider_request(request)
         circuit_key = _provider_circuit_key(request, url)
@@ -630,6 +636,7 @@ def stream_provider_completion(
     )
 
     try:
+        _authorize_provider_context_or_raise(request)
         _validate_provider_pricing_config()
         url, payload, headers = _build_provider_stream_request(request)
         circuit_key = _provider_circuit_key(request, url)
@@ -1663,6 +1670,18 @@ def _authorize_provider_request_for_transport(
     if request.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
         return _authorize_external_provider_request(request, settings=get_settings())
     return None
+
+
+def _authorize_provider_context_or_raise(
+    request: ProviderGenerationRequest,
+) -> None:
+    decision = authorize_provider_action(
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    if not decision.allowed:
+        raise OrchestrationContextAuthorizationError(decision.reason)
 
 
 def _provider_transport_headers(

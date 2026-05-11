@@ -2671,13 +2671,13 @@ def test_orchestration_filesystem_allows_read_only_action_for_running_bound_task
     )
 
 
-def test_orchestration_cli_context_is_backward_compatible_without_active_task_match(
+def test_orchestration_cli_context_blocks_unmatched_active_task_context(
     orchestration_state,
 ) -> None:
     service = OrchestrationService()
     service.create_run(
         OrchestrationCreateRequest(
-            objective="Keep legacy CLI context behavior when no task matches.",
+            objective="Reject spoofed CLI context while an unrelated task is running.",
             tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
         )
     )
@@ -2688,8 +2688,8 @@ def test_orchestration_cli_context_is_backward_compatible_without_active_task_ma
         task_id="legacy-task",
     )
 
-    assert decision.allowed is True
-    assert decision.reason == "No active orchestration task matched supplied CLI context."
+    assert decision.allowed is False
+    assert "does not match any running orchestration task" in decision.reason
     assert decision.agent_id == "legacy-agent"
     assert decision.agent_role == "Developer"
     assert decision.task_id == "legacy-task"
@@ -2758,13 +2758,40 @@ def test_orchestration_cli_allows_matching_running_task_context(
     assert decision.task_id == task.id
 
 
-def test_orchestration_tool_context_is_backward_compatible_without_active_task_match(
+def test_orchestration_cli_binding_blocks_known_non_running_task_context(
+    orchestration_state,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject stale CLI ownership context.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    decision = service.authorize_cli_action(
+        agent_id=task.agent_id,
+        agent_role=task.role,
+        task_id=task.id,
+    )
+
+    assert decision.allowed is False
+    assert "not running" in decision.reason
+
+
+def test_orchestration_tool_context_blocks_unmatched_active_task_context(
     orchestration_state,
 ) -> None:
     service = OrchestrationService()
     service.create_run(
         OrchestrationCreateRequest(
-            objective="Keep legacy tool context behavior when no task matches.",
+            objective="Reject spoofed tool context while an unrelated task is running.",
             tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
         )
     )
@@ -2775,8 +2802,8 @@ def test_orchestration_tool_context_is_backward_compatible_without_active_task_m
         task_id="legacy-task",
     )
 
-    assert decision.allowed is True
-    assert decision.reason == "No active orchestration task matched supplied tool context."
+    assert decision.allowed is False
+    assert "does not match any running orchestration task" in decision.reason
     assert decision.agent_id == "legacy-agent"
     assert decision.agent_role == "Developer"
     assert decision.task_id == "legacy-task"
@@ -2935,6 +2962,72 @@ def test_orchestration_tool_allows_matching_running_task_context(
 
     assert decision.allowed is True
     assert decision.reason == "Tool action is bound to a running orchestration task."
+    assert decision.run_id == run.id
+    assert decision.agent_id == task.agent_id
+    assert decision.agent_role == "qa"
+    assert decision.task_id == task.id
+
+
+@pytest.mark.parametrize(
+    ("method_name", "label"),
+    [
+        ("authorize_provider_action", "Provider"),
+        ("authorize_network_action", "Network"),
+    ],
+)
+def test_orchestration_provider_and_network_context_block_unmatched_active_task(
+    orchestration_state,
+    method_name: str,
+    label: str,
+) -> None:
+    service = OrchestrationService()
+    service.create_run(
+        OrchestrationCreateRequest(
+            objective=f"Reject spoofed {label} context during active orchestration.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    authorize = getattr(service, method_name)
+
+    partial = authorize(agent_id=None, agent_role="QA", task_id="qa-validation")
+    mismatched = authorize(
+        agent_id="legacy-agent",
+        agent_role="Developer",
+        task_id="legacy-task",
+    )
+
+    assert partial.allowed is False
+    assert "require agent_id, agent_role, and task_id" in partial.reason
+    assert mismatched.allowed is False
+    assert "does not match any running orchestration task" in mismatched.reason
+
+
+@pytest.mark.parametrize(
+    ("method_name", "label"),
+    [
+        ("authorize_provider_action", "Provider"),
+        ("authorize_network_action", "Network"),
+    ],
+)
+def test_orchestration_provider_and_network_context_allow_matching_running_task(
+    orchestration_state,
+    method_name: str,
+    label: str,
+) -> None:
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective=f"Allow exact {label} context during active orchestration.",
+            tasks=[_task("qa-validation", role="QA", paths=["tests/test_orchestration.py"])],
+        )
+    )
+    task = _task_by_id(run, "qa-validation")
+    authorize = getattr(service, method_name)
+
+    decision = authorize(agent_id=task.agent_id, agent_role="qa", task_id=task.id)
+
+    assert decision.allowed is True
+    assert decision.reason == f"{label} action is bound to a running orchestration task."
     assert decision.run_id == run.id
     assert decision.agent_id == task.agent_id
     assert decision.agent_role == "qa"

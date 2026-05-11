@@ -23,6 +23,7 @@ from dgentic.network_policy import (
     create_network_approval,
     list_network_approvals,
 )
+from dgentic.orchestration import OrchestrationService
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
     _NoProviderRedirectHandler,
@@ -35,7 +36,7 @@ from dgentic.provider_runtime import (
     generate_provider_completion,
 )
 from dgentic.providers import default_providers
-from dgentic.schemas import LogEventType
+from dgentic.schemas import LogEventType, OrchestrationCreateRequest, OrchestrationTaskSpec
 from dgentic.settings import get_settings
 
 
@@ -178,6 +179,25 @@ def configure_external_provider(
     monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", models)
     monkeypatch.setenv(api_key_env, api_key)
     get_settings.cache_clear()
+
+
+def running_orchestration_task():
+    run = OrchestrationService().create_run(
+        OrchestrationCreateRequest(
+            objective="Bind provider context to the active orchestration task.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate provider context binding.",
+                    role="QA",
+                    declared_write_paths=["tests/test_provider_runtime.py"],
+                    validation="Provider context is verified.",
+                )
+            ],
+        )
+    )
+    return run.tasks[0]
 
 
 @pytest.mark.parametrize(
@@ -703,6 +723,108 @@ def test_external_streaming_requires_approval_before_credential_lookup(monkeypat
 
     assert calls == []
     assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
+def test_provider_approval_rejects_partial_and_unmatched_active_orchestration_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    task = running_orchestration_task()
+    provider_id = EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+
+    partial_request = ProviderGenerationRequest(
+        provider_id=provider_id,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "hello"}],
+        agent_id=task.agent_id,
+    )
+    mismatched_request = partial_request.model_copy(
+        update={
+            "agent_id": "wrong-agent",
+            "agent_role": task.role,
+            "task_id": task.id,
+        }
+    )
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        provider_runtime.create_provider_approval(provider_id, partial_request)
+    with pytest.raises(PermissionError, match="does not match"):
+        provider_runtime.create_provider_approval(provider_id, mismatched_request)
+
+    assert provider_runtime.list_provider_approvals() == []
+    get_settings.cache_clear()
+
+
+def test_provider_generation_rejects_active_context_spoof_before_credential_lookup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    blocked_credentials = BlockingCredentialEnviron()
+    calls: list[str] = []
+    task = running_orchestration_task()
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(request.full_url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "hello"}],
+                agent_id=task.agent_id,
+            )
+        )
+
+    assert calls == []
+    assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
+def test_provider_approval_allows_matching_active_orchestration_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    configure_external_provider(monkeypatch)
+    task = running_orchestration_task()
+    provider_id = EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+
+    approval = provider_runtime.create_provider_approval(
+        provider_id,
+        ProviderGenerationRequest(
+            provider_id=provider_id,
+            model="gpt-test",
+            messages=[{"role": "user", "content": "hello"}],
+            agent_id=task.agent_id,
+            agent_role=task.role,
+            task_id=task.id,
+        ),
+        requested_by="operator",
+    )
+
+    assert approval.agent_id == task.agent_id
+    assert approval.agent_role == task.role
+    assert approval.task_id == task.id
+    assert provider_runtime.list_provider_approvals()[0].id == approval.id
     get_settings.cache_clear()
 
 

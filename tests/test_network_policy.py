@@ -16,6 +16,8 @@ from dgentic.network_policy import (
     list_network_approvals,
     network_domain_policy,
 )
+from dgentic.orchestration import OrchestrationService
+from dgentic.schemas import OrchestrationCreateRequest, OrchestrationTaskSpec
 from dgentic.settings import Settings, get_settings
 
 
@@ -44,6 +46,25 @@ def network_approval_state(tmp_path, monkeypatch):
     get_settings.cache_clear()
     yield data_dir
     get_settings.cache_clear()
+
+
+def _running_orchestration_task():
+    run = OrchestrationService().create_run(
+        OrchestrationCreateRequest(
+            objective="Bind network approval context to the active orchestration task.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate network approval context binding.",
+                    role="QA",
+                    declared_write_paths=["tests/test_network_policy.py"],
+                    validation="Network approval context is verified.",
+                )
+            ],
+        )
+    )
+    return run.tasks[0]
 
 
 def test_network_domain_policy_allows_by_default() -> None:
@@ -176,6 +197,59 @@ def test_network_approval_lifecycle_redacts_and_claims_bound_request(
             agent_role="developer PASSWORD=role-secret",
             task_id="sprint API_KEY=task-secret",
         )
+
+
+def test_network_approval_rejects_partial_and_unmatched_active_orchestration_context(
+    network_approval_state,
+) -> None:
+    task = _running_orchestration_task()
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        create_network_approval(
+            "https://provider.example.test/v1",
+            surface="provider",
+            action="generate",
+            requested_by="operator",
+            agent_id=task.agent_id,
+        )
+
+    with pytest.raises(PermissionError, match="does not match"):
+        create_network_approval(
+            "https://provider.example.test/v1",
+            surface="provider",
+            action="generate",
+            requested_by="operator",
+            agent_id="wrong-agent",
+            agent_role=task.role,
+            task_id=task.id,
+        )
+
+    assert list_network_approvals() == []
+
+
+def test_network_approval_claim_rechecks_active_orchestration_context(
+    network_approval_state,
+) -> None:
+    approval = create_network_approval(
+        "https://provider.example.test/v1",
+        surface="provider",
+        action="generate",
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    task = _running_orchestration_task()
+
+    with pytest.raises(PermissionError, match="require agent_id, agent_role, and task_id"):
+        claim_network_approval(
+            approval.id,
+            url="https://provider.example.test/v1",
+            surface="provider",
+            action="generate",
+            requested_by="operator",
+            agent_id=task.agent_id,
+        )
+
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.approved
 
 
 def test_bound_network_approval_rejects_drift_denied_and_expired(

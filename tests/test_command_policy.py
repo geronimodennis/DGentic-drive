@@ -20,7 +20,9 @@ from dgentic.schemas import (
     LogEventType,
     OrchestrationCreateRequest,
     OrchestrationTaskSpec,
+    OrchestrationTaskUpdate,
     PermissionMode,
+    StepStatus,
 )
 from dgentic.settings import get_settings
 
@@ -232,6 +234,46 @@ def test_command_policy_allows_matching_orchestration_context_to_use_normal_poli
     assert approval_decision.permission_mode == PermissionMode.approval_required
     assert approval_decision.orchestration is not None
     assert approval_decision.orchestration.allowed is True
+
+
+def test_command_policy_blocks_known_non_running_cli_context(policy_state) -> None:
+    _root_dir, _data_dir = policy_state
+    service = OrchestrationService()
+    run = service.create_run(
+        OrchestrationCreateRequest(
+            objective="Reject stale CLI command policy context.",
+            tasks=[
+                OrchestrationTaskSpec(
+                    id="qa-validation",
+                    title="QA validation",
+                    description="Validate stale orchestration-bound CLI behavior.",
+                    role="QA",
+                    declared_write_paths=["tests/test_command_policy.py"],
+                    validation="Stale context is blocked.",
+                )
+            ],
+        )
+    )
+    task = next(task for task in run.tasks if task.id == "qa-validation")
+    service.update_task(
+        run.id,
+        task.id,
+        OrchestrationTaskUpdate(status=StepStatus.completed, output={"tests": "passed"}),
+    )
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(
+            command="cmd /c echo stale-context",
+            agent_role=task.role,
+            agent_id=task.agent_id,
+            task_id=task.id,
+        )
+    )
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert decision.orchestration is not None
+    assert decision.orchestration.allowed is False
+    assert "not running" in decision.reason
 
 
 def test_command_policy_serializes_orchestration_decision_metadata(policy_state) -> None:

@@ -14,6 +14,10 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from dgentic.events import event_log
+from dgentic.orchestration import (
+    OrchestrationContextAuthorizationError,
+    authorize_network_action,
+)
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import LogEventType, PermissionMode
 from dgentic.settings import get_settings
@@ -226,6 +230,11 @@ def create_network_approval(
     settings: Any | None = None,
 ) -> NetworkApproval:
     active_settings = settings if settings is not None else get_settings()
+    _authorize_network_context_or_raise(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
     decision = evaluate_network_domain_policy(url, settings=active_settings)
     if decision.mode != "approval_required":
         raise ValueError("Only approval-required network requests can be queued.")
@@ -443,6 +452,11 @@ def validate_bound_network_approval(
     task_id: str | None = None,
     settings: Any | None = None,
 ) -> NetworkApproval:
+    _authorize_network_context_or_raise(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
     try:
         approval = _get_network_approval_or_raise(approval_id)
     except KeyError as exc:
@@ -473,6 +487,12 @@ def claim_network_approval(
     task_id: str | None = None,
     settings: Any | None = None,
 ) -> NetworkApproval:
+    _authorize_network_context_or_raise(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+
     def claim(current: NetworkApproval) -> NetworkApproval:
         _validate_bound_network_approval(
             current,
@@ -610,6 +630,21 @@ def _domain_matches(host: str, domain: str) -> bool:
         suffix = domain[2:]
         return host.endswith(f".{suffix}") and host != suffix
     return host == domain
+
+
+def _authorize_network_context_or_raise(
+    *,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> None:
+    decision = authorize_network_action(
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+    if not decision.allowed:
+        raise OrchestrationContextAuthorizationError(decision.reason)
 
 
 def _validate_bound_network_approval(

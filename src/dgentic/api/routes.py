@@ -80,7 +80,11 @@ from dgentic.network_policy import (
     get_network_approval_review,
     list_network_approvals,
 )
-from dgentic.orchestration import OrchestrationError, orchestration_service
+from dgentic.orchestration import (
+    OrchestrationContextAuthorizationError,
+    OrchestrationError,
+    orchestration_service,
+)
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_pricing import ProviderPricingConfigurationError
 from dgentic.provider_routing import ProviderRoutingConfigurationError
@@ -870,6 +874,8 @@ def create_network_policy_approval(
         )
     except NetworkDomainPolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OrchestrationContextAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1135,6 +1141,8 @@ def create_external_provider_approval(
         )
     except ProviderEgressPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except OrchestrationContextAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1215,6 +1223,8 @@ def generate_with_provider(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderApprovalRequiredError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except OrchestrationContextAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderFeatureNotSupportedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     except ProviderConfigurationError as exc:
@@ -1247,6 +1257,8 @@ def stream_with_provider(
     except ProviderEgressPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderApprovalRequiredError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except OrchestrationContextAuthorizationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProviderFeatureNotSupportedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc

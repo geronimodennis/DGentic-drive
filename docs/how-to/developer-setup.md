@@ -40,7 +40,7 @@ Default settings:
 - `DGENTIC_PROVIDER_ALLOWED_BASE_URLS` empty by default; add comma-separated exact provider base URLs only when an additional trusted provider endpoint is configured
 - Provider retry defaults: `DGENTIC_PROVIDER_RETRY_MAX_ATTEMPTS=3`, `DGENTIC_PROVIDER_RETRY_INITIAL_DELAY_SECONDS=0.2`, `DGENTIC_PROVIDER_RETRY_MAX_DELAY_SECONDS=2.0`, and `DGENTIC_PROVIDER_RETRY_BACKOFF_MULTIPLIER=2.0`
 - `DGENTIC_PROVIDER_PRICING_CATALOG` empty by default; optionally set a bounded JSON map of exact provider/model advisory prices for routing and usage estimates
-- OpenAI-compatible external adapter defaults: `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are empty, so the adapter is disabled
+- OpenAI-compatible external adapter defaults: `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF`, and `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS` are empty, so the adapter is disabled
 
 ## Configure API Authentication
 
@@ -363,13 +363,26 @@ Invoke-RestMethod `
 
 Provider generation and health probes only use exact allowlisted base URLs. The default allowlist is the configured Ollama and LM Studio base URLs, plus any trusted URLs in `DGENTIC_PROVIDER_ALLOWED_BASE_URLS`. Provider redirects are blocked, malformed upstream JSON or provider-specific success payloads are returned to API callers as generic provider failures, and provider logs store safe metadata rather than raw completion content. Generation retries only bounded transient failures such as `429` and upstream `5xx`; repeated retry-exhausted generation failures open an in-process per-provider circuit breaker that returns a fast `503` until its cooldown expires. Tune this with `DGENTIC_PROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD` and `DGENTIC_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS`. Health probes do not retry.
 
-To enable the OpenAI-compatible external adapter, set an API-versioned HTTPS base URL, a comma-separated model allowlist, and the name of an environment variable that already contains the API key. The API key value itself is not stored in DGentic settings:
+To enable the OpenAI-compatible external adapter, set an API-versioned HTTPS base URL, a comma-separated model allowlist, and either the name of an environment variable that already contains the API key or a persisted credential reference id. The API key value itself is not stored in DGentic settings:
 
 ```powershell
 $env:OPENAI_API_KEY = "<set outside DGentic config>"
 $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1"
 $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV = "OPENAI_API_KEY"
 $env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS = "gpt-4.1-mini,gpt-4.1"
+```
+
+For a persisted external credential reference, first create the reference with an authenticated principal that has the `credentials` capability, then set `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` to the returned id. The reference stores only the external location, such as an environment variable name; the raw secret value remains outside DGentic and is read only when a provider request reaches the transport step:
+
+```powershell
+$credential = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/credentials/references `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"env_var":"OPENAI_API_KEY","label":"OpenAI-compatible provider"}'
+
+$env:DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF = $credential.id
 ```
 
 Optionally configure advisory provider/model pricing. Entries are exact provider/model matches; token rates are USD per 1,000 prompt/completion tokens, and `request_estimate_usd` is the routing-time estimate used before provider usage is known:
@@ -416,7 +429,7 @@ Invoke-RestMethod `
   -Body ('{"provider_id":"external-openai-compatible","model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello."}],"approval_id":"' + $approval.id + '","requested_by":"operator"}')
 ```
 
-Provider approval records bind provider id, model, stream mode, messages, generation options, timeout, configured base URL, credential environment name, model allowlist, requester, and agent/task context through HMAC digests. Review responses expose safe metadata without raw prompt content or credential values. When auth is enabled, provider approval create/list/review/approve/deny routes require the `approvals` capability; generation requires the `providers` capability. Approved records are claimed only after external request/config/circuit/credential gates pass and immediately before outbound provider transport, so actual transport failures consume the approval while earlier fail-fast paths preserve it.
+Provider approval records bind provider id, model, stream mode, messages, generation options, timeout, configured base URL, credential reference identity, model allowlist, requester, and agent/task context through HMAC digests. Review responses expose safe metadata without raw prompt content or credential values. When auth is enabled, provider approval create/list/review/approve/deny routes require the `approvals` capability; generation requires the `providers` capability. Approved records are claimed only after external request/config/circuit/credential gates pass and immediately before outbound provider transport, so actual transport failures consume the approval while earlier fail-fast paths preserve it.
 
 OpenAI-compatible streaming is available through `POST /providers/generate/stream` for LM Studio and the configured external adapter. The endpoint reads upstream `data:` server-sent event chunks and returns newline-delimited JSON (`application/x-ndjson`) events; non-streaming `/providers/generate` continues to reject `stream: true`.
 
@@ -575,9 +588,9 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, and persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, but broader persisted identity profiles, encrypted credential storage, network/domain guardrails, and full audit actor propagation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, and persisted external credential references, but broader persisted identity profiles, encrypted local credential storage, network/domain guardrails, and full audit actor propagation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, single-use bound approval IDs, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
-- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only env-referenced bearer credential and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted credential storage, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.
+- Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but encrypted local credential vaulting, durable multi-worker circuit state, provider billing reconciliation, and provider-specific external adapters are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, additive lifecycle metadata migrations, lifecycle preview/apply APIs, deterministic metadata compression APIs, a SQLite JSON-vector backend abstraction, retrieval attribution/score explanations, and baseline retrieval performance smoke coverage, but no pgvector production backend, scheduled memory lifecycle/compression job, frontend, or VS Code extension exists yet.
 - Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

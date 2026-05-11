@@ -10,6 +10,7 @@ from dgentic.auth import (
     parse_token_map,
     validate_auth_configuration,
 )
+from dgentic.credentials import credential_env_for_reference
 from dgentic.events import event_log
 from dgentic.main import create_app
 from dgentic.schemas import LogEventType
@@ -540,6 +541,61 @@ def test_auth_token_management_requires_auth_capability(
     assert forbidden_create.status_code == 403
 
 
+def test_credential_reference_lifecycle_requires_capability_and_never_stores_secret(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_TEST_EXTERNAL_KEY", "external-api-key-secret")
+    client = production_client_with_state(tmp_path, monkeypatch)
+    task_token = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-task", "capabilities": ["tasks"]},
+    ).json()
+    credential_token = client.post(
+        "/auth/tokens",
+        headers=bearer("bootstrap-token"),
+        json={"operator_id": "operator-credential", "capabilities": ["credentials"]},
+    ).json()
+
+    forbidden_create = client.post(
+        "/credentials/references",
+        headers=bearer(task_token["token"]),
+        json={"env_var": "DGENTIC_TEST_EXTERNAL_KEY", "label": "external provider"},
+    )
+    create_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={"env_var": "DGENTIC_TEST_EXTERNAL_KEY", "label": "external provider"},
+    )
+    ref_id = create_response.json()["id"]
+    list_response = client.get(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+    )
+    resolved_env_var = credential_env_for_reference(ref_id)
+    revoke_response = client.post(
+        f"/credentials/references/{ref_id}/revoke",
+        headers=bearer(credential_token["token"]),
+    )
+    state_text = (tmp_path / "state" / "credential-references.json").read_text(encoding="utf-8")
+    logs = event_log.list(LogEventType.credential)
+
+    assert forbidden_create.status_code == 403
+    assert create_response.status_code == 201
+    assert create_response.json()["env_var"] == "DGENTIC_TEST_EXTERNAL_KEY"
+    assert "external-api-key-secret" not in create_response.text
+    assert list_response.status_code == 200
+    assert "external-api-key-secret" not in list_response.text
+    assert resolved_env_var == "DGENTIC_TEST_EXTERNAL_KEY"
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == "revoked"
+    assert "external-api-key-secret" not in state_text
+    assert "external-api-key-secret" not in json.dumps(
+        [event.model_dump(mode="json") for event in logs]
+    )
+
+
 def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -618,6 +674,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/health", None),
         ("/tasks/plan", "tasks"),
         ("/auth/tokens", "auth"),
+        ("/credentials/references", "credentials"),
         ("/filesystem/read", "filesystem"),
         ("/filesystem/delete", "filesystem"),
         ("/cli/runs", "cli"),

@@ -19,6 +19,7 @@ CAPABILITY_ADMIN = "admin"
 CAPABILITY_AGENTS = "agents"
 CAPABILITY_APPROVALS = "approvals"
 CAPABILITY_CLI = "cli"
+CAPABILITY_CREDENTIALS = "credentials"
 CAPABILITY_FILESYSTEM = "filesystem"
 CAPABILITY_LOGS = "logs"
 CAPABILITY_MEMORY = "memory"
@@ -43,6 +44,7 @@ PUBLIC_PATHS = frozenset(
 CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/tasks", CAPABILITY_TASKS),
     ("/auth", CAPABILITY_AUTH),
+    ("/credentials", CAPABILITY_CREDENTIALS),
     ("/guardrails/filesystem", CAPABILITY_FILESYSTEM),
     ("/filesystem", CAPABILITY_FILESYSTEM),
     ("/guardrails/commands", CAPABILITY_CLI),

@@ -37,6 +37,13 @@ from dgentic.command_policy import (
     list_command_policy_rules,
     update_command_policy_rule,
 )
+from dgentic.credentials import (
+    CredentialReferenceRequest,
+    CredentialReferenceView,
+    create_credential_reference,
+    list_credential_references,
+    revoke_credential_reference,
+)
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import (
@@ -250,6 +257,33 @@ def revoke_persisted_auth_token(token_id: str, request: Request) -> AuthTokenVie
 def expire_persisted_auth_token(token_id: str, request: Request) -> AuthTokenView:
     try:
         return expire_auth_token(token_id, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/credentials/references", response_model=CredentialReferenceView, status_code=201)
+def create_persisted_credential_reference(
+    payload: CredentialReferenceRequest,
+    request: Request,
+) -> CredentialReferenceView:
+    return create_credential_reference(payload, actor=_principal_actor(request))
+
+
+@router.get("/credentials/references", response_model=list[CredentialReferenceView])
+def get_persisted_credential_references() -> list[CredentialReferenceView]:
+    return list_credential_references()
+
+
+@router.post(
+    "/credentials/references/{credential_ref_id}/revoke",
+    response_model=CredentialReferenceView,
+)
+def revoke_persisted_credential_reference(
+    credential_ref_id: str,
+    request: Request,
+) -> CredentialReferenceView:
+    try:
+        return revoke_credential_reference(credential_ref_id, actor=_principal_actor(request))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

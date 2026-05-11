@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from dgentic import provider_runtime, provider_transport, providers
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
+from dgentic.credentials import CredentialReferenceRequest, create_credential_reference
 from dgentic.database import get_db_session, reset_database_state
 from dgentic.main import create_app
 from dgentic.memory.models import MemoryMetadata
@@ -2915,6 +2916,64 @@ def test_configured_external_provider_health_is_config_only(tmp_path, monkeypatc
     assert response.json()["model_names"] == ["gpt-test", "gpt-other"]
     assert calls == []
     assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_configured_external_provider_with_credential_reference_does_not_resolve_secret(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(env_var="DGENTIC_REF_EXTERNAL_API_KEY")
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    monkeypatch.delenv("DGENTIC_REF_EXTERNAL_API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        raise AssertionError("provider listing, health, and routing should not resolve secrets")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    client = TestClient(create_app())
+
+    providers_response = client.get("/providers")
+    health_response = client.get(
+        f"/providers/{provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}/health"
+    )
+    route_response = client.post(
+        "/routing/decide",
+        json={"privacy_required": False, "required_capabilities": ["external"]},
+    )
+
+    assert providers_response.status_code == 200
+    external_provider = next(
+        provider
+        for provider in providers_response.json()
+        if provider["id"] == provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    )
+    assert external_provider["enabled"] is True
+    assert health_response.status_code == 200
+    assert health_response.json()["available"] is True
+    assert route_response.status_code == 200
+    assert route_response.json()["provider_id"] == (
+        provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
+    )
     get_settings.cache_clear()
 
 

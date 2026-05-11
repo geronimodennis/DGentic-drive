@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     provider_role_routing: str = ""
     external_openai_compatible_base_url: str = ""
     external_openai_compatible_api_key_env: str = ""
+    external_openai_compatible_credential_ref: str = ""
     external_openai_compatible_models: str = ""
 
     @property

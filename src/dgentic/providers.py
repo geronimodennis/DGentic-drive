@@ -1,7 +1,7 @@
-from os import environ
 from typing import Any
 from urllib.error import URLError
 
+from dgentic.credentials import credential_env_for_reference
 from dgentic.events import event_log
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
@@ -384,13 +384,23 @@ def _check_external_openai_compatible(provider: ProviderConfig) -> ProviderHealt
 
 
 def _external_provider_configured(settings: Any) -> bool:
-    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    credential_configured = _external_credential_configured(settings)
     return (
         bool(_safe_external_provider_base_url_for_display(settings))
-        and bool(credential_env)
-        and bool(environ.get(credential_env, "").strip())
+        and credential_configured
         and bool(_external_model_names(settings))
     )
+
+
+def _external_credential_configured(settings: Any) -> bool:
+    credential_ref = settings.external_openai_compatible_credential_ref.strip()
+    if credential_ref:
+        try:
+            credential_env_for_reference(credential_ref, purpose="provider")
+        except (KeyError, PermissionError):
+            return False
+        return True
+    return bool(settings.external_openai_compatible_api_key_env.strip())
 
 
 def _external_model_names(settings: Any) -> list[str]:

@@ -4,6 +4,46 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 15 BL-009b External Credential References
+
+Status: completed for the scoped external credential-reference slice; Sprint 15 remains active for broader identity, encrypted local vaulting, secret-manager adapters, audit propagation, and network/domain guardrails.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected external credential references as the next bounded Sprint 15 slice after persisted auth-token lifecycle.
+- Completed: Security/Architect read-only assessment recommended an external secret-reference strategy instead of local encrypted credential storage without a key-management story.
+- Completed: Developer added persisted credential-reference records for externally managed credential locations, currently environment variables, with create/list/revoke APIs and a dedicated `credentials` capability.
+- Completed: Developer added credential audit events and `credential-references.json` local state without storing raw secret values.
+- Completed: Developer added `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` and wired OpenAI-compatible provider approvals/execution to bind a credential reference identity while resolving the actual secret only at transport time.
+- Completed: Developer changed config-only provider listing, health, and routing to treat credential references as configured without reading secret values.
+- Completed: QA added focused coverage for credential-reference capability gates, no raw secret persistence/echo, provider approval/execution through a configured credential reference, revoked-reference fail-closed behavior, and config-only provider/routing checks without secret-value lookup.
+- Completed: PM updated `.env.example`, README, usage docs, developer setup, repository architecture, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/credentials/references` creates and lists safe references to external credential locations.
+- Implemented in this slice: `/credentials/references/{credential_ref_id}/revoke` disables a reference so provider approval and execution fail closed before secret lookup.
+- Implemented in this slice: external OpenAI-compatible provider configuration can use `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` while preserving the legacy env-var setting.
+- Implemented in this slice: provider approval binding digests cover the configured credential reference identity, not the raw secret, and provider configuration rejects credential references created for non-provider purposes.
+- Implemented in this slice: provider listing, health, and routing remain config-only and do not need to read credential values.
+
+Remaining Sprint 15 work:
+- Broader persisted operator identity records and assignment workflows.
+- Encrypted local credential vaulting or external secret-manager adapters beyond env references.
+- Network/domain guardrail policy with allow, deny, approval-required, and audit modes.
+- Broader audit actor propagation and cross-surface no-secret-response validation.
+
+Validation:
+- Focused credential-reference/provider gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py tests\test_provider_runtime.py -k "credential_reference or external_generation_uses_configured_credential_reference or revoked_credential_reference or runtime_purpose or capability_for_path"` passed with 22 tests and 133 deselected.
+- Focused API credential-reference gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "credential_reference or configured_external_provider_with_credential_reference or configured_external_provider_health"` passed with 2 tests and 143 deselected.
+- Broad auth/provider/API security gate: `uv --cache-dir .uv-cache run pytest -q tests\test_auth.py tests\test_provider_runtime.py tests\test_api.py -k "auth or credential or provider or routing or approval"` passed with 237 tests and 63 deselected.
+- Full regression gate: `uv --cache-dir .uv-cache run pytest -q` passed with 856 tests and 2 skipped.
+- Lint/format gates: `uv --cache-dir .uv-cache run ruff check .`, `uv --cache-dir .uv-cache run ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with network/domain guardrail policy unless a broader persisted identity slice becomes the higher-risk blocker.
+
 ### Sprint 15 BL-009a Persisted Auth Token Lifecycle
 
 Status: completed for the scoped persisted auth-token lifecycle slice; Sprint 15 remains active for broader identity, secrets, and network guardrails.

@@ -8,6 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from dgentic import provider_runtime, provider_transport
+from dgentic.credentials import (
+    CredentialReferenceRequest,
+    create_credential_reference,
+    revoke_credential_reference,
+)
 from dgentic.provider_policy import (
     ProviderEgressPolicyError,
     _NoProviderRedirectHandler,
@@ -847,6 +852,155 @@ def test_external_generation_accepts_bound_approval_id_in_production(
     assert "Hello from approved external." not in serialized_events
     assert "reviewer-secret" not in approval_storage
     assert "reason-secret" not in approval_storage
+    get_settings.cache_clear()
+
+
+def test_external_generation_uses_configured_credential_reference(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(
+            env_var="DGENTIC_REF_EXTERNAL_API_KEY",
+            label="external provider",
+        )
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_REF_EXTERNAL_API_KEY",
+        value="external-reference-secret",
+    )
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeResponse(lm_studio_response("Hello from referenced credential."))
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+
+    result = generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+    approval_storage = (tmp_path / "state" / "provider-approvals.json").read_text(encoding="utf-8")
+    credential_storage = (tmp_path / "state" / "credential-references.json").read_text(
+        encoding="utf-8"
+    )
+    serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
+
+    assert result.content == "Hello from referenced credential."
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-reference-secret",
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert tracked_credentials.calls == ["DGENTIC_REF_EXTERNAL_API_KEY"]
+    assert "external-reference-secret" not in approval_storage
+    assert "external-reference-secret" not in credential_storage
+    assert "external-reference-secret" not in serialized_event
+    get_settings.cache_clear()
+
+
+def test_external_approval_rejects_revoked_credential_reference_without_secret_lookup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(env_var="DGENTIC_REF_EXTERNAL_API_KEY")
+    )
+    revoke_credential_reference(credential_ref.id)
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    blocked_credentials = BlockingCredentialEnviron()
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        provider_runtime.create_provider_approval(
+            EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+            ),
+        )
+
+    assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
+def test_external_approval_rejects_runtime_purpose_credential_reference(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(
+            env_var="DGENTIC_REF_RUNTIME_KEY",
+            purpose="runtime",
+        )
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    blocked_credentials = BlockingCredentialEnviron()
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        provider_runtime.create_provider_approval(
+            EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+            ),
+        )
+
+    assert blocked_credentials.calls == []
     get_settings.cache_clear()
 
 

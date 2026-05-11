@@ -4,6 +4,53 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-11
 
+### Sprint 12 BL-006l Provider Role Routing Policy
+
+Status: completed for the scoped provider role-routing policy; stable checkpoint committed and pushed.
+
+Current story:
+- BL-006: Provider System Productionization.
+
+Checklist:
+- Completed: PM selected a bounded routing-policy slice after BL-006k because `RoutingRequest.role` existed in the API contract but provider routing did not yet use it, while encrypted secrets and durable circuit state remain Sprint 15/18 dependencies.
+- Completed: Architect/PM read-only review recommended either Sprint 12 closeout or a narrow provider slice; Dev/QA read-only review recommended role-to-provider/model routing as the smallest useful code slice that does not expand external-adapter semantics.
+- Completed: Developer updated production source only for `DGENTIC_PROVIDER_ROLE_ROUTING`, bounded role-route parsing, role-aware provider/model selection, invalid route-target fail-closed behavior before health probes, and credential-env-name validation for provider approvals without reading credential values.
+- Completed: QA updated tests only for role-routed provider/model selection, privacy and provider/model-specific max-cost eligibility blocking without fallback, invalid role routing before probes, unknown role provider before probes, unavailable configured models, and provider approval credential-env-name validation without secret lookup.
+- Completed: Reviewer found that role routes initially reused provider-level first-model cost for max-cost gating; Developer remediated model-specific route cost checks and QA added regression coverage.
+- Completed: PM updated README, architecture docs, usage docs, developer setup docs, backlog, and this progress log.
+- Completed: Full regression/lint/format/whitespace gates.
+- Completed: Stable checkpoint committed and pushed.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_PROVIDER_ROLE_ROUTING` accepts a bounded JSON object keyed by exact agent role, with each entry naming a `provider_id` and `model`.
+- Implemented in this slice: configured role routes still honor normal provider eligibility: provider enabled state, privacy policy, required capabilities, routed-model max cost, and model availability.
+- Implemented in this slice: blocked configured role routes fail clearly instead of silently falling back to another provider.
+- Implemented in this slice: invalid role-routing JSON and unsupported provider ids fail closed before provider health probes.
+- Implemented in this slice: provider approval creation/validation requires the credential environment variable name, while continuing not to read the credential value until transport-eligible execution.
+
+Validation:
+- Focused role-routing gate: `uv --cache-dir .uv-cache run pytest -q tests\test_api.py -k "routing" tests\test_provider_runtime.py::test_provider_approval_requires_credential_env_name_without_secret_lookup` passed with 16 tests.
+- Focused lint gate: `uv --cache-dir .uv-cache run ruff check src\dgentic\provider_routing.py src\dgentic\providers.py src\dgentic\provider_runtime.py src\dgentic\settings.py src\dgentic\api\routes.py tests\test_api.py tests\test_provider_runtime.py` passed.
+- Focused format gate: `uv --cache-dir .uv-cache run ruff format --check src\dgentic\provider_routing.py src\dgentic\providers.py src\dgentic\provider_runtime.py src\dgentic\settings.py src\dgentic\api\routes.py tests\test_api.py tests\test_provider_runtime.py` passed with 7 files already formatted after formatting the new routing module and provider registry.
+- Broad provider/API regression gate: `uv --cache-dir .uv-cache run pytest -q tests\test_provider_runtime.py tests\test_api.py` passed with 207 tests.
+- Full test gate: `uv --cache-dir .uv-cache run pytest -q` passed with 648 tests and 2 skipped.
+- Full lint gate: `uv --cache-dir .uv-cache run ruff check .` passed.
+- Full format gate: `uv --cache-dir .uv-cache run ruff format --check .` passed with 49 files already formatted.
+- Whitespace gate: `git diff --check` passed with only existing LF-to-CRLF working-copy warnings.
+
+Residual risks:
+- Role routes are exact preferences, not weighted policies; richer fallback/priority behavior remains future routing work if operators need it.
+- Encrypted credential storage, provider-specific external adapters, durable multi-worker circuit state, and provider billing reconciliation remain follow-up work outside this slice.
+
+Role boundary:
+- Developer-owned files: `src/dgentic/api/routes.py`, `src/dgentic/provider_routing.py`, `src/dgentic/provider_runtime.py`, `src/dgentic/providers.py`, and `src/dgentic/settings.py`.
+- QA-owned files: `tests/test_api.py` and `tests/test_provider_runtime.py`.
+- PM-owned files: `README.md`, `docs/architecture/repository-architecture.md`, `docs/how-to/developer-setup.md`, `docs/how-to/using-dgentic.md`, `docs/planning/backlog-needs-to-be-done.md`, and this progress log.
+- Workflow docs under `docs/agentic-workflows/` were followed but not modified.
+
+Next:
+- Decide whether Sprint 12 can close with provider-specific adapters deferred until a concrete provider requirement exists.
+
 ### Sprint 12 BL-006k External Credential-Resolution Ordering Hardening
 
 Status: completed for the scoped external-provider credential-resolution ordering contract; stable checkpoint committed and pushed.

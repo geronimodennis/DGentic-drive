@@ -667,6 +667,246 @@ def test_routing_uses_configured_external_model_request_price(tmp_path, monkeypa
     get_settings.cache_clear()
 
 
+def test_routing_selects_configured_role_provider_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps({"reviewer": {"provider_id": "lm-studio", "model": "local-model"}}),
+    )
+    get_settings.cache_clear()
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post("/routing/decide", json={"role": "reviewer"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider_id"] == "lm-studio"
+    assert body["model_name"] == "local-model"
+    assert body["reason"] == "Routing selected the configured provider for the requested role."
+    assert body["candidate_scores"]["lm-studio"] > 0
+    get_settings.cache_clear()
+
+
+def test_routing_role_preference_respects_privacy_without_fallback(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps(
+            {
+                "reviewer": {
+                    "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                    "model": "gpt-test",
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={"role": "reviewer", "privacy_required": True},
+    )
+
+    assert response.status_code == 404
+    assert "configured role routing policy" in response.text
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_role_preference_respects_max_cost_without_fallback(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps(
+            {
+                "reviewer": {
+                    "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                    "model": "gpt-test",
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "gpt-test": {
+                        "prompt_usd_per_1k_tokens": 0.5,
+                        "completion_usd_per_1k_tokens": 1.0,
+                        "request_estimate_usd": 0.03,
+                    }
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch)
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={"role": "reviewer", "max_cost_usd": 0.02},
+    )
+
+    assert response.status_code == 404
+    assert "configured role routing policy" in response.text
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_role_preference_uses_configured_model_cost(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps(
+            {
+                "reviewer": {
+                    "provider_id": provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                    "model": "expensive-model",
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_PRICING_CATALOG",
+        json.dumps(
+            {
+                provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID: {
+                    "cheap-model": {"request_estimate_usd": 0.01},
+                    "expensive-model": {"request_estimate_usd": 0.05},
+                }
+            }
+        ),
+    )
+    configure_external_provider_api(monkeypatch, models="cheap-model,expensive-model")
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/routing/decide",
+        json={"role": "reviewer", "max_cost_usd": 0.02},
+    )
+
+    assert response.status_code == 404
+    assert "configured role routing policy" in response.text
+    assert "external-api-key-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_rejects_invalid_role_routing_before_probes(monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_PROVIDER_ROLE_ROUTING", "not-json")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        raise AssertionError("provider probes should not run for invalid role routing")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post("/routing/decide", json={"role": "reviewer"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Provider role routing is invalid."
+    assert calls == []
+    assert "not-json" not in response.text
+    get_settings.cache_clear()
+
+
+def test_routing_rejects_unknown_role_provider_before_probes(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps({"reviewer": {"provider_id": "unknown", "model": "gpt-test"}}),
+    )
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_get_json(url: str) -> dict:
+        calls.append(url)
+        raise AssertionError("provider probes should not run for invalid role provider")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post("/routing/decide", json={"role": "reviewer"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Provider role routing is invalid."
+    assert calls == []
+    get_settings.cache_clear()
+
+
+def test_routing_rejects_unavailable_role_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_PROVIDER_ROLE_ROUTING",
+        json.dumps({"reviewer": {"provider_id": "lm-studio", "model": "missing-model"}}),
+    )
+    get_settings.cache_clear()
+
+    def fake_get_json(url: str) -> dict:
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama3.1"}]}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "local-model"}]}
+        raise AssertionError(f"Unexpected provider health URL: {url}")
+
+    monkeypatch.setattr(providers, "_get_json", fake_get_json)
+    client = TestClient(create_app())
+
+    response = client.post("/routing/decide", json={"role": "reviewer"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Configured role routing model is not available."
+    get_settings.cache_clear()
+
+
 def test_routing_rejects_invalid_pricing_catalog_before_probes(monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_PROVIDER_PRICING_CATALOG", "not-json")
     get_settings.cache_clear()

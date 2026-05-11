@@ -309,7 +309,7 @@ def create_provider_approval(
     _reject_external_runtime_base_url(request)
     _validate_external_model(request.model, settings)
     base_url = _external_base_url(settings)
-    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    credential_env = _external_credential_env(settings)
     model_allowlist = _external_models(settings)
     requested_by_value = requested_by or request.requested_by
 
@@ -1530,13 +1530,18 @@ def _external_base_url(settings: Any) -> str:
 
 
 def _external_headers(settings: Any) -> dict[str, str]:
-    credential_env = settings.external_openai_compatible_api_key_env.strip()
-    if not credential_env:
-        raise ProviderConfigurationError("External provider is not configured.")
+    credential_env = _external_credential_env(settings)
     credential_value = environ.get(credential_env, "").strip()
     if not credential_value:
         raise ProviderConfigurationError("External provider is not configured.")
     return {"Authorization": f"Bearer {credential_value}"}
+
+
+def _external_credential_env(settings: Any) -> str:
+    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    if not credential_env:
+        raise ProviderConfigurationError("External provider is not configured.")
+    return credential_env
 
 
 def _external_models(settings: Any) -> list[str]:
@@ -1681,7 +1686,7 @@ def _validate_bound_provider_approval(
     _reject_external_runtime_base_url(request)
     _validate_external_model(request.model, settings)
     base_url = _external_base_url(settings)
-    credential_env = settings.external_openai_compatible_api_key_env.strip()
+    credential_env = _external_credential_env(settings)
     model_allowlist = _external_models(settings)
     message_digest = provider_messages_digest(request.messages)
     options_digest = provider_generation_options_digest(request)

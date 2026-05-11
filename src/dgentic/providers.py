@@ -12,6 +12,13 @@ from dgentic.provider_pricing import (
     provider_request_estimate_usd,
     validate_provider_pricing_catalog,
 )
+from dgentic.provider_routing import (
+    ProviderRoleRoute,
+    ProviderRoutingConfigurationError,
+    provider_role_route_for,
+    provider_role_routing,
+    validate_provider_role_routing,
+)
 from dgentic.provider_runtime import EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
 from dgentic.provider_transport import (
     ProviderRetryPolicy,
@@ -30,6 +37,7 @@ from dgentic.schemas import (
 from dgentic.settings import get_settings
 
 MODEL_PROBE_TIMEOUT_SECONDS = 1.5
+ROUTABLE_PROVIDER_IDS = {"ollama", "lm-studio", EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID}
 
 
 class ProviderRoutingError(ValueError):
@@ -134,9 +142,16 @@ def check_provider_health(provider_id: str) -> ProviderHealth:
 
 
 def choose_provider(policy: RoutingRequest) -> RoutingDecision:
-    validate_provider_pricing_catalog(get_settings())
+    settings = get_settings()
+    validate_provider_pricing_catalog(settings)
+    validate_provider_role_routing(settings)
+    _validate_provider_role_route_targets(settings)
+    role_route = provider_role_route_for(settings, policy.role)
     providers = list_providers()
     scored = {provider.id: _score_provider(provider, policy) for provider in providers}
+    if role_route is not None:
+        return _choose_role_routed_provider(policy, role_route, providers, scored)
+
     if not any(score > 0 for score in scored.values()):
         raise ProviderRoutingError("No provider satisfies the requested routing policy.")
     preferred = max(providers, key=lambda provider: scored[provider.id])
@@ -154,6 +169,43 @@ def choose_provider(policy: RoutingRequest) -> RoutingDecision:
         model_name=preferred.model_names[0] if preferred.model_names else None,
         reason=reason,
         score=score,
+        policy=policy,
+        candidate_scores=scored,
+    )
+    event_log.record(
+        LogEventType.provider,
+        "Selected provider route.",
+        subject_id=preferred.id,
+        metadata=decision.model_dump(mode="json"),
+    )
+    return decision
+
+
+def _choose_role_routed_provider(
+    policy: RoutingRequest,
+    role_route: ProviderRoleRoute,
+    providers: list[ProviderConfig],
+    scored: dict[str, float],
+) -> RoutingDecision:
+    preferred = next(
+        (provider for provider in providers if provider.id == role_route.provider_id), None
+    )
+    if preferred is None or scored.get(role_route.provider_id, 0.0) <= 0:
+        raise ProviderRoutingError("No provider satisfies the configured role routing policy.")
+    if role_route.model not in preferred.model_names:
+        raise ProviderRoutingError("Configured role routing model is not available.")
+    if (
+        policy.max_cost_usd is not None
+        and (model_estimate := _provider_model_estimate_usd(role_route)) is not None
+        and model_estimate > policy.max_cost_usd
+    ):
+        raise ProviderRoutingError("No provider satisfies the configured role routing policy.")
+
+    decision = RoutingDecision(
+        provider_id=preferred.id,
+        model_name=role_route.model,
+        reason="Routing selected the configured provider for the requested role.",
+        score=scored[preferred.id],
         policy=policy,
         candidate_scores=scored,
     )
@@ -204,6 +256,29 @@ def _score_provider(provider: ProviderConfig, policy: RoutingRequest) -> float:
         score += 0.1
 
     return round(max(score, 0.0), 3)
+
+
+def _validate_provider_role_route_targets(settings: Any) -> None:
+    for route in provider_role_routing(settings).values():
+        if route.provider_id not in ROUTABLE_PROVIDER_IDS:
+            raise ProviderRoutingConfigurationError(
+                "Provider role routing references an unsupported provider."
+            )
+
+
+def _provider_model_estimate_usd(route: ProviderRoleRoute) -> float | None:
+    configured_estimate = provider_request_estimate_usd(
+        get_settings(),
+        provider_id=route.provider_id,
+        model=route.model,
+    )
+    if configured_estimate is not None:
+        return configured_estimate
+    if route.provider_id in {"ollama", "lm-studio"}:
+        return 0.0
+    if route.provider_id == EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID:
+        return 0.01
+    return None
 
 
 def _external_estimated_cost_usd(settings: Any, model_names: list[str]) -> float:

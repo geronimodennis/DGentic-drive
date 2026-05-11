@@ -1207,6 +1207,36 @@ def test_external_generation_missing_credential_does_not_claim_bound_approval(
     get_settings.cache_clear()
 
 
+def test_provider_approval_requires_credential_env_name_without_secret_lookup(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    blocked_credentials = BlockingCredentialEnviron()
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+    get_settings.cache_clear()
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        provider_runtime.create_provider_approval(
+            EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+            ProviderGenerationRequest(
+                provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+                model="gpt-test",
+                messages=[{"role": "user", "content": "Say hello."}],
+            ),
+        )
+
+    assert blocked_credentials.calls == []
+    get_settings.cache_clear()
+
+
 def test_external_generation_rejects_runtime_base_url_before_transport(monkeypatch) -> None:
     configure_external_provider(monkeypatch)
     calls: list[str] = []

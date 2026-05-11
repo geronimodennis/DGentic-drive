@@ -45,6 +45,7 @@ from dgentic.guardrails import (
 from dgentic.memory import add_memory, search_memory
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.provider_pricing import ProviderPricingConfigurationError
+from dgentic.provider_routing import ProviderRoutingConfigurationError
 from dgentic.provider_runtime import (
     ProviderApproval,
     ProviderApprovalRequiredError,
@@ -580,6 +581,8 @@ def decide_route(request: RoutingRequest) -> RoutingDecision:
         return choose_provider(request)
     except ProviderPricingConfigurationError as exc:
         raise HTTPException(status_code=503, detail="Provider pricing catalog is invalid.") from exc
+    except ProviderRoutingConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Provider role routing is invalid.") from exc
     except ProviderRoutingError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

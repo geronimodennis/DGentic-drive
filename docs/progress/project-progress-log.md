@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009t Local Credential Vault Key Rotation
+
+Status: completed for the scoped supplied-key local credential-vault rotation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected local vault key rotation as the next bounded secret-management slice after BL-009s because the local vault runtime already exists and web retrieval/OS egress work still lacks concrete runtimes.
+- Completed: Security/Architect reviewed the intended supplied-key bulk rotation contract before implementation.
+- Completed: Developer added source-only rotation models, `rotate_local_vault_credential_references`, counts-only audit metadata, and `POST /credentials/references/local-vault/rotate-key`.
+- Completed: QA added focused tests for successful rotation, revoked local-vault records, skipped env/external-process references, wrong current key rollback, malformed ciphertext rollback, invalid/same new key generic failure, credentials capability enforcement, and no key/plaintext/ciphertext leakage in API or rotation event metadata.
+- Completed: Reviewer/Security found no blocking issues for atomicity, leakage, route ordering, capability mapping, revoked-record behavior, or failure handling. Residual non-blocking gap: no explicit missing/overlong-key validation-error leak test; FastAPI's validation error shape does not echo supplied values.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /credentials/references/local-vault/rotate-key` accepts supplied `current_vault_key` and `new_vault_key`, requires the existing `credentials` capability, and returns only `rotated_count`, `skipped_count`, and `rotated_at`.
+- Implemented in this slice: all persisted `local_vault` credential-reference ciphertext is re-encrypted in one JSON collection transaction, including revoked records, while env and external-process references are left semantically unchanged and counted as skipped.
+- Implemented in this slice: wrong current keys, malformed stored ciphertext, invalid new keys, and same-key requests fail with generic `400` responses before partial writes or audit success events.
+- Implemented in this slice: rotation audit events contain only counts and timestamp, avoiding supplied keys, plaintext, ciphertext, credential ids, labels, and secret names.
+- Still out of scope after this slice: KMS-managed keys, key escrow/recovery, per-secret versioning UX, first-class secret-manager adapters, web retrieval enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Validation:
+- Focused rotation/credential gate: `python -m pytest -q tests\test_auth.py -k "local_vault_rotate_key or credential_reference"` passed with 11 tests and 72 deselected.
+- Auth regression gate: `python -m pytest -q tests\test_auth.py` passed with 83 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1016 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with the next bounded security slice: managed hook-policy/plugin trust foundations if backend contracts are ready, otherwise first-class secret-manager adapter design/implementation.
+
 ### Sprint 15 BL-009s Operator Group Capability Inheritance
 
 Status: completed for the scoped operator group capability inheritance slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.

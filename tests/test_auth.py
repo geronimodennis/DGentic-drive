@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi.testclient import TestClient
 
 from dgentic.auth import (
@@ -14,7 +14,11 @@ from dgentic.auth import (
     parse_token_map,
     validate_auth_configuration,
 )
-from dgentic.credentials import credential_env_for_reference, credential_secret_for_reference
+from dgentic.credentials import (
+    CredentialResolutionError,
+    credential_env_for_reference,
+    credential_secret_for_reference,
+)
 from dgentic.events import event_log
 from dgentic.main import create_app
 from dgentic.schemas import LogEventType
@@ -140,6 +144,46 @@ def issue_auth_token(
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def credential_state_text(tmp_path) -> str:
+    return (tmp_path / "state" / "credential-references.json").read_text(encoding="utf-8")
+
+
+def credential_state_records(tmp_path) -> list[dict[str, object]]:
+    return json.loads(credential_state_text(tmp_path))
+
+
+def create_credential_reference_api(
+    client: TestClient,
+    auth_token: str,
+    payload: dict[str, object],
+) -> dict:
+    response = client.post(
+        "/credentials/references",
+        headers=bearer(auth_token),
+        json=payload,
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_local_vault_credential_reference(
+    client: TestClient,
+    auth_token: str,
+    secret_value: str,
+    *,
+    label: str = "local vault provider",
+) -> dict:
+    return create_credential_reference_api(
+        client,
+        auth_token,
+        {
+            "source_type": "local_vault",
+            "secret_value": secret_value,
+            "label": label,
+        },
+    )
 
 
 def test_development_default_auth_off_allows_task_plan_without_token(
@@ -1373,6 +1417,290 @@ def test_local_vault_credential_reference_requires_operator_key_without_secret_e
     assert raw_secret not in create_response.text
     assert raw_secret not in state_text
     assert raw_secret not in logs
+
+
+def test_local_vault_rotate_key_rotates_active_and_revoked_records_and_skips_other_sources(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_key = Fernet.generate_key().decode("ascii")
+    new_key = Fernet.generate_key().decode("ascii")
+    active_secret = "active-local-vault-rotation-secret"
+    revoked_secret = "revoked-local-vault-rotation-secret"
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    monkeypatch.setenv("DGENTIC_ROTATE_ENV_SECRET", "env-secret-not-rotated")
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    active_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        active_secret,
+    )
+    revoked_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        revoked_secret,
+        label="revoked local vault provider",
+    )
+    env_ref = create_credential_reference_api(
+        client,
+        credential_token["token"],
+        {"env_var": "DGENTIC_ROTATE_ENV_SECRET", "label": "env provider"},
+    )
+    external_ref = create_credential_reference_api(
+        client,
+        credential_token["token"],
+        {
+            "source_type": "external_process",
+            "adapter_id": "process-vault",
+            "secret_name": "providers/openai",
+            "label": "process provider",
+        },
+    )
+    revoke_response = client.post(
+        f"/credentials/references/{revoked_ref['id']}/revoke",
+        headers=bearer(credential_token["token"]),
+    )
+
+    rotate_response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": new_key},
+    )
+    rotated_at = datetime.fromisoformat(rotate_response.json()["rotated_at"])
+    records = {record["id"]: record for record in credential_state_records(tmp_path)}
+    serialized_api = "\n".join([rotate_response.text, revoke_response.text])
+    rotation_events = [
+        event.model_dump(mode="json")
+        for event in event_log.list(LogEventType.credential)
+        if event.message == "Rotated credential vault key."
+    ]
+    serialized_rotation_events = json.dumps(rotation_events)
+
+    assert revoke_response.status_code == 200
+    assert rotate_response.status_code == 200
+    assert rotate_response.json()["rotated_count"] == 2
+    assert rotate_response.json()["skipped_count"] == 2
+    assert rotated_at.tzinfo is not None
+    assert records[active_ref["id"]]["updated_at"] == rotate_response.json()["rotated_at"]
+    assert records[revoked_ref["id"]]["updated_at"] == rotate_response.json()["rotated_at"]
+    assert records[revoked_ref["id"]]["status"] == "revoked"
+    assert records[env_ref["id"]]["source_type"] == "env"
+    assert records[external_ref["id"]]["source_type"] == "external_process"
+
+    current_fernet = Fernet(current_key.encode("ascii"))
+    new_fernet = Fernet(new_key.encode("ascii"))
+    for ref_id, secret in [(active_ref["id"], active_secret), (revoked_ref["id"], revoked_secret)]:
+        encrypted_secret = str(records[ref_id]["encrypted_secret"])
+        assert new_fernet.decrypt(encrypted_secret.encode("ascii")).decode("utf-8") == secret
+        with pytest.raises(InvalidToken):
+            current_fernet.decrypt(encrypted_secret.encode("ascii"))
+
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    get_settings.cache_clear()
+    with pytest.raises(CredentialResolutionError):
+        credential_secret_for_reference(active_ref["id"], purpose="provider")
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", new_key)
+    get_settings.cache_clear()
+    assert credential_secret_for_reference(active_ref["id"], purpose="provider") == active_secret
+
+    leaked_material = [
+        current_key,
+        new_key,
+        active_secret,
+        revoked_secret,
+        "env-secret-not-rotated",
+        "encrypted_secret",
+    ]
+    for value in leaked_material:
+        assert value not in serialized_api
+        assert value not in serialized_rotation_events
+    assert current_key not in credential_state_text(tmp_path)
+    assert new_key not in credential_state_text(tmp_path)
+    assert active_secret not in credential_state_text(tmp_path)
+    assert revoked_secret not in credential_state_text(tmp_path)
+    assert "encrypted_secret" in credential_state_text(tmp_path)
+    assert rotation_events
+    assert rotation_events[-1]["metadata"]["rotated_count"] == 2
+    assert rotation_events[-1]["metadata"]["skipped_count"] == 2
+    assert datetime.fromisoformat(rotation_events[-1]["metadata"]["rotated_at"]) == rotated_at
+
+
+def test_local_vault_rotate_key_wrong_current_key_fails_without_partial_state_change(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_key = Fernet.generate_key().decode("ascii")
+    wrong_key = Fernet.generate_key().decode("ascii")
+    new_key = Fernet.generate_key().decode("ascii")
+    first_secret = "first-wrong-current-rotation-secret"
+    second_secret = "second-wrong-current-rotation-secret"
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+    first_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        first_secret,
+    )
+    second_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        second_secret,
+    )
+    before_state = credential_state_text(tmp_path)
+
+    response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": wrong_key, "new_vault_key": new_key},
+    )
+    rotation_events = [
+        event
+        for event in event_log.list(LogEventType.credential)
+        if event.message == "Rotated credential vault key."
+    ]
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Credential vault rotation failed."}
+    assert wrong_key not in response.text
+    assert new_key not in response.text
+    assert credential_state_text(tmp_path) == before_state
+    assert credential_secret_for_reference(first_ref["id"], purpose="provider") == first_secret
+    assert credential_secret_for_reference(second_ref["id"], purpose="provider") == second_secret
+    assert not rotation_events
+
+
+def test_local_vault_rotate_key_malformed_ciphertext_fails_without_partial_state_change(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_key = Fernet.generate_key().decode("ascii")
+    new_key = Fernet.generate_key().decode("ascii")
+    first_secret = "first-malformed-ciphertext-secret"
+    second_secret = "second-malformed-ciphertext-secret"
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+    first_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        first_secret,
+    )
+    second_ref = create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        second_secret,
+    )
+    records = credential_state_records(tmp_path)
+    for record in records:
+        if record["id"] == second_ref["id"]:
+            record["encrypted_secret"] = "not-valid-fernet-ciphertext"
+    (tmp_path / "state" / "credential-references.json").write_text(
+        json.dumps(records, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    before_state = credential_state_text(tmp_path)
+
+    response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": new_key},
+    )
+    rotation_events = [
+        event
+        for event in event_log.list(LogEventType.credential)
+        if event.message == "Rotated credential vault key."
+    ]
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Credential vault rotation failed."}
+    assert current_key not in response.text
+    assert new_key not in response.text
+    assert first_secret not in response.text
+    assert second_secret not in response.text
+    assert credential_state_text(tmp_path) == before_state
+    assert credential_secret_for_reference(first_ref["id"], purpose="provider") == first_secret
+    with pytest.raises(CredentialResolutionError):
+        credential_secret_for_reference(second_ref["id"], purpose="provider")
+    assert not rotation_events
+
+
+def test_local_vault_rotate_key_invalid_new_key_fails_generically_without_state_change(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_key = Fernet.generate_key().decode("ascii")
+    invalid_new_key = "not-a-valid-fernet-key"
+    raw_secret = "invalid-new-key-rotation-secret"
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+    ref = create_local_vault_credential_reference(client, credential_token["token"], raw_secret)
+    before_state = credential_state_text(tmp_path)
+
+    response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": invalid_new_key},
+    )
+    same_key_response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": current_key},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Credential vault rotation failed."}
+    assert same_key_response.status_code == 400
+    assert same_key_response.json() == {"detail": "Credential vault rotation failed."}
+    assert "Credential vault key is not configured" not in response.text
+    assert current_key not in response.text
+    assert invalid_new_key not in response.text
+    assert raw_secret not in response.text
+    assert current_key not in same_key_response.text
+    assert raw_secret not in same_key_response.text
+    assert credential_state_text(tmp_path) == before_state
+    assert credential_secret_for_reference(ref["id"], purpose="provider") == raw_secret
+
+
+def test_local_vault_rotate_key_requires_credentials_capability(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_key = Fernet.generate_key().decode("ascii")
+    new_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", current_key)
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-task", ["tasks"])
+    create_operator(client, "operator-credential", ["credentials"])
+    task_token = issue_auth_token(client, "operator-task", ["tasks"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+    create_local_vault_credential_reference(
+        client,
+        credential_token["token"],
+        "capability-rotation-secret",
+    )
+
+    forbidden_response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(task_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": new_key},
+    )
+    allowed_response = client.post(
+        "/credentials/references/local-vault/rotate-key",
+        headers=bearer(credential_token["token"]),
+        json={"current_vault_key": current_key, "new_vault_key": new_key},
+    )
+
+    assert forbidden_response.status_code == 403
+    assert allowed_response.status_code == 200
+    assert allowed_response.json()["rotated_count"] == 1
 
 
 def test_credential_reference_label_redacts_secret_shaped_values(

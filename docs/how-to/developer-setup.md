@@ -103,6 +103,22 @@ Invoke-RestMethod `
 
 Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
+Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
+
+```powershell
+$oldKey = "<old-fernet-key>"
+$newKey = "<new-fernet-key>"
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/credentials/references/local-vault/rotate-key `
+  -Headers @{ Authorization = "Bearer credential-token" } `
+  -ContentType "application/json" `
+  -Body (@{ current_vault_key = $oldKey; new_vault_key = $newKey } | ConvertTo-Json -Compress)
+```
+
+The rotation response returns only `rotated_count`, `skipped_count`, and `rotated_at`. Rotation skips environment and external-process references, fails without partial state changes when any local vault record cannot decrypt with the supplied current key, and does not return keys, plaintext, or ciphertext.
+
 Deactivate an operator to fail closed for linked persisted tokens:
 
 ```powershell
@@ -682,7 +698,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential labels, but richer production identity workflows beyond operator groups, vault key rotation or managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references with supplied-key rotation, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, explicit executable path boundary checks, configured-safe command path-argument checks, nested shell startup-hardening checks, bare executable workspace/PATH trust checks, single-use bound approval IDs, reviewer operations behind the separate `approvals` capability, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, failed launch run records for claimed synchronous approvals, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides with startup/preload injection blocking, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, local encrypted vault reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but vault key rotation, durable multi-worker circuit state, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters are not implemented yet.

@@ -172,6 +172,22 @@ class CredentialReferenceView(BaseModel):
     revoked_at: datetime | None = None
 
 
+class CredentialVaultRotationRequest(BaseModel):
+    current_vault_key: str = Field(min_length=1, max_length=512, repr=False, exclude=True)
+    new_vault_key: str = Field(min_length=1, max_length=512, repr=False, exclude=True)
+
+    @field_validator("current_vault_key", "new_vault_key")
+    @classmethod
+    def keys_must_be_trimmed(cls, value: str) -> str:
+        return value.strip()
+
+
+class CredentialVaultRotationResponse(BaseModel):
+    rotated_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    rotated_at: datetime
+
+
 _credential_references = JsonCollection("credential-references", CredentialReferenceRecord)
 
 
@@ -225,6 +241,57 @@ def revoke_credential_reference(
         raise KeyError(f"Credential reference not found: {credential_ref_id}") from exc
     _record_credential_event("Revoked credential reference.", saved, actor=actor)
     return _credential_reference_view(saved)
+
+
+def rotate_local_vault_credential_references(
+    request: CredentialVaultRotationRequest,
+    *,
+    actor: str | None = None,
+) -> CredentialVaultRotationResponse:
+    if request.current_vault_key == request.new_vault_key:
+        raise ValueError("Credential vault rotation failed.")
+    current_fernet = _fernet_for_raw_key(request.current_vault_key)
+    new_fernet = _fernet_for_raw_key(request.new_vault_key)
+    now = datetime.now(UTC)
+
+    def rotate(
+        items: list[CredentialReferenceRecord],
+    ) -> tuple[list[CredentialReferenceRecord], CredentialVaultRotationResponse]:
+        rotated_count = 0
+        skipped_count = 0
+        updated_items: list[CredentialReferenceRecord] = []
+        for record in items:
+            if record.source_type != "local_vault":
+                skipped_count += 1
+                updated_items.append(record)
+                continue
+            try:
+                decrypted_secret = current_fernet.decrypt(record.encrypted_secret.encode("ascii"))
+            except (InvalidToken, UnicodeEncodeError, ValueError) as exc:
+                raise CredentialResolutionError("Credential vault rotation failed.") from exc
+            _validate_local_vault_secret_bytes(decrypted_secret)
+            encrypted_secret = new_fernet.encrypt(decrypted_secret).decode("ascii")
+            updated_items.append(
+                record.model_copy(
+                    update={
+                        "encrypted_secret": encrypted_secret,
+                        "updated_at": now,
+                    }
+                )
+            )
+            rotated_count += 1
+        return (
+            updated_items,
+            CredentialVaultRotationResponse(
+                rotated_count=rotated_count,
+                skipped_count=skipped_count,
+                rotated_at=now,
+            ),
+        )
+
+    response = _credential_references.transact(rotate)
+    _record_credential_vault_rotation_event(response, actor=actor)
+    return response
 
 
 def credential_env_for_reference(
@@ -342,6 +409,23 @@ def _record_credential_event(
     )
 
 
+def _record_credential_vault_rotation_event(
+    response: CredentialVaultRotationResponse,
+    *,
+    actor: str | None,
+) -> None:
+    event_log.record(
+        LogEventType.credential,
+        "Rotated credential vault key.",
+        actor=actor or "system",
+        metadata={
+            "rotated_count": response.rotated_count,
+            "skipped_count": response.skipped_count,
+            "rotated_at": response.rotated_at.isoformat(),
+        },
+    )
+
+
 def _redact_credential_label(value: str) -> str:
     return redact_sensitive_values(value.strip())
 
@@ -417,13 +501,28 @@ def _local_vault_secret(record: CredentialReferenceRecord, *, settings: Settings
 
 
 def _credential_vault_fernet(settings: Settings) -> Fernet:
-    raw_key = settings.credential_vault_key.strip()
+    return _fernet_for_raw_key(settings.credential_vault_key)
+
+
+def _fernet_for_raw_key(raw_key: str) -> Fernet:
+    raw_key = raw_key.strip()
     if not raw_key:
         raise CredentialConfigurationError("Credential vault key is not configured.")
     try:
         return Fernet(raw_key.encode("ascii"))
     except (ValueError, TypeError, UnicodeEncodeError) as exc:
         raise CredentialConfigurationError("Credential vault key is not configured.") from exc
+
+
+def _validate_local_vault_secret_bytes(secret_bytes: bytes) -> None:
+    if len(secret_bytes) > CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES:
+        raise CredentialResolutionError("Credential vault secret is not available.")
+    try:
+        secret = secret_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CredentialResolutionError("Credential vault secret is not available.") from exc
+    if not secret or "\x00" in secret:
+        raise CredentialResolutionError("Credential vault secret is not available.")
 
 
 def _credential_process_adapters(settings: Settings) -> dict[str, CredentialProcessAdapter]:

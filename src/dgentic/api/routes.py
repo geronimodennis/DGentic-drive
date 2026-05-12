@@ -55,9 +55,12 @@ from dgentic.credentials import (
     CredentialReferenceError,
     CredentialReferenceRequest,
     CredentialReferenceView,
+    CredentialVaultRotationRequest,
+    CredentialVaultRotationResponse,
     create_credential_reference,
     list_credential_references,
     revoke_credential_reference,
+    rotate_local_vault_credential_references,
 )
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
@@ -397,6 +400,22 @@ def create_persisted_credential_reference(
 @router.get("/credentials/references", response_model=list[CredentialReferenceView])
 def get_persisted_credential_references() -> list[CredentialReferenceView]:
     return list_credential_references()
+
+
+@router.post(
+    "/credentials/references/local-vault/rotate-key",
+    response_model=CredentialVaultRotationResponse,
+)
+def rotate_local_vault_credentials(
+    payload: CredentialVaultRotationRequest,
+    request: Request,
+) -> CredentialVaultRotationResponse:
+    try:
+        return rotate_local_vault_credential_references(payload, actor=_principal_actor(request))
+    except CredentialReferenceError as exc:
+        raise HTTPException(status_code=400, detail="Credential vault rotation failed.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Credential vault rotation failed.") from exc
 
 
 @router.post(

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from dgentic.events import event_log
@@ -20,7 +21,8 @@ from dgentic.storage import JsonCollection
 CREDENTIAL_ENV_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 CREDENTIAL_ADAPTER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 CREDENTIAL_SECRET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.:/@-]{1,200}$")
-CredentialSourceType = Literal["env", "external_process"]
+CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES = 64 * 1024
+CredentialSourceType = Literal["env", "external_process", "local_vault"]
 
 
 class CredentialReferenceError(RuntimeError):
@@ -44,6 +46,7 @@ class CredentialReferenceRequest(BaseModel):
     env_var: str = Field(default="", max_length=128)
     adapter_id: str = Field(default="", max_length=80)
     secret_name: str = Field(default="", max_length=200)
+    secret_value: str = Field(default="", repr=False, exclude=True)
     label: str = Field(default="", max_length=120)
     purpose: Literal["provider", "runtime"] = "provider"
 
@@ -93,6 +96,7 @@ class CredentialReferenceRecord(BaseModel):
     env_var: str = ""
     adapter_id: str = ""
     secret_name: str = ""
+    encrypted_secret: str = ""
     label: str = ""
     purpose: Literal["provider", "runtime"] = "provider"
     status: Literal["active", "revoked"] = "active"
@@ -137,6 +141,11 @@ class CredentialReferenceRecord(BaseModel):
             adapter_id=self.adapter_id,
             secret_name=self.secret_name,
         )
+        if self.source_type == "local_vault":
+            if not self.encrypted_secret:
+                raise ValueError("encrypted_secret is required for local_vault credentials.")
+        elif self.encrypted_secret:
+            raise ValueError("Invalid credential source fields.")
         return self
 
     @field_validator("created_at", "updated_at", "revoked_at")
@@ -172,12 +181,18 @@ def create_credential_reference(
     actor: str | None = None,
 ) -> CredentialReferenceView:
     now = datetime.now(UTC)
+    encrypted_secret = ""
+    if request.source_type == "local_vault":
+        encrypted_secret = _encrypt_local_vault_secret(request.secret_value)
+    elif request.secret_value:
+        raise ValueError("Invalid credential source fields.")
     record = CredentialReferenceRecord(
         id=f"credential-ref-{uuid4()}",
         source_type=request.source_type,
         env_var=request.env_var,
         adapter_id=request.adapter_id,
         secret_name=request.secret_name,
+        encrypted_secret=encrypted_secret,
         label=request.label,
         purpose=request.purpose,
         created_at=now,
@@ -239,6 +254,8 @@ def credential_secret_for_reference(
         return credential_value.strip()
     if record.source_type == "external_process":
         return _external_process_secret(record, settings=settings or get_settings())
+    if record.source_type == "local_vault":
+        return _local_vault_secret(record, settings=settings or get_settings())
     raise CredentialConfigurationError("Credential reference source is not supported.")
 
 
@@ -261,6 +278,10 @@ def credential_identity_for_reference(
             f"credential-reference:{credential_ref_id}:external_process:"
             f"{record.adapter_id}:{secret_name_digest}:{adapter_digest}"
         )
+    if record.source_type == "local_vault":
+        _credential_vault_fernet(settings or get_settings())
+        encrypted_secret_digest = sha256(record.encrypted_secret.encode("utf-8")).hexdigest()[:16]
+        return f"credential-reference:{credential_ref_id}:local_vault:{encrypted_secret_digest}"
     raise CredentialConfigurationError("Credential reference source is not supported.")
 
 
@@ -313,6 +334,7 @@ def _record_credential_event(
             "env_var": record.env_var,
             "adapter_id": record.adapter_id,
             "secret_name": _redact_credential_label(record.secret_name),
+            "encrypted_secret_present": bool(record.encrypted_secret),
             "label": _redact_credential_label(record.label),
             "purpose": record.purpose,
             "status": record.status,
@@ -358,7 +380,50 @@ def _validate_source_fields(
         if not adapter_id or not secret_name:
             raise ValueError("Invalid credential source fields.")
         return
+    if source_type == "local_vault":
+        if env_var or adapter_id or secret_name:
+            raise ValueError("Invalid credential source fields.")
+        return
     raise ValueError("Credential reference source_type is not supported.")
+
+
+def _encrypt_local_vault_secret(secret_value: str, *, settings: Settings | None = None) -> str:
+    secret = secret_value.strip()
+    if not secret or "\x00" in secret:
+        raise ValueError("Credential secret is invalid.")
+    if len(secret.encode("utf-8")) > CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES:
+        raise ValueError("Credential secret is invalid.")
+    return (
+        _credential_vault_fernet(settings or get_settings())
+        .encrypt(secret.encode("utf-8"))
+        .decode("ascii")
+    )
+
+
+def _local_vault_secret(record: CredentialReferenceRecord, *, settings: Settings) -> str:
+    try:
+        decrypted = _credential_vault_fernet(settings).decrypt(
+            record.encrypted_secret.encode("ascii")
+        )
+    except (InvalidToken, UnicodeEncodeError, ValueError) as exc:
+        raise CredentialResolutionError("Credential vault secret is not available.") from exc
+    try:
+        secret = decrypted.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CredentialResolutionError("Credential vault secret is not available.") from exc
+    if not secret or "\x00" in secret:
+        raise CredentialResolutionError("Credential vault secret is not available.")
+    return secret
+
+
+def _credential_vault_fernet(settings: Settings) -> Fernet:
+    raw_key = settings.credential_vault_key.strip()
+    if not raw_key:
+        raise CredentialConfigurationError("Credential vault key is not configured.")
+    try:
+        return Fernet(raw_key.encode("ascii"))
+    except (ValueError, TypeError, UnicodeEncodeError) as exc:
+        raise CredentialConfigurationError("Credential vault key is not configured.") from exc
 
 
 def _credential_process_adapters(settings: Settings) -> dict[str, CredentialProcessAdapter]:

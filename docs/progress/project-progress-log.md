@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009k Local Encrypted Credential-Vault References
+
+Status: completed for the scoped local encrypted credential-vault reference slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and broader CLI host-boundary enforcement.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected a bounded local credential-vault slice after BL-009j because there is no web retrieval runtime to guard yet and encrypted credential storage was the highest-value remaining Sprint 15 security gap.
+- Completed: Architect/Security scope confirmed local vaulting is acceptable only with an explicit operator-provided Fernet key in `DGENTIC_CREDENTIAL_VAULT_KEY`; DGentic does not generate, persist, escrow, rotate, or recover the vault key in this slice.
+- Completed: Developer added `cryptography`/Fernet support, `credential_vault_key` settings, and a `local_vault` credential source that stores ciphertext in `credential-references.json`.
+- Completed: Developer preserved provider runtime's fail-fast ordering so credential decryption happens while building transport headers after approval/config/circuit gates and before provider approval claim.
+- Completed: QA added credential API and provider runtime regressions for no plaintext persistence or response exposure, missing key create failure, transport-time vault use, wrong/missing/malformed key failure, and approval preservation before provider transport.
+- Completed: Security review found one low API-detail issue around vault-key configuration errors; Developer changed credential-reference create failures to return a generic invalid-reference response and QA updated the regression.
+- Completed: PM updated `.env.example`, README, architecture, setup/usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/credentials/references` supports `source_type: "local_vault"` with a create-only `secret_value` field encrypted by the operator-supplied `DGENTIC_CREDENTIAL_VAULT_KEY`.
+- Implemented in this slice: credential views and audit metadata omit both raw secret values and vault ciphertext; persisted state stores only ciphertext plus safe metadata.
+- Implemented in this slice: provider approval binding uses credential-reference identity digests, not plaintext; local-vault identities include the reference id and encrypted-secret digest.
+- Implemented in this slice: missing, malformed, or wrong vault keys fail closed before provider transport and preserve approved provider approvals because approval claim still happens only after credential header construction succeeds.
+- Still out of scope after this slice: DGentic-managed key generation, vault key rotation, key escrow/recovery, managed KMS integration, per-secret versioning UX, first-class external secret-manager APIs, richer user/group identity workflows, and non-provider network surfaces.
+
+Validation:
+- Focused credential API gate: `python -m pytest -q tests\test_auth.py -k "local_vault or credential_reference"` passed with 6 tests.
+- Focused provider credential gate: `python -m pytest -q tests\test_provider_runtime.py -k "local_vault or credential_reference or process_credential or sanitized_environ"` passed with 13 tests.
+- Broader auth/provider/API gates: `python -m pytest -q tests\test_auth.py tests\test_provider_runtime.py` passed with 188 tests; `python -m pytest -q tests\test_api.py -k "credential or external_provider or provider_generate"` passed with 46 tests.
+- Lint/format gates: `python -m ruff check .` and `python -m ruff format --check .` passed before the final docs update.
+
+Next:
+- Continue Sprint 15 with broader CLI host-boundary policy, managed hook-policy foundations, or web retrieval network enforcement only after a concrete runtime surface exists; defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009j Generated-Tool Network Policy Guardrail
 
 Status: completed for the scoped generated-tool Python socket network guardrail slice; Sprint 15 remains active for richer user/group identity workflows, encrypted local vaulting, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and broader CLI host-boundary enforcement.

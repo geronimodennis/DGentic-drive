@@ -45,6 +45,7 @@ from dgentic.command_policy import (
     update_command_policy_rule,
 )
 from dgentic.credentials import (
+    CredentialReferenceError,
     CredentialReferenceRequest,
     CredentialReferenceView,
     create_credential_reference,
@@ -340,7 +341,12 @@ def create_persisted_credential_reference(
     payload: CredentialReferenceRequest,
     request: Request,
 ) -> CredentialReferenceView:
-    return create_credential_reference(payload, actor=_principal_actor(request))
+    try:
+        return create_credential_reference(payload, actor=_principal_actor(request))
+    except CredentialReferenceError as exc:
+        raise HTTPException(status_code=400, detail="Credential reference is invalid.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Credential reference is invalid.") from exc
 
 
 @router.get("/credentials/references", response_model=list[CredentialReferenceView])

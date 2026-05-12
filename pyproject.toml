@@ -5,6 +5,7 @@ description = "DGentic autonomous AI agent platform backend foundation."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
+    "cryptography>=43.0.0,<49.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "pydantic>=2.8.0,<3.0.0",
     "pydantic-settings>=2.4.0,<3.0.0",

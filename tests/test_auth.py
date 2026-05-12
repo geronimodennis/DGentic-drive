@@ -4,6 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from dgentic.auth import (
@@ -12,7 +13,7 @@ from dgentic.auth import (
     parse_token_map,
     validate_auth_configuration,
 )
-from dgentic.credentials import credential_env_for_reference
+from dgentic.credentials import credential_env_for_reference, credential_secret_for_reference
 from dgentic.events import event_log
 from dgentic.main import create_app
 from dgentic.schemas import LogEventType
@@ -1073,6 +1074,89 @@ def test_external_process_credential_reference_lifecycle_is_metadata_only(
     assert "external-process-secret" not in create_response.text
     assert "external-process-secret" not in list_response.text
     assert "external-process-secret" not in state_text
+
+
+def test_local_vault_credential_reference_lifecycle_encrypts_secret(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_secret = "local-vault-api-key-secret"
+    monkeypatch.setenv("DGENTIC_CREDENTIAL_VAULT_KEY", Fernet.generate_key().decode("ascii"))
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    create_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "local_vault",
+            "secret_value": raw_secret,
+            "label": "local vault provider",
+        },
+    )
+    ref_id = create_response.json()["id"]
+    resolved_secret = credential_secret_for_reference(ref_id, purpose="provider")
+    list_response = client.get(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+    )
+    revoke_response = client.post(
+        f"/credentials/references/{ref_id}/revoke",
+        headers=bearer(credential_token["token"]),
+    )
+    state_text = (tmp_path / "state" / "credential-references.json").read_text(encoding="utf-8")
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+    serialized_api = "\n".join([create_response.text, list_response.text, revoke_response.text])
+
+    assert create_response.status_code == 201
+    assert create_response.json()["source_type"] == "local_vault"
+    assert create_response.json()["env_var"] == ""
+    assert create_response.json()["adapter_id"] == ""
+    assert create_response.json()["secret_name"] == ""
+    assert resolved_secret == raw_secret
+    assert list_response.status_code == 200
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == "revoked"
+    assert "encrypted_secret" in state_text
+    assert raw_secret not in serialized_api
+    assert raw_secret not in state_text
+    assert raw_secret not in logs
+    assert "encrypted_secret" not in serialized_api
+
+
+def test_local_vault_credential_reference_requires_operator_key_without_secret_echo(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_secret = "missing-vault-key-secret"
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    create_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "local_vault",
+            "secret_value": raw_secret,
+            "label": "local vault provider",
+        },
+    )
+    state_file = tmp_path / "state" / "credential-references.json"
+    state_text = state_file.read_text(encoding="utf-8") if state_file.exists() else ""
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+
+    assert create_response.status_code == 400
+    assert "Credential reference is invalid" in create_response.text
+    assert "Credential vault key is not configured" not in create_response.text
+    assert raw_secret not in create_response.text
+    assert raw_secret not in state_text
+    assert raw_secret not in logs
 
 
 def test_credential_reference_label_redacts_secret_shaped_values(

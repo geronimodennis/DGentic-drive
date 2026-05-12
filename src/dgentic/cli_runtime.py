@@ -80,6 +80,7 @@ _INHERITED_ENV_KEYS = {
 }
 _CMD_EXECUTABLES = {"cmd", "cmd.exe"}
 _POWERSHELL_EXECUTABLES = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+_WINDOWS_DEFAULT_EXECUTABLE_EXTENSIONS = (".com", ".exe", ".bat", ".cmd")
 
 
 class CommandApprovalStatus(StrEnum):
@@ -362,6 +363,100 @@ def build_command_environment(overrides: dict[str, str]) -> tuple[dict[str, str]
 def validate_command_environment(overrides: dict[str, str]) -> list[str]:
     _env, environment_keys = build_command_environment(overrides)
     return environment_keys
+
+
+def validate_bare_executable_trust(command: str, cwd: Path, env: dict[str, str]) -> None:
+    command_args = _command_args(command)
+    raw_executable = (
+        parse_command(command).raw_executable
+        if isinstance(command_args, str)
+        else str(command_args[0] if command_args else "")
+    ).strip()
+    if not raw_executable or _is_path_like_executable_token(raw_executable):
+        return
+
+    root_dir = get_settings().root_dir.resolve()
+    candidates = _bare_executable_candidates(raw_executable, env)
+    if os.name == "nt":
+        _block_matching_workspace_executable(cwd, candidates, root_dir)
+
+    for search_root in _path_executable_search_roots(cwd, env):
+        if _path_is_inside_root(search_root, root_dir):
+            raise PermissionError(
+                "Bare executable search path resolves inside configured rootDir; use an "
+                "explicit reviewed executable path or remove the workspace directory from PATH."
+            )
+        _block_matching_workspace_executable(search_root, candidates, root_dir)
+
+
+def _block_matching_workspace_executable(
+    search_root: Path,
+    candidates: list[str],
+    root_dir: Path,
+) -> None:
+    for candidate in candidates:
+        candidate_path = search_root / candidate
+        try:
+            exists = candidate_path.exists()
+        except OSError:
+            continue
+        if exists and (
+            _path_is_inside_root(search_root, root_dir)
+            or _path_is_inside_root(candidate_path, root_dir)
+        ):
+            raise PermissionError(
+                "Bare executable resolves inside configured rootDir; use an explicit "
+                "reviewed executable path or remove the workspace executable from the "
+                "current directory/PATH."
+            )
+
+
+def _path_is_inside_root(path: Path, root_dir: Path) -> bool:
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return False
+    return resolved == root_dir or root_dir in resolved.parents
+
+
+def _path_executable_search_roots(cwd: Path, env: dict[str, str]) -> list[Path]:
+    roots: list[Path] = []
+    for entry in env.get("PATH", "").split(os.pathsep):
+        candidate = cwd if entry == "" else Path(entry)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def _is_path_like_executable_token(token: str) -> bool:
+    return any(separator in token for separator in ("/", "\\", ":")) or token.startswith("~")
+
+
+def _bare_executable_candidates(executable: str, env: dict[str, str]) -> list[str]:
+    executable_path = Path(executable)
+    if executable_path.suffix:
+        return [executable]
+
+    extensions: list[str]
+    if os.name == "nt":
+        raw_extensions = env.get("PATHEXT") or os.environ.get("PATHEXT", "")
+        extensions = [
+            extension.lower() for extension in raw_extensions.split(os.pathsep) if extension.strip()
+        ]
+        if not extensions:
+            extensions = list(_WINDOWS_DEFAULT_EXECUTABLE_EXTENSIONS)
+        extensions = [
+            extension if extension.startswith(".") else f".{extension}" for extension in extensions
+        ]
+        return [executable, *(f"{executable}{extension}" for extension in extensions)]
+
+    return [executable]
 
 
 def _approval_digest_key() -> bytes:
@@ -1353,6 +1448,7 @@ class CliRuntimeService:
             raise PermissionError(decision.reason)
         env, environment_keys = build_command_environment(request.environment)
         environment_digest = command_environment_digest(request.environment)
+        validate_bare_executable_trust(decision.command, cwd, env)
         approval_id: str | None = None
         if decision.permission_mode == PermissionMode.approval_required:
             approval_id = self._authorize_approval_required_request(

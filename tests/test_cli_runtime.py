@@ -804,6 +804,82 @@ def test_power_shell_command_execution_uses_no_profile_noninteractive_args(
     assert result.exit_code == 0
 
 
+def test_bare_command_resolving_from_workspace_cwd_is_blocked_before_subprocess(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    (root_dir / "python.exe").write_text("@echo hijack\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for workspace-resolved bare executables.")
+
+    monkeypatch.setattr("dgentic.cli_runtime.os.name", "nt")
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="Bare executable resolves inside"):
+        service.execute_command(CommandExecutionRequest(command="python --version", approved=True))
+
+
+def test_bare_command_workspace_path_entry_is_blocked_before_subprocess(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    bin_dir = root_dir / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "tool.exe").write_text("@echo hijack\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for workspace PATH bare executables.")
+
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="search path resolves inside"):
+        service.execute_command(CommandExecutionRequest(command="tool --version"))
+
+
+def test_workspace_path_entry_is_blocked_even_without_matching_file(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    bin_dir = root_dir / "bin"
+    bin_dir.mkdir()
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start with workspace directory on PATH.")
+
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="search path resolves inside"):
+        service.execute_command(CommandExecutionRequest(command="python --version"))
+
+
+def test_explicit_inside_root_executable_path_keeps_policy_behavior(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    tool_path = root_dir / "tools" / "safe-tool.exe"
+    tool_path.parent.mkdir()
+    tool_path.write_text("@echo safe\n", encoding="utf-8")
+
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
+        assert str(tool_path) in (args if isinstance(args, str) else args[0])
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    result = service.execute_command(
+        CommandExecutionRequest(command=f'"{tool_path}" --version', approved=True)
+    )
+
+    assert result.exit_code == 0
+
+
 def test_command_execution_requires_approval_for_state_file_reads(runtime) -> None:
     service, _root_dir, _data_dir = runtime
 

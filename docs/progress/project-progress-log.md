@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009p Bare Executable Workspace/PATH Trust Checks
+
+Status: completed for the scoped bare executable workspace/PATH trust slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, nested shell startup hardening, and command-specific path argument hardening for configured-safe tools.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected bare executable trust as the next bounded CLI host-boundary slice after BL-009o.
+- Completed: Security/Explorer confirmed bare command names could be hijacked by workspace current-directory executables on Windows or by workspace directories placed on `PATH`.
+- Completed: Developer added launch-time preflight after cwd/environment construction and before approval claims or subprocess launch.
+- Completed: QA added CLI runtime regressions for workspace current-directory executable blocking, workspace `PATH` executable blocking, workspace `PATH` entry blocking even without a matching executable, and explicit inside-root executable path compatibility.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: bare executable launches fail closed when the executable would resolve from the workspace current directory on Windows.
+- Implemented in this slice: bare executable launches fail closed when any `PATH` entry resolves inside `rootDir`, even if no matching executable exists yet, reducing time-of-check/time-of-use hijack risk.
+- Implemented in this slice: explicit executable paths inside `rootDir` still flow through normal command policy and approval handling, keeping the executable location visible in review/audit records.
+- Still out of scope after this slice: nested shell startup hardening inside reviewed payloads, command-specific path argument hardening for configured-safe tools, full shell emulation, and OS-level sandboxing.
+
+Validation:
+- Focused CLI runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "bare_command or workspace_path_entry or explicit_inside_root_executable_path"` passed with 4 tests.
+- Broader affected suites: `python -m pytest -q tests\test_cli_runtime.py tests\test_command_policy.py` passed with 369 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 984 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with command-specific path argument hardening for configured-safe tools or managed hook-policy/plugin trust foundations; defer web retrieval enforcement until a concrete web retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009o CLI Shell Profile And AutoRun Launch Hardening
 
 Status: completed for the scoped CLI shell profile/AutoRun launch hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, nested shell startup hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.

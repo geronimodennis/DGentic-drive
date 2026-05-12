@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009m CLI Startup And Preload Environment Override Hardening
+
+Status: completed for the scoped CLI startup/preload environment override hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell profile/AutoRun command-line hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected controlled CLI environment override hardening as the next bounded host-boundary slice after BL-009l.
+- Completed: Security/Explorer identified shell startup hooks, dynamic-loader preloads/library paths, interpreter option/library injection variables, and exported Bash function names as a bounded risk because they can alter command behavior before a guarded command runs.
+- Completed: Developer extended the existing blocked override mechanism without changing CLI API contracts or approval record shapes.
+- Completed: QA added CLI runtime and API regressions for `BASH_ENV`, `ENV`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`, `NODE_OPTIONS`, `RUBYOPT`, `PERL5LIB`, and `BASH_FUNC_` style overrides.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: CLI environment overrides reject common shell startup hook variables, dynamic-loader preload/library path variables, interpreter option/library injection variables, and dangerous prefixes such as `BASH_FUNC_` and `DYLD_`.
+- Implemented in this slice: blocked environment override validation happens before subprocess launch and before approval-bound execution can proceed, preserving existing no-value persistence for allowed environment overrides.
+- Still out of scope after this slice: PowerShell profile and Windows `cmd` AutoRun command-line hardening, bare executable PATH trust policy, command-specific path arguments for configured-safe tools, full shell emulation, and OS-level sandboxing.
+
+Validation:
+- Focused CLI runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "environment_blocks"` passed with 10 tests.
+- Focused API gate: `python -m pytest -q tests\test_api.py -k "blocked_environment_override"` passed with 5 tests.
+- Broader affected suites: `python -m pytest -q tests\test_cli_runtime.py tests\test_api.py` passed with 242 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 965 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with shell profile/AutoRun command-line hardening or managed hook-policy foundations; defer web retrieval enforcement until a concrete retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009l CLI Executable Path Host-Boundary Enforcement
 
 Status: completed for the scoped CLI executable path host-boundary slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell startup-hook/preload environment hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.

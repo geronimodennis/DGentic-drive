@@ -824,6 +824,35 @@ def test_command_environment_blocks_sensitive_runtime_overrides(runtime) -> None
         )
 
 
+@pytest.mark.parametrize(
+    "environment_key",
+    [
+        "BASH_ENV",
+        "env",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "NODE_OPTIONS",
+        "RUBYOPT",
+        "PERL5LIB",
+        "BASH_FUNC_MALICIOUS",
+    ],
+)
+def test_command_environment_blocks_startup_hook_and_preload_overrides(
+    runtime,
+    environment_key: str,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    with pytest.raises(ValueError, match="not allowed"):
+        service.execute_command(
+            CommandExecutionRequest(
+                command="cmd /c echo blocked",
+                environment={environment_key: "C:\\unsafe"},
+            )
+        )
+
+
 def test_command_runs_and_results_redact_secret_bearing_commands(
     runtime,
     monkeypatch,

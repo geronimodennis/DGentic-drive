@@ -43,15 +43,31 @@ _APPROVAL_DIGEST_KEY_FILE = "cli-approval-digest.key"
 _DIGEST_KEY_LOCK = Lock()
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BLOCKED_ENV_OVERRIDES = {
+    "BASH_ENV",
     "COMSPEC",
+    "ENV",
+    "GCONV_PATH",
     "HOME",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LOCPATH",
+    "NODE_OPTIONS",
+    "NODE_PATH",
     "PATH",
     "PATHEXT",
+    "PERL5LIB",
+    "PERL5OPT",
     "PYTHONHOME",
     "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "RUBYLIB",
+    "RUBYOPT",
     "SYSTEMROOT",
+    "TCLLIBPATH",
     "VIRTUAL_ENV",
+    "ZDOTDIR",
 }
+_BLOCKED_ENV_OVERRIDE_PREFIXES = ("BASH_FUNC_", "DYLD_")
 _INHERITED_ENV_KEYS = {
     "COMSPEC",
     "PATH",
@@ -294,7 +310,9 @@ def normalize_command_environment_overrides(overrides: dict[str, str]) -> dict[s
         if not _ENV_NAME_RE.fullmatch(normalized_key):
             raise ValueError(f"Invalid environment variable name: {key}")
         upper_key = normalized_key.upper()
-        if upper_key in _BLOCKED_ENV_OVERRIDES:
+        if upper_key in _BLOCKED_ENV_OVERRIDES or any(
+            upper_key.startswith(prefix) for prefix in _BLOCKED_ENV_OVERRIDE_PREFIXES
+        ):
             raise ValueError(f"Environment variable override is not allowed: {normalized_key}")
         if len(value) > 4096:
             raise ValueError(f"Environment variable value is too long: {normalized_key}")

@@ -4145,7 +4145,15 @@ def test_cli_execute_api_blocks_executable_path_escape_before_launch(
     get_settings.cache_clear()
 
 
-def test_cli_execute_api_rejects_blocked_environment_override(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "environment_key",
+    ["PATH", "BASH_ENV", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "NODE_OPTIONS"],
+)
+def test_cli_execute_api_rejects_blocked_environment_override(
+    tmp_path,
+    monkeypatch,
+    environment_key: str,
+) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
     monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
@@ -4157,12 +4165,12 @@ def test_cli_execute_api_rejects_blocked_environment_override(tmp_path, monkeypa
         "/cli/execute",
         json={
             "command": "cmd /c echo blocked",
-            "environment": {"PATH": "C:\\unsafe"},
+            "environment": {environment_key: "C:\\unsafe"},
         },
     )
 
     assert response.status_code == 400
-    assert "PATH" in response.json()["detail"]
+    assert environment_key in response.json()["detail"]
     get_settings.cache_clear()
 
 

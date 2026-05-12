@@ -79,6 +79,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/memory", CAPABILITY_MEMORY),
     ("/api/v1/memory", CAPABILITY_MEMORY),
     ("/tools/approvals", CAPABILITY_APPROVALS),
+    ("/plugins", CAPABILITY_TOOLS),
     ("/tools", CAPABILITY_TOOLS),
     ("/api/v1/tools", CAPABILITY_TOOLS),
     ("/sessions", CAPABILITY_SESSIONS),

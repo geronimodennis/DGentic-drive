@@ -97,6 +97,14 @@ from dgentic.orchestration import (
     orchestration_service,
 )
 from dgentic.planner import create_initial_plan, list_plans
+from dgentic.plugins import (
+    PluginDiscoveryResponse,
+    PluginDiscoveryView,
+    PluginTrustRequest,
+    discover_plugins,
+    get_plugin,
+    update_plugin_trust,
+)
 from dgentic.provider_pricing import ProviderPricingConfigurationError
 from dgentic.provider_routing import ProviderRoutingConfigurationError
 from dgentic.provider_runtime import (
@@ -1024,6 +1032,31 @@ def patch_cli_policy_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
     return rule
+
+
+@router.get("/plugins", response_model=PluginDiscoveryResponse)
+def discover_local_plugins() -> PluginDiscoveryResponse:
+    return discover_plugins()
+
+
+@router.get("/plugins/{plugin_id}", response_model=PluginDiscoveryView)
+def get_local_plugin(plugin_id: str) -> PluginDiscoveryView:
+    try:
+        return get_plugin(plugin_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/plugins/{plugin_id}/trust", response_model=PluginDiscoveryView)
+def patch_local_plugin_trust(
+    plugin_id: str,
+    payload: PluginTrustRequest,
+    request: Request,
+) -> PluginDiscoveryView:
+    try:
+        return update_plugin_trust(plugin_id, payload, actor=_principal_actor(request))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/cli/execute", response_model=CommandExecutionResult)

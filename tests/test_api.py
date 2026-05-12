@@ -61,6 +61,15 @@ def _configure_production_shared_memory_api_state(tmp_path, monkeypatch) -> None
     reset_database_state()
 
 
+def _write_plugin_manifest(root_dir, plugin_id: str, manifest: dict) -> None:
+    plugin_dir = root_dir / "plugins" / plugin_id
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "dgentic-plugin.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_health_returns_service_status() -> None:
     client = TestClient(create_app())
 
@@ -3047,6 +3056,350 @@ def test_provider_listing_and_health_reject_invalid_pricing_before_probes(
     assert response.json()["detail"] == "Provider pricing catalog is invalid."
     assert calls == []
     assert "not-json" not in response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_discovery_returns_redacted_manifest_summary(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_manifest(
+        root_dir,
+        "safe-plugin",
+        {
+            "plugin_id": "safe-plugin",
+            "name": "Safe plugin",
+            "version": "1.2.3",
+            "description": "Discovers safely with TOKEN=manifest-secret.",
+            "source": "Authorization: Bearer source-secret",
+            "components": {
+                "command_recipes": ["deploy --token command-secret"],
+                "agent_blueprints": ["Release reviewer"],
+                "skills": ["triage-secret skill"],
+                "hook_policies": ["preflight PASSWORD=hook-secret"],
+                "tools": ["scanner"],
+                "docs": ["Authorization: Bearer docs-secret"],
+            },
+        },
+    )
+    client = TestClient(create_app())
+
+    list_response = client.get("/plugins")
+    get_response = client.get("/plugins/safe-plugin")
+
+    assert list_response.status_code == 200
+    assert get_response.status_code == 200
+    body = list_response.json()
+    assert body["errors"] == []
+    plugin = body["plugins"][0]
+    assert plugin == get_response.json()
+    assert plugin["plugin_id"] == "safe-plugin"
+    assert plugin["manifest_path"] == "plugins/safe-plugin/dgentic-plugin.json"
+    assert plugin["manifest_size_bytes"] > 0
+    assert len(plugin["manifest_digest"]) == 64
+    assert plugin["trust_status"] == "untrusted"
+    assert plugin["description"] == "Discovers safely with TOKEN=[REDACTED]"
+    assert plugin["source"] == "Authorization: Bearer [REDACTED]"
+    assert plugin["components"]["command_recipes"] == ["deploy --token [REDACTED]"]
+    assert plugin["components"]["agent_blueprints"] == ["Release reviewer"]
+    assert plugin["components"]["hook_policies"] == ["preflight PASSWORD=[REDACTED]"]
+    assert plugin["components"]["tools"] == ["scanner"]
+    assert plugin["components"]["docs"] == ["Authorization: Bearer [REDACTED]"]
+    serialized = list_response.text + get_response.text
+    assert "manifest-secret" not in serialized
+    assert "source-secret" not in serialized
+    assert "command-secret" not in serialized
+    assert "hook-secret" not in serialized
+    assert "docs-secret" not in serialized
+    get_settings.cache_clear()
+
+
+def test_plugin_trust_persists_redacted_decision_and_becomes_stale(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    manifest = {
+        "plugin_id": "trusted-plugin",
+        "name": "Trusted plugin",
+        "version": "1.0.0",
+        "components": {"tools": ["validator"]},
+    }
+    _write_plugin_manifest(root_dir, "trusted-plugin", manifest)
+    client = TestClient(create_app())
+
+    trust_response = client.patch(
+        "/plugins/trusted-plugin/trust",
+        json={
+            "status": "trusted",
+            "reason": (
+                "Approved after reviewing TOKEN=plugin-trust-secret "
+                "and Authorization: Bearer trust-auth-secret."
+            ),
+        },
+    )
+    trust_body = trust_response.json()
+    persisted = json.loads((data_dir / "plugin-trust.json").read_text(encoding="utf-8"))
+    logs_response = client.get("/logs?event_type=tool")
+    manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "trusted-plugin", manifest)
+    stale_response = client.get("/plugins/trusted-plugin")
+
+    assert trust_response.status_code == 200
+    assert trust_body["trust_status"] == "trusted"
+    assert trust_body["trust_reason"] == (
+        "Approved after reviewing TOKEN=[REDACTED] and Authorization: Bearer [REDACTED]"
+    )
+    assert trust_body["trusted_manifest_digest"] == trust_body["manifest_digest"]
+    assert persisted[0]["plugin_id"] == "trusted-plugin"
+    assert persisted[0]["status"] == "trusted"
+    assert persisted[0]["manifest_digest"] == trust_body["manifest_digest"]
+    assert "TOKEN=[REDACTED]" in persisted[0]["reason"]
+    assert "Authorization: Bearer [REDACTED]" in persisted[0]["reason"]
+    assert logs_response.status_code == 200
+    assert "plugin-trust-secret" not in trust_response.text
+    assert "trust-auth-secret" not in trust_response.text
+    assert "plugin-trust-secret" not in json.dumps(persisted)
+    assert "trust-auth-secret" not in json.dumps(persisted)
+    assert "plugin-trust-secret" not in logs_response.text
+    assert "trust-auth-secret" not in logs_response.text
+    assert stale_response.status_code == 200
+    assert stale_response.json()["trust_status"] == "stale"
+    assert stale_response.json()["trusted_manifest_digest"] == trust_body["manifest_digest"]
+    assert stale_response.json()["manifest_digest"] != trust_body["manifest_digest"]
+    get_settings.cache_clear()
+
+
+def test_plugin_discovery_surfaces_safe_errors_for_invalid_manifests(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    plugins_dir = root_dir / "plugins"
+    malformed_dir = plugins_dir / "malformed-plugin"
+    malformed_dir.mkdir(parents=True)
+    (malformed_dir / "dgentic-plugin.json").write_text(
+        '{"plugin_id":"malformed-plugin","token":"raw-malformed-secret"',
+        encoding="utf-8",
+    )
+    oversized_dir = plugins_dir / "oversized-plugin"
+    oversized_dir.mkdir()
+    (oversized_dir / "dgentic-plugin.json").write_text(
+        "TOKEN=oversized-secret\n" * (64 * 1024),
+        encoding="utf-8",
+    )
+    mismatch_manifest = {
+        "plugin_id": "different-plugin",
+        "name": "Wrong id",
+        "version": "1.0.0",
+        "description": "PASSWORD=mismatch-secret",
+    }
+    _write_plugin_manifest(root_dir, "mismatch-plugin", mismatch_manifest)
+    opaque_manifest = {
+        "plugin_id": "opaque-plugin",
+        "name": "Opaque plugin",
+        "version": "1.0.0",
+        "install": {"command": "run --token hidden-extra-secret"},
+    }
+    _write_plugin_manifest(root_dir, "opaque-plugin", opaque_manifest)
+    secret_shaped_dir = plugins_dir / "TOKEN=dir-secret"
+    secret_shaped_dir.mkdir()
+    (secret_shaped_dir / "dgentic-plugin.json").write_text(
+        json.dumps(
+            {
+                "plugin_id": "TOKEN=dir-secret",
+                "name": "Secret-shaped dir",
+                "version": "1.0.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/plugins")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plugins"] == []
+    errors_by_id = {error["plugin_id"]: error for error in body["errors"]}
+    assert errors_by_id["malformed-plugin"]["reason"] == "Plugin manifest is invalid."
+    assert errors_by_id["oversized-plugin"]["reason"] == "Plugin manifest is too large."
+    assert (
+        errors_by_id["mismatch-plugin"]["reason"]
+        == "Plugin manifest id must match its directory name."
+    )
+    assert errors_by_id["opaque-plugin"]["reason"] == "Plugin manifest is invalid."
+    assert errors_by_id["TOKEN=[REDACTED]"] == {
+        "plugin_id": "TOKEN=[REDACTED]",
+        "manifest_path": "plugins/TOKEN=[REDACTED]/dgentic-plugin.json",
+        "reason": "Plugin manifest is invalid.",
+    }
+    assert "raw-malformed-secret" not in response.text
+    assert "oversized-secret" not in response.text
+    assert "mismatch-secret" not in response.text
+    assert "hidden-extra-secret" not in response.text
+    assert "dir-secret" not in response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_discovery_rejects_symlinked_out_of_root_manifest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    outside_dir = tmp_path / "outside"
+    root_dir.mkdir()
+    outside_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    plugins_dir = root_dir / "plugins"
+    plugins_dir.mkdir()
+    outside_manifest = outside_dir / "dgentic-plugin.json"
+    outside_manifest.write_text(
+        json.dumps(
+            {
+                "plugin_id": "linked-plugin",
+                "name": "Linked plugin",
+                "version": "1.0.0",
+                "description": "TOKEN=out-of-root-secret",
+            }
+        ),
+        encoding="utf-8",
+    )
+    linked_plugin_dir = plugins_dir / "linked-plugin"
+    linked_plugin_dir.mkdir()
+    try:
+        (linked_plugin_dir / "dgentic-plugin.json").symlink_to(outside_manifest)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is not available in this environment: {exc}")
+    client = TestClient(create_app())
+
+    response = client.get("/plugins")
+
+    assert response.status_code == 200
+    assert response.json()["plugins"] == []
+    assert response.json()["errors"] == [
+        {
+            "plugin_id": "linked-plugin",
+            "manifest_path": "plugins",
+            "reason": "Plugin manifest is outside the plugin directory.",
+        }
+    ]
+    assert "out-of-root-secret" not in response.text
+    assert str(outside_dir) not in response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_discovery_rejects_symlinked_plugin_directory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    outside_plugins_dir = tmp_path / "outside-plugins"
+    root_dir.mkdir()
+    outside_plugins_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    outside_plugin_dir = outside_plugins_dir / "escaped-plugin"
+    outside_plugin_dir.mkdir()
+    (outside_plugin_dir / "dgentic-plugin.json").write_text(
+        json.dumps(
+            {
+                "plugin_id": "escaped-plugin",
+                "name": "Escaped plugin",
+                "version": "1.0.0",
+                "description": "TOKEN=escaped-plugin-secret",
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        (root_dir / "plugins").symlink_to(outside_plugins_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is not available in this environment: {exc}")
+    client = TestClient(create_app())
+
+    response = client.get("/plugins")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "plugins": [],
+        "errors": [
+            {
+                "plugin_id": "",
+                "manifest_path": "plugins",
+                "reason": "Plugin directory is invalid.",
+            }
+        ],
+    }
+    assert "escaped-plugin-secret" not in response.text
+    assert str(outside_plugins_dir) not in response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_routes_require_tools_capability_in_production(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "tasks-token=tasks;tools-token=tools")
+    get_settings.cache_clear()
+    _write_plugin_manifest(
+        root_dir,
+        "auth-plugin",
+        {
+            "plugin_id": "auth-plugin",
+            "name": "Auth plugin",
+            "version": "1.0.0",
+        },
+    )
+    client = TestClient(create_app())
+    tasks_headers = {"Authorization": "Bearer tasks-token"}
+    tools_headers = {"Authorization": "Bearer tools-token"}
+
+    no_auth_response = client.get("/plugins")
+    tasks_list_response = client.get("/plugins", headers=tasks_headers)
+    tasks_get_response = client.get("/plugins/auth-plugin", headers=tasks_headers)
+    tasks_trust_response = client.patch(
+        "/plugins/auth-plugin/trust",
+        headers=tasks_headers,
+        json={"status": "trusted"},
+    )
+    tools_list_response = client.get("/plugins", headers=tools_headers)
+    tools_get_response = client.get("/plugins/auth-plugin", headers=tools_headers)
+    tools_trust_response = client.patch(
+        "/plugins/auth-plugin/trust",
+        headers=tools_headers,
+        json={"status": "trusted", "reason": "Reviewed by tools token."},
+    )
+
+    assert no_auth_response.status_code == 401
+    assert tasks_list_response.status_code == 403
+    assert tasks_get_response.status_code == 403
+    assert tasks_trust_response.status_code == 403
+    assert tools_list_response.status_code == 200
+    assert tools_get_response.status_code == 200
+    assert tools_trust_response.status_code == 200
+    assert tools_trust_response.json()["trust_status"] == "trusted"
     get_settings.cache_clear()
 
 

@@ -1891,6 +1891,8 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/agents/agent-1", "agents"),
         ("/api/v1/memory/metadata", "memory"),
         ("/tools/approvals/approval-1/approve", "approvals"),
+        ("/plugins", "tools"),
+        ("/plugins/safe-plugin/trust", "tools"),
         ("/api/v1/tools/registry", "tools"),
         ("/sessions/summary", "sessions"),
         ("/logs", "logs"),

@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009u Plugin Trust Foundation
+
+Status: completed for the scoped backend-only plugin manifest discovery and trust foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, hook policy enforcement, managed settings precedence, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected plugin trust controls as the next bounded security slice after BL-009t, limited to backend-only manifest discovery and trust state.
+- Completed: Security/Architect scoped direct-manifest discovery, no plugin execution/import/loading, digest-based trust, safe redaction, stale trust, and `tools` capability enforcement.
+- Completed: Developer added `src/dgentic/plugins.py`, discovery/trust models, `plugin-trust.json` persistence, SHA-256 raw-manifest digests, stale trust calculation, trust audit events, `/plugins` route wiring, and `/plugins -> tools` capability mapping.
+- Completed: QA added focused plugin API/auth tests for redacted discovery, trust persistence and stale status, malformed/oversized/id-mismatch manifests, symlinked manifest rejection, symlinked top-level plugin directory rejection, hidden extra-field rejection, secret-shaped error-path redaction, and production capability enforcement.
+- Completed: Reviewer/Security found and Developer/QA closed review findings for top-level `plugins` symlink escape, opaque unreviewed manifest fields, bounded-read/TOCTOU risk, and secret-shaped path leakage in discovery errors.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `GET /plugins`, `GET /plugins/{plugin_id}`, and `PATCH /plugins/{plugin_id}/trust` expose safe plugin manifest summaries and explicit trust/block decisions.
+- Implemented in this slice: discovery reads only direct `rootDir/plugins/[plugin_id]/dgentic-plugin.json` manifests, forbids unknown manifest fields, computes SHA-256 digests over exact manifest bytes, and never imports, loads, or executes plugin content.
+- Implemented in this slice: symlinked plugin roots, symlinked plugin directories, symlinked manifests, out-of-root manifests, oversized manifests, malformed manifests, and id-mismatched manifests are rejected with safe redacted errors.
+- Implemented in this slice: trust records are persisted in `plugin-trust.json`; trust becomes `stale` when manifest bytes change; trust reasons and audit metadata are redacted.
+- Still out of scope after this slice: plugin package installation/loading/execution, command recipe execution, hook policy enforcement, managed settings precedence, signed plugin distribution, plugin dependency management, and plugin UI workflows.
+
+Validation:
+- Focused plugin gate: `python -m pytest -q tests\test_api.py -k "plugin"` passed with 6 tests and 169 deselected.
+- Affected auth/API regression gate: `python -m pytest -q tests\test_api.py tests\test_auth.py` passed with 260 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1024 tests and 2 skipped.
+- Lint/format gates: `python -m ruff check .` and `python -m ruff format --check .` passed.
+
+Next:
+- Continue Sprint 15 with the next bounded security slice, likely hook policy or managed settings precedence foundations, before moving to Sprint 16 UI work.
+
 ### Sprint 15 BL-009t Local Credential Vault Key Rotation
 
 Status: completed for the scoped supplied-key local credential-vault rotation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.

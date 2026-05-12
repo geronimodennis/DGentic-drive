@@ -101,7 +101,7 @@ Invoke-RestMethod `
   -Body '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
@@ -543,6 +543,43 @@ Provider approval records bind provider id, model, stream mode, messages, genera
 
 OpenAI-compatible streaming is available through `POST /providers/generate/stream` for LM Studio and the configured external adapter. The endpoint reads upstream `data:` server-sent event chunks and returns newline-delimited JSON (`application/x-ndjson`) events; non-streaming `/providers/generate` continues to reject `stream: true`.
 
+## Discover And Trust Local Plugin Manifests
+
+DGentic discovers plugin manifests without loading or executing plugin code. Place a manifest at `DGENTIC_ROOT_DIR/plugins/[plugin_id]/dgentic-plugin.json`:
+
+```powershell
+New-Item -ItemType Directory -Force plugins\example-plugin | Out-Null
+@'
+{
+  "plugin_id": "example-plugin",
+  "name": "Example plugin",
+  "version": "1.0.0",
+  "description": "Reusable local package metadata.",
+  "components": {
+    "command_recipes": ["status-check"],
+    "agent_blueprints": ["reviewer"],
+    "tools": ["scanner"]
+  }
+}
+'@ | Set-Content -Encoding utf8 plugins\example-plugin\dgentic-plugin.json
+```
+
+List manifests, inspect one plugin, and record an explicit trust decision:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/plugins
+
+Invoke-RestMethod -Uri http://127.0.0.1:8000/plugins/example-plugin
+
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri http://127.0.0.1:8000/plugins/example-plugin/trust `
+  -ContentType "application/json" `
+  -Body '{"status":"trusted","reason":"Reviewed manifest metadata only."}'
+```
+
+Discovery reads only the exact manifest bytes, computes a SHA-256 digest, returns redacted safe metadata, and stores trust records in `plugin-trust.json`. Trust becomes `stale` when the manifest bytes change. Symlinked plugin directories, symlinked manifests, out-of-root manifests, manifests over 64 KiB, malformed JSON, or manifests whose `plugin_id` does not match the containing directory are rejected with safe errors. In staging or production, these routes require a bearer token with the `tools` capability.
+
 ## Generate A Local Tool
 
 ```powershell
@@ -698,9 +735,9 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references with supplied-key rotation, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references with supplied-key rotation, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, explicit executable path boundary checks, configured-safe command path-argument checks, nested shell startup-hardening checks, bare executable workspace/PATH trust checks, single-use bound approval IDs, reviewer operations behind the separate `approvals` capability, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, failed launch run records for claimed synchronous approvals, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides with startup/preload injection blocking, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, local encrypted vault reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but vault key rotation, durable multi-worker circuit state, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, additive lifecycle metadata migrations, lifecycle preview/apply APIs, deterministic metadata compression APIs, a SQLite JSON-vector backend abstraction, retrieval attribution/score explanations, and baseline retrieval performance smoke coverage, but no pgvector production backend, scheduled memory lifecycle/compression job, frontend, or VS Code extension exists yet.
-- Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, common Python socket network policy guardrails, and process-group timeout cleanup hardening, but full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.
+- Local tools can be generated, SQL-registered, duplicate-checked, migrated to strictly newer same-name versions with explicit overwrite, and executed under `localmcp/` with registry permission/deprecation checks, bound approval IDs for approval-required tools outside development/test mode, runtime reliability policy automation, redacted outputs/audit metadata, a reduced inherited environment, local-only dependency import isolation, common Python socket network policy guardrails, and process-group timeout cleanup hardening. Local plugin manifests can be discovered and explicitly trusted or blocked without execution, but plugin installation/loading, full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management are still needed.

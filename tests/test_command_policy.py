@@ -813,6 +813,92 @@ def test_configured_safe_rules_do_not_downgrade_out_of_root_read_only_paths(
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "../outside-tool --version",
+        r"..\outside-tool --version",
+        "/bin/cat README.md",
+        r"C:\Windows\System32\whoami.exe",
+    ],
+)
+def test_executable_paths_outside_root_are_blocked(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "executable path resolves outside configured rootDir" in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'bash -c "/bin/cat README.md"',
+        r"cmd /c ..\outside-tool --version",
+        'powershell -Command "../outside-tool --version"',
+        'powershell -Command "Start-Process -FilePath ../outside-tool -ArgumentList --version"',
+    ],
+)
+def test_shell_wrapped_executable_paths_outside_root_are_blocked(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "executable path resolves outside configured rootDir" in decision.reason
+
+
+def test_configured_safe_rules_do_not_downgrade_executable_path_escapes(
+    policy_state,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow cat by basename",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="cat",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="cat is usually read-only.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="/bin/cat README.md"))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "executable path resolves outside configured rootDir" in decision.reason
+    assert decision.matched_rule_id is None
+
+
+def test_executable_paths_inside_root_keep_normal_policy_behavior(policy_state) -> None:
+    root_dir, _data_dir = policy_state
+    (root_dir / "scripts").mkdir()
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow workspace helper by basename",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="safe-tool",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Workspace helper is allowed.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(command="./scripts/safe-tool --version")
+    )
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.matched_rule_name == "Allow workspace helper by basename"
+
+
+@pytest.mark.parametrize(
     ("command", "expected_mode", "reason_fragment"),
     [
         (
@@ -1796,9 +1882,11 @@ def test_policy_rules_stay_stable_across_match_types_priority_and_scope(policy_s
     assert disabled.enabled is False
     assert argument_decision.permission_mode == PermissionMode.blocked
     assert argument_decision.matched_rule_id == high_priority_argument.id
-    assert executable_decision.permission_mode == PermissionMode.autopilot_safe
-    assert executable_decision.matched_rule_id == executable.id
-    assert scoped_out_decision.permission_mode == PermissionMode.approval_required
+    assert executable_decision.permission_mode == PermissionMode.blocked
+    assert "executable path resolves outside configured rootDir" in executable_decision.reason
+    assert executable_decision.matched_rule_id is None
+    assert scoped_out_decision.permission_mode == PermissionMode.blocked
+    assert "executable path resolves outside configured rootDir" in scoped_out_decision.reason
     assert scoped_out_decision.matched_rule_id is None
     assert exact_decision.permission_mode == PermissionMode.blocked
     assert exact_decision.matched_rule_id == high_priority_argument.id

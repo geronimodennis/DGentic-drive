@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009l CLI Executable Path Host-Boundary Enforcement
+
+Status: completed for the scoped CLI executable path host-boundary slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell startup-hook/preload environment hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected executable path boundary enforcement as the next bounded Sprint 15 CLI host-boundary slice after BL-009k.
+- Completed: Security/Explorer confirmed CLI cwd checks, read-only path operand checks, and shell-wrapper inspection already existed, while explicit executable paths such as `../tool`, `/bin/cat`, Windows absolute paths, and launcher payloads could be a bounded host-boundary gap.
+- Completed: Developer preserved basename policy matching for normal commands while retaining the raw executable token for non-downgradable rootDir boundary checks.
+- Completed: Developer blocked explicit executable paths that resolve outside `rootDir` for direct commands, common shell wrappers, and PowerShell launcher payloads before configured safe rules or approvals can permit execution.
+- Completed: QA added command-policy, CLI runtime, and API regressions for direct path escapes, shell-wrapped path escapes, launcher payload path escapes, configured-safe downgrade attempts, and inside-root executable path compatibility.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: command policy stores the raw executable token alongside the normalized executable name so path-bearing executables can be checked against `rootDir` without breaking existing basename rule matching.
+- Implemented in this slice: direct commands, shell-wrapped commands, and PowerShell `Start-Process`/launcher payloads fail closed when the executable path resolves outside `rootDir`.
+- Implemented in this slice: configured `autopilot_safe` rules cannot downgrade explicit executable path escapes, while executable paths inside `rootDir` can still use normal policy rule behavior.
+- Still out of scope after this slice: shell startup hook and preload environment hardening, bare executable PATH trust policy, command-specific path arguments such as configured-safe tool working-directory flags, full shell emulation, and OS-level sandboxing.
+
+Validation:
+- Focused command-policy gate: `python -m pytest -q tests\test_command_policy.py -k "executable_path or configured_safe_rules_do_not_downgrade_executable_path or inside_root_keep_normal or shell_command_name_escapes or start_process_payload_blocks or flow_tokens or priority_and_scope"` passed with 48 tests.
+- Focused CLI runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "executable_path_escape"` passed with 1 test.
+- Focused API gate: `python -m pytest -q tests\test_api.py -k "executable_paths_outside_root or executable_path_escape"` passed with 6 tests.
+- Broader affected suites: `python -m pytest -q tests\test_command_policy.py tests\test_cli_runtime.py tests\test_api.py` passed with 513 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 952 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with CLI startup-hook/preload environment hardening or managed hook-policy foundations; defer web retrieval enforcement until a concrete retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009k Local Encrypted Credential-Vault References
 
 Status: completed for the scoped local encrypted credential-vault reference slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and broader CLI host-boundary enforcement.

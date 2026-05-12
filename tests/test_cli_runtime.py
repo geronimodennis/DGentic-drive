@@ -233,6 +233,15 @@ def test_cli_runtime_blocks_known_non_running_orchestration_context(runtime) -> 
     assert service.list_command_runs() == []
 
 
+def test_cli_runtime_blocks_executable_path_escape_before_launch(runtime) -> None:
+    service, _root_dir, _data_dir = runtime
+
+    with pytest.raises(PermissionError, match="executable path resolves outside"):
+        service.execute_command(CommandExecutionRequest(command="../outside-tool --version"))
+
+    assert service.list_command_runs() == []
+
+
 def test_create_approval_evaluates_policy_with_request_cwd(runtime) -> None:
     service, root_dir, _data_dir = runtime
     subdir = root_dir / "subdir"

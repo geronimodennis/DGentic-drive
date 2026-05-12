@@ -4092,6 +4092,59 @@ def test_cli_execute_api_blocks_out_of_root_read_only_arguments(tmp_path, monkey
     get_settings.cache_clear()
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "../outside-tool --version",
+        "/bin/cat README.md",
+        r"C:\Windows\System32\whoami.exe",
+        r"cmd /c ..\outside-tool --version",
+        'powershell -Command "Start-Process -FilePath ../outside-tool -ArgumentList --version"',
+    ],
+)
+def test_command_guardrail_api_blocks_executable_paths_outside_root(
+    tmp_path,
+    monkeypatch,
+    command: str,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post("/guardrails/commands", json={"command": command})
+
+    assert response.status_code == 200
+    assert response.json()["permission_mode"] == "blocked"
+    assert "executable path resolves outside configured rootDir" in response.json()["reason"]
+    get_settings.cache_clear()
+
+
+def test_cli_execute_api_blocks_executable_path_escape_before_launch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/execute",
+        json={"command": "../outside-tool --version", "timeout_seconds": 5},
+    )
+    runs_response = client.get("/cli/runs")
+
+    assert response.status_code == 403
+    assert "executable path resolves outside configured rootDir" in response.json()["detail"]
+    assert runs_response.json() == []
+    get_settings.cache_clear()
+
+
 def test_cli_execute_api_rejects_blocked_environment_override(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

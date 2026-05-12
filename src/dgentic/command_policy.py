@@ -419,10 +419,12 @@ class ParsedCommand:
         executable: str,
         arguments: list[str],
         original_command: str = "",
+        raw_executable: str | None = None,
     ) -> None:
         self.executable = executable
         self.arguments = arguments
         self.original_command = original_command
+        self.raw_executable = raw_executable or executable
 
 
 def parse_command(command: str) -> ParsedCommand:
@@ -433,11 +435,13 @@ def parse_command(command: str) -> ParsedCommand:
     if not parts:
         return ParsedCommand(executable="", arguments=[])
 
-    executable = _normalize_executable(parts[0])
+    raw_executable = _strip_matching_quotes(parts[0].strip())
+    executable = _normalize_executable(raw_executable)
     return ParsedCommand(
         executable=executable,
         arguments=[_strip_matching_quotes(part) for part in parts[1:]],
         original_command=command,
+        raw_executable=raw_executable,
     )
 
 
@@ -534,6 +538,21 @@ def _default_decision(
             risk=CommandRisk.approval_required,
             permission_mode=PermissionMode.approval_required,
             reason=f"{executable} requires approval when no inspectable inner command is present.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    if _executable_path_targets_outside_root(
+        parsed.raw_executable,
+        policy_cwd,
+        windows_command_context=windows_command_context,
+        powershell_command_context=parsed.executable in POWERSHELL_EXECUTABLES,
+    ):
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason="Command executable path resolves outside configured rootDir.",
             agent_role=request.agent_role,
             agent_id=request.agent_id,
             task_id=request.task_id,
@@ -1266,6 +1285,21 @@ def _decision_from_shell_script_tokens(
     command_token_indexes = _shell_command_position_token_indexes(tokens)
     command_tokens = [tokens[index] for index in command_token_indexes]
     for token in command_tokens:
+        if _executable_path_targets_outside_root(
+            token,
+            policy_cwd,
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        ):
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason="Inner shell command executable path resolves outside configured rootDir.",
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
         blocked_command = _blocked_shell_command_name(token)
         if blocked_command is not None:
             return CommandPolicyDecision(
@@ -1690,6 +1724,17 @@ def _decision_from_start_process_payloads(
 ) -> CommandPolicyDecision | None:
     approval_decision: CommandPolicyDecision | None = None
     for payload in _start_process_payloads(command_name, tokens):
+        blocked_command = _blocked_command_from_launcher_payload(payload)
+        if blocked_command is not None:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason=f"Inner shell command {blocked_command} is blocked by the command policy.",
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
         payload_decision = _decision_from_launcher_payload(
             outer_command,
             payload,
@@ -2177,6 +2222,71 @@ def _resolve_policy_cwd(cwd: Path | None) -> Path | None:
 
 def _host_is_windows() -> bool:
     return os.name == "nt"
+
+
+def _executable_path_targets_outside_root(
+    token: str,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> bool:
+    for raw_candidate in _path_token_candidates(
+        token,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    ):
+        candidate = _shell_literal_executable_token_value(raw_candidate) or raw_candidate
+        if not _looks_like_executable_path_token(candidate):
+            continue
+        if _contains_shell_variable_path(candidate):
+            return True
+        if candidate.startswith("~"):
+            return True
+        if _looks_like_windows_drive_relative_path(candidate):
+            return True
+        if _looks_like_windows_absolute_path(candidate):
+            return _windows_path_targets_outside_root(candidate)
+
+        normalized_candidate = candidate.replace("\\", "/")
+        path = Path(normalized_candidate)
+        if not path.is_absolute():
+            path = policy_cwd / path
+        try:
+            resolved = path.resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return True
+        root_dir = get_settings().root_dir.resolve()
+        if resolved != root_dir and root_dir not in resolved.parents:
+            return True
+    return False
+
+
+def _looks_like_executable_path_token(token: str) -> bool:
+    normalized = _strip_matching_quotes(token.strip())
+    if not normalized:
+        return False
+    literal_value = _shell_literal_executable_token_value(normalized)
+    if literal_value is not None:
+        return _looks_like_executable_path_token(literal_value)
+    if normalized.startswith(("~", "/", "./", "../", ".\\", "..\\")):
+        return True
+    if "/" in normalized or "\\" in normalized:
+        return True
+    return _looks_like_windows_drive_relative_path(normalized) or _looks_like_windows_absolute_path(
+        normalized
+    )
+
+
+def _shell_literal_executable_token_value(token: str) -> str | None:
+    stripped = token.strip()
+    if not (
+        _ANSI_C_QUOTED_SEGMENT_RE.fullmatch(stripped)
+        or _LOCALIZED_QUOTED_SEGMENT_RE.fullmatch(stripped)
+    ):
+        return None
+    decoded = _decode_shell_command_token(stripped)
+    return decoded if decoded != stripped else None
 
 
 def _read_only_command_targets_outside_root(

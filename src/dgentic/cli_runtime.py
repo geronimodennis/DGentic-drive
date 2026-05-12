@@ -78,6 +78,8 @@ _INHERITED_ENV_KEYS = {
     "TMP",
     "WINDIR",
 }
+_CMD_EXECUTABLES = {"cmd", "cmd.exe"}
+_POWERSHELL_EXECUTABLES = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 
 
 class CommandApprovalStatus(StrEnum):
@@ -271,14 +273,44 @@ def resolve_command_cwd(cwd: Path | None = None) -> Path:
 
 
 def _command_args(command: str) -> str | list[str]:
-    if os.name == "nt":
-        return command
     parsed = parse_command(command)
-    if parsed.executable in {"cmd", "cmd.exe"}:
+    if os.name == "nt":
+        if parsed.executable in _CMD_EXECUTABLES:
+            return _harden_cmd_args(parsed.raw_executable, parsed.arguments)
+        if parsed.executable in _POWERSHELL_EXECUTABLES:
+            return _harden_powershell_args(parsed.raw_executable, parsed.arguments)
+        return command
+    if parsed.executable in _CMD_EXECUTABLES:
         inner_command = parse_inner_shell_command(command)
         if inner_command is not None:
             return ["sh", "-c", inner_command]
+    if parsed.executable in _POWERSHELL_EXECUTABLES:
+        return _harden_powershell_args(parsed.raw_executable, parsed.arguments)
     return shlex.split(command)
+
+
+def _harden_cmd_args(executable: str, arguments: list[str]) -> list[str]:
+    if any(argument.strip().lower() == "/d" for argument in arguments):
+        return [executable, *arguments]
+    return [executable, "/d", *arguments]
+
+
+def _harden_powershell_args(executable: str, arguments: list[str]) -> list[str]:
+    hardened = [executable]
+    normalized = {_normalize_powershell_switch(argument) for argument in arguments}
+    if not normalized & {"-noprofile", "/noprofile", "-nop", "/nop"}:
+        hardened.append("-NoProfile")
+    if "-noninteractive" not in normalized and "/noninteractive" not in normalized:
+        hardened.append("-NonInteractive")
+    hardened.extend(arguments)
+    return hardened
+
+
+def _normalize_powershell_switch(argument: str) -> str:
+    normalized = argument.strip().lower()
+    for separator in (":", "="):
+        normalized = normalized.split(separator, 1)[0]
+    return normalized
 
 
 def _popen_kwargs(cwd: Path) -> dict:

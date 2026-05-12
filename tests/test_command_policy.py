@@ -1519,6 +1519,16 @@ def test_shell_command_name_escapes_do_not_hide_blocked_commands(
             "Inner shell command remove-item is blocked",
         ),
         (
+            "powershell -NoProfile -NonInteractive -Command Remove-Item important.txt",
+            PermissionMode.blocked,
+            "Inner shell command remove-item is blocked",
+        ),
+        (
+            "pwsh -NoProfile -NonInteractive -c rm important.txt",
+            PermissionMode.blocked,
+            "Inner shell command rm is blocked",
+        ),
+        (
             "pwsh -Command:Remove-Item important.txt",
             PermissionMode.blocked,
             "Inner shell command remove-item is blocked",
@@ -1534,7 +1544,17 @@ def test_shell_command_name_escapes_do_not_hide_blocked_commands(
             "no inspectable inner command",
         ),
         (
+            "powershell -NoProfile -NonInteractive -EncodedCommand AAAA",
+            PermissionMode.approval_required,
+            "no inspectable inner command",
+        ),
+        (
             "powershell -File ./script.ps1",
+            PermissionMode.approval_required,
+            "no inspectable inner command",
+        ),
+        (
+            "powershell -NoProfile -NonInteractive -File ./script.ps1",
             PermissionMode.approval_required,
             "no inspectable inner command",
         ),

@@ -742,9 +742,66 @@ def test_safe_command_execution_is_persisted_with_root_boundary(
 )
 def test_command_args_translates_cmd_wrappers_on_posix(command: str, expected: list[str]) -> None:
     if subprocess.os.name == "nt":
-        assert _command_args(command) == command
+        args = _command_args(command)
+        assert isinstance(args, list)
+        assert args[0].lower().endswith("cmd") or args[0].lower().endswith("cmd.exe")
+        assert "/d" in [argument.lower() for argument in args[1:]]
     else:
         assert _command_args(command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (
+            "powershell -Command echo hello",
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", "echo", "hello"],
+        ),
+        (
+            "powershell -NoProfile -Command echo hello",
+            ["powershell", "-NonInteractive", "-NoProfile", "-Command", "echo", "hello"],
+        ),
+        (
+            "pwsh -NonInteractive -c 'echo hello'",
+            ["pwsh", "-NoProfile", "-NonInteractive", "-c", "echo hello"],
+        ),
+    ],
+)
+def test_command_args_suppresses_powershell_profiles_and_interactivity(
+    command: str,
+    expected: list[str],
+) -> None:
+    assert _command_args(command) == expected
+
+
+def test_power_shell_command_execution_uses_no_profile_noninteractive_args(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    captured: dict[str, object] = {}
+
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    result = service.execute_command(
+        CommandExecutionRequest(command="powershell -Command echo hello")
+    )
+
+    assert captured["args"] == [
+        "powershell",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "echo",
+        "hello",
+    ]
+    assert captured["cwd"] == root_dir.resolve()
+    assert result.exit_code == 0
 
 
 def test_command_execution_requires_approval_for_state_file_reads(runtime) -> None:
@@ -1158,6 +1215,8 @@ def test_start_command_uses_translated_cmd_wrapper_on_posix(runtime, monkeypatch
 
     if subprocess.os.name != "nt":
         assert captured["args"] == ["sh", "-c", "echo hello"]
+    else:
+        assert captured["args"] == ["cmd", "/d", "/c", "echo", "hello"]
     assert captured["cwd"] == root_dir.resolve()
     assert run.status == CommandRunStatus.running
 

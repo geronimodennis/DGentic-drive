@@ -4,6 +4,36 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009o CLI Shell Profile And AutoRun Launch Hardening
+
+Status: completed for the scoped CLI shell profile/AutoRun launch hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, nested shell startup hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected shell profile/AutoRun launch hardening as the next bounded CLI host-boundary slice after BL-009n.
+- Completed: Security/Explorer confirmed top-level `cmd` without `/d` can run Command Processor AutoRun hooks and PowerShell/pwsh can load profile scripts before the inspected payload.
+- Completed: Developer added runtime-only argv hardening so reviewed command strings, approval review text, and approval digests remain bound to the user-requested command while the launched top-level shell gets stricter startup flags.
+- Completed: QA added CLI runtime regressions for `cmd` `/d` launch arguments, PowerShell/pwsh `-NoProfile -NonInteractive` launch arguments, and command-policy regressions proving those hardening flags do not hide blocked or uninspectable payloads.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: top-level `cmd`/`cmd.exe` launches receive `/d` unless already present, suppressing Windows Command Processor AutoRun registry hooks.
+- Implemented in this slice: top-level `powershell`, `powershell.exe`, `pwsh`, and `pwsh.exe` launches receive `-NoProfile -NonInteractive` unless equivalent switches are already present, reducing profile-script and prompt/hang risk for captured unattended runs.
+- Implemented in this slice: policy/review/storage command strings are unchanged, so approval digests and audit review records remain tied to the submitted command rather than the hardened argv.
+- Still out of scope after this slice: nested shell startup hardening inside reviewed payloads, bare executable PATH trust policy, command-specific path arguments for configured-safe tools, full shell emulation, and OS-level sandboxing.
+
+Validation:
+- Focused CLI runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "command_args or start_command_uses_translated_cmd_wrapper or power_shell_command_execution"` passed with 10 tests.
+- Focused command-policy gate: `python -m pytest -q tests\test_command_policy.py -k "broader_windows_posix_shell_invocation_semantics"` passed with 17 tests.
+- Broader affected suites: `python -m pytest -q tests\test_cli_runtime.py tests\test_command_policy.py` passed with 365 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 980 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with bare executable PATH trust policy, command-specific path argument hardening for configured-safe tools, or managed hook-policy/plugin trust foundations; defer web retrieval enforcement until a concrete web retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009n CLI Approval Reviewer Capability Separation
 
 Status: completed for the scoped CLI approval reviewer capability separation slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell profile/AutoRun command-line hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.

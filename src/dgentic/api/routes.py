@@ -18,18 +18,25 @@ from dgentic.auth import (
     AuthTokenRequest,
     AuthTokenRotateRequest,
     AuthTokenView,
+    OperatorGroupRequest,
+    OperatorGroupUpdateRequest,
+    OperatorGroupView,
     OperatorRequest,
     OperatorUpdateRequest,
     OperatorView,
     create_auth_token,
     create_operator,
+    create_operator_group,
     expire_auth_token,
     get_operator,
+    get_operator_group,
     list_auth_tokens,
+    list_operator_groups,
     list_operators,
     revoke_auth_token,
     rotate_auth_token,
     update_operator,
+    update_operator_group,
 )
 from dgentic.cli_runtime import (
     CommandApproval,
@@ -266,6 +273,44 @@ def create_persisted_auth_token(
 @router.get("/auth/tokens", response_model=list[AuthTokenView])
 def get_persisted_auth_tokens() -> list[AuthTokenView]:
     return list_auth_tokens()
+
+
+@router.post("/auth/operator-groups", response_model=OperatorGroupView, status_code=201)
+def create_persisted_operator_group(
+    payload: OperatorGroupRequest,
+    request: Request,
+) -> OperatorGroupView:
+    try:
+        return create_operator_group(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/auth/operator-groups", response_model=list[OperatorGroupView])
+def get_persisted_operator_groups() -> list[OperatorGroupView]:
+    return list_operator_groups()
+
+
+@router.get("/auth/operator-groups/{group_id}", response_model=OperatorGroupView)
+def get_persisted_operator_group(group_id: str) -> OperatorGroupView:
+    try:
+        return get_operator_group(group_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/auth/operator-groups/{group_id}", response_model=OperatorGroupView)
+def update_persisted_operator_group(
+    group_id: str,
+    payload: OperatorGroupUpdateRequest,
+    request: Request,
+) -> OperatorGroupView:
+    try:
+        return update_operator_group(group_id, payload, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/auth/operators", response_model=OperatorView, status_code=201)

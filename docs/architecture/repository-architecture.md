@@ -68,7 +68,7 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
-- `auth.py`: Production/staging bearer-token authentication, route and method-aware capability mapping, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, operator assignment checks for token issuance/authentication, startup fail-closed configuration validation, CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator display/role fields plus generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
+- `auth.py`: Production/staging bearer-token authentication, route and method-aware capability mapping, persisted operator identity records with direct capability assignments, assigned operator groups, computed effective capabilities, and active/inactive status, persisted operator group records with active/inactive capability bundles, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, direct plus group-inherited capability checks for token issuance/authentication, startup fail-closed configuration validation, CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator display/role fields, operator group display/description fields, and generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
 - `api/routes.py`: HTTP routes for health checks, persisted operator/auth-token and credential-reference management, tasks, orchestration runs and detached orchestration execution polling, filesystem/command/network guardrails, CLI policy and approvals, provider approvals, providers, routing, owner-scoped orchestration agent reads, memory, tools, sessions, and logs. Authenticated principals are bound into requester/audit actors for direct execution and mutation routes when auth is enabled.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`, including service-authored orchestration shared-memory metadata protections and owner/admin read scoping when auth is enabled.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, detached orchestration execution records, explicit orchestration shared-memory tags and reuse policy, guardrails, network policy decisions, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, logs, auth/operator audit events, and credential audit events.
@@ -158,17 +158,21 @@ Authentication:
 - `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json` are public.
 - Development mode is auth-off by default.
 - Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
-- Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS` or persisted generated bearer tokens assigned to active operator profiles, using capabilities such as `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
+- Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS` or persisted generated bearer tokens assigned to active operator profiles, using effective capabilities from the operator's direct assignments plus active operator groups. Capability names include `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
 - When auth is enabled, startup fails closed if there is no valid bootstrap `token=capabilities` entry and no active persisted token.
 
 Current endpoints:
 
 - `GET /`: Service health response.
 - `GET /health`: Service health response.
-- `POST /auth/operators`: Creates a persisted operator identity with assigned capabilities.
+- `POST /auth/operator-groups`: Creates a persisted operator group with assigned capabilities.
+- `GET /auth/operator-groups`: Lists persisted operator groups.
+- `GET /auth/operator-groups/{group_id}`: Retrieves one persisted operator group.
+- `PATCH /auth/operator-groups/{group_id}`: Updates operator group display fields, assigned capabilities, or active/inactive status.
+- `POST /auth/operators`: Creates a persisted operator identity with direct capabilities and optional `group_ids`.
 - `GET /auth/operators`: Lists persisted operator identities.
 - `GET /auth/operators/{operator_id}`: Retrieves one persisted operator identity.
-- `PATCH /auth/operators/{operator_id}`: Updates operator display fields, assigned capabilities, or active/inactive status.
+- `PATCH /auth/operators/{operator_id}`: Updates operator display fields, direct capabilities, assigned `group_ids`, or active/inactive status. Operator responses include `effective_capabilities`.
 - `POST /tasks/plan`: Creates a structured starter task plan.
 - `GET /tasks/plans`: Lists persisted task plans.
 - `POST /tasks/execute`: Creates a deterministic execution run from a task plan.
@@ -288,6 +292,7 @@ Current collections:
 - `task-plans.json`
 - `task-runs.json`
 - `operators.json`
+- `operator-groups.json`
 - `auth-tokens.json`
 - `credential-references.json`
 - `orchestrations.json`

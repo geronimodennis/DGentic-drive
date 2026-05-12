@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009s Operator Group Capability Inheritance
+
+Status: completed for the scoped operator group capability inheritance slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected operator group inheritance as the next bounded identity slice after BL-009r.
+- Completed: Developer added persisted `operator-groups.json` storage, operator group create/list/get/update APIs, operator `group_ids`, and computed `effective_capabilities`.
+- Completed: Developer constrained token issuance, token rotation, usable-token startup checks, and persisted-token runtime authentication against the operator's current effective capabilities.
+- Completed: QA added focused regressions for group lifecycle persistence, operator assignment validation, inherited token issuance, existing-token runtime shrinkage after group capability reduction/deactivation, unknown group rejection, and secret-shaped group metadata redaction.
+- Completed: Reviewer/Security found no blocking authorization, route-ordering, redaction, compatibility, or stale-token issues; the only residual note was a non-blocking direct `/auth/operator-groups` non-auth-token test gap covered by shared `/auth` capability mapping.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/auth/operator-groups` create/list/get/update APIs manage persisted operator group capability bundles.
+- Implemented in this slice: operators can carry `group_ids`, and operator responses expose `effective_capabilities` from direct assignments plus active group capabilities.
+- Implemented in this slice: token create/rotate and runtime persisted-token authentication fail closed when requested or stored capabilities exceed the operator's current effective capabilities after group reduction or deactivation.
+- Implemented in this slice: unknown operator group assignment returns `409`, and group display/description metadata is redacted in API responses, JSON state, and auth audit events.
+- Still out of scope after this slice: full production identity lifecycle beyond operator groups, KMS-backed vault key rotation, first-class secret-manager adapters, web retrieval enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Validation:
+- Focused operator-group gate: `python -m pytest -q tests\test_auth.py -k "operator_group or group_capability"` passed with 4 tests and 74 deselected.
+- Auth regression gate: `python -m pytest -q tests\test_auth.py` passed with 78 tests.
+- Full regression gate after docs updates: `python -m pytest -q --maxfail=1 -x` passed with 1011 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with the next bounded security slice: managed hook-policy/plugin trust foundations if backend contracts are ready, otherwise design-first work for KMS/key rotation or first-class secret-manager adapters.
+
 ### Sprint 15 BL-009r Nested Shell Startup Hardening Checks
 
 Status: completed for the scoped nested shell startup hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.

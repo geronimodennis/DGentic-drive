@@ -167,6 +167,7 @@ class OperatorRequest(BaseModel):
     display_name: str = Field(default="", max_length=120)
     role: str = Field(default="", max_length=120)
     capabilities: list[str] = Field(min_length=1, max_length=50)
+    group_ids: list[str] = Field(default_factory=list, max_length=50)
 
     @field_validator("operator_id")
     @classmethod
@@ -181,6 +182,11 @@ class OperatorRequest(BaseModel):
             raise ValueError("capabilities must include at least one non-blank value.")
         return list(capabilities)
 
+    @field_validator("group_ids")
+    @classmethod
+    def group_ids_must_be_normalized(cls, value: list[str]) -> list[str]:
+        return list(_normalize_group_ids(value))
+
     @field_validator("display_name", "role")
     @classmethod
     def text_fields_must_be_stripped(cls, value: str) -> str:
@@ -190,6 +196,63 @@ class OperatorRequest(BaseModel):
 class OperatorUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=120)
     role: str | None = Field(default=None, max_length=120)
+    capabilities: list[str] | None = Field(default=None, max_length=50)
+    group_ids: list[str] | None = Field(default=None, max_length=50)
+    status: Literal["active", "inactive"] | None = None
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        capabilities = _normalize_capabilities(value, validate_known=True)
+        if not capabilities:
+            raise ValueError("capabilities must include at least one non-blank value.")
+        return list(capabilities)
+
+    @field_validator("group_ids")
+    @classmethod
+    def group_ids_must_be_normalized(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return list(_normalize_group_ids(value))
+
+    @field_validator("display_name", "role")
+    @classmethod
+    def text_fields_must_be_stripped(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return redact_sensitive_values(value.strip())
+
+
+class OperatorGroupRequest(BaseModel):
+    group_id: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=500)
+    capabilities: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("group_id")
+    @classmethod
+    def group_id_must_not_be_blank(cls, value: str) -> str:
+        return _normalize_group_id(value)
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
+        capabilities = _normalize_capabilities(value, validate_known=True)
+        if not capabilities:
+            raise ValueError("capabilities must include at least one non-blank value.")
+        return list(capabilities)
+
+    @field_validator("display_name", "description")
+    @classmethod
+    def text_fields_must_be_stripped(cls, value: str) -> str:
+        return redact_sensitive_values(value.strip())
+
+
+class OperatorGroupUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
     capabilities: list[str] | None = Field(default=None, max_length=50)
     status: Literal["active", "inactive"] | None = None
 
@@ -203,7 +266,7 @@ class OperatorUpdateRequest(BaseModel):
             raise ValueError("capabilities must include at least one non-blank value.")
         return list(capabilities)
 
-    @field_validator("display_name", "role")
+    @field_validator("display_name", "description")
     @classmethod
     def text_fields_must_be_stripped(cls, value: str | None) -> str | None:
         if value is None:
@@ -216,6 +279,7 @@ class OperatorRecord(BaseModel):
     display_name: str = ""
     role: str = ""
     capabilities: list[str] = Field(default_factory=list)
+    group_ids: list[str] = Field(default_factory=list)
     status: Literal["active", "inactive"] = "active"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -230,6 +294,11 @@ class OperatorRecord(BaseModel):
     @classmethod
     def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
         return list(_normalize_capabilities(value, validate_known=True))
+
+    @field_validator("group_ids")
+    @classmethod
+    def group_ids_must_be_normalized(cls, value: list[str]) -> list[str]:
+        return list(_normalize_group_ids(value))
 
     @field_validator("display_name", "role")
     @classmethod
@@ -246,6 +315,50 @@ class OperatorView(BaseModel):
     id: str
     display_name: str = ""
     role: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    group_ids: list[str] = Field(default_factory=list)
+    effective_capabilities: list[str] = Field(default_factory=list)
+    status: Literal["active", "inactive"]
+    created_at: datetime
+    updated_at: datetime
+    deactivated_at: datetime | None = None
+
+
+class OperatorGroupRecord(BaseModel):
+    id: str
+    display_name: str = ""
+    description: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    status: Literal["active", "inactive"] = "active"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    deactivated_at: datetime | None = None
+
+    @field_validator("id")
+    @classmethod
+    def id_must_not_be_blank(cls, value: str) -> str:
+        return _normalize_group_id(value)
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_normalized(cls, value: list[str]) -> list[str]:
+        return list(_normalize_capabilities(value, validate_known=True))
+
+    @field_validator("display_name", "description")
+    @classmethod
+    def text_fields_must_be_redacted(cls, value: str) -> str:
+        return _redact_auth_metadata_text(value)
+
+    @field_validator("created_at", "updated_at", "deactivated_at")
+    @classmethod
+    def datetimes_must_be_utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc_datetime(value)
+
+
+class OperatorGroupView(BaseModel):
+    id: str
+    display_name: str = ""
+    description: str = ""
     capabilities: list[str] = Field(default_factory=list)
     status: Literal["active", "inactive"]
     created_at: datetime
@@ -310,6 +423,7 @@ class AuthTokenCreateResponse(BaseModel):
 
 _auth_tokens = JsonCollection("auth-tokens", AuthTokenRecord)
 _operators = JsonCollection("operators", OperatorRecord)
+_operator_groups = JsonCollection("operator-groups", OperatorGroupRecord)
 
 
 def parse_token_map(raw_config: str) -> dict[str, frozenset[str]]:
@@ -385,11 +499,13 @@ def create_operator(
     actor: str | None = None,
 ) -> OperatorView:
     now = datetime.now(UTC)
+    _validate_operator_group_ids(request.group_ids)
     record = OperatorRecord(
         id=request.operator_id,
         display_name=request.display_name,
         role=request.role,
         capabilities=list(_normalize_capabilities(request.capabilities, validate_known=True)),
+        group_ids=list(_normalize_group_ids(request.group_ids)),
         created_at=now,
         updated_at=now,
     )
@@ -404,8 +520,39 @@ def create_operator(
     return _operator_view(saved)
 
 
+def create_operator_group(
+    request: OperatorGroupRequest,
+    *,
+    actor: str | None = None,
+) -> OperatorGroupView:
+    now = datetime.now(UTC)
+    record = OperatorGroupRecord(
+        id=request.group_id,
+        display_name=request.display_name,
+        description=request.description,
+        capabilities=list(_normalize_capabilities(request.capabilities, validate_known=True)),
+        created_at=now,
+        updated_at=now,
+    )
+
+    def create(
+        items: list[OperatorGroupRecord],
+    ) -> tuple[list[OperatorGroupRecord], OperatorGroupRecord]:
+        if any(item.id == record.id for item in items):
+            raise ValueError(f"Operator group already exists: {record.id}")
+        return [*items, record], record
+
+    saved = _operator_groups.transact(create)
+    _record_operator_group_event("Created operator group.", saved, actor=actor)
+    return _operator_group_view(saved)
+
+
 def list_operators() -> list[OperatorView]:
     return [_operator_view(record) for record in _operators.list()]
+
+
+def list_operator_groups() -> list[OperatorGroupView]:
+    return [_operator_group_view(record) for record in _operator_groups.list()]
 
 
 def get_operator(operator_id: str) -> OperatorView:
@@ -413,6 +560,13 @@ def get_operator(operator_id: str) -> OperatorView:
     if record is None:
         raise KeyError(f"Operator not found: {operator_id}")
     return _operator_view(record)
+
+
+def get_operator_group(group_id: str) -> OperatorGroupView:
+    record = _operator_groups.get(_normalize_group_id(group_id))
+    if record is None:
+        raise KeyError(f"Operator group not found: {group_id}")
+    return _operator_group_view(record)
 
 
 def update_operator(
@@ -434,6 +588,9 @@ def update_operator(
             changes["capabilities"] = list(
                 _normalize_capabilities(request.capabilities, validate_known=True)
             )
+        if request.group_ids is not None:
+            _validate_operator_group_ids(request.group_ids)
+            changes["group_ids"] = list(_normalize_group_ids(request.group_ids))
         if request.status is not None:
             changes["status"] = request.status
             changes["deactivated_at"] = now if request.status == "inactive" else None
@@ -445,6 +602,38 @@ def update_operator(
         raise KeyError(f"Operator not found: {operator_id}") from exc
     _record_operator_event("Updated operator identity.", saved, actor=actor)
     return _operator_view(saved)
+
+
+def update_operator_group(
+    group_id: str,
+    request: OperatorGroupUpdateRequest,
+    *,
+    actor: str | None = None,
+) -> OperatorGroupView:
+    now = datetime.now(UTC)
+    normalized_group_id = _normalize_group_id(group_id)
+
+    def update(record: OperatorGroupRecord) -> OperatorGroupRecord:
+        changes: dict[str, object] = {"updated_at": now}
+        if "display_name" in request.model_fields_set:
+            changes["display_name"] = request.display_name or ""
+        if "description" in request.model_fields_set:
+            changes["description"] = request.description or ""
+        if request.capabilities is not None:
+            changes["capabilities"] = list(
+                _normalize_capabilities(request.capabilities, validate_known=True)
+            )
+        if request.status is not None:
+            changes["status"] = request.status
+            changes["deactivated_at"] = now if request.status == "inactive" else None
+        return record.model_copy(update=changes)
+
+    try:
+        saved = _operator_groups.update(normalized_group_id, update)
+    except KeyError as exc:
+        raise KeyError(f"Operator group not found: {group_id}") from exc
+    _record_operator_group_event("Updated operator group.", saved, actor=actor)
+    return _operator_group_view(saved)
 
 
 def create_auth_token(
@@ -659,7 +848,7 @@ def _principal_from_persisted_token(token: str) -> Principal | None:
             return None
         capabilities = frozenset(record.capabilities)
         if operator is not None:
-            operator_capabilities = frozenset(operator.capabilities)
+            operator_capabilities = frozenset(_operator_effective_capabilities(operator))
             if not _capabilities_allowed_by_operator(operator_capabilities, capabilities):
                 capabilities = capabilities & operator_capabilities
             if not capabilities:
@@ -691,7 +880,7 @@ def _usable_persisted_tokens() -> list[AuthTokenRecord]:
             continue
         if operator is not None:
             token_capabilities = frozenset(record.capabilities)
-            operator_capabilities = frozenset(operator.capabilities)
+            operator_capabilities = frozenset(_operator_effective_capabilities(operator))
             if not _capabilities_allowed_by_operator(operator_capabilities, token_capabilities):
                 token_capabilities = token_capabilities & operator_capabilities
             if not token_capabilities:
@@ -747,6 +936,21 @@ def _operator_view(record: OperatorRecord) -> OperatorView:
         display_name=_redact_auth_metadata_text(record.display_name),
         role=_redact_auth_metadata_text(record.role),
         capabilities=list(_normalize_capabilities(record.capabilities)),
+        group_ids=list(_normalize_group_ids(record.group_ids)),
+        effective_capabilities=list(_operator_effective_capabilities(record)),
+        status=record.status,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        deactivated_at=record.deactivated_at,
+    )
+
+
+def _operator_group_view(record: OperatorGroupRecord) -> OperatorGroupView:
+    return OperatorGroupView(
+        id=record.id,
+        display_name=_redact_auth_metadata_text(record.display_name),
+        description=_redact_auth_metadata_text(record.description),
+        capabilities=list(_normalize_capabilities(record.capabilities)),
         status=record.status,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -779,11 +983,27 @@ def _validate_operator_capabilities(
     operator: OperatorRecord,
     requested_capabilities: tuple[str, ...],
 ) -> None:
-    operator_capabilities = frozenset(operator.capabilities)
+    operator_capabilities = frozenset(_operator_effective_capabilities(operator))
     requested = frozenset(requested_capabilities)
     if _capabilities_allowed_by_operator(operator_capabilities, requested):
         return
     raise ValueError("Requested token capabilities exceed operator assignment.")
+
+
+def _operator_effective_capabilities(operator: OperatorRecord) -> tuple[str, ...]:
+    capabilities = set(_normalize_capabilities(operator.capabilities, validate_known=True))
+    for group_id in _normalize_group_ids(operator.group_ids):
+        group = _operator_groups.get(group_id)
+        if group is None or group.status != "active":
+            continue
+        capabilities.update(_normalize_capabilities(group.capabilities, validate_known=True))
+    return _normalize_capabilities(list(capabilities), validate_known=True)
+
+
+def _validate_operator_group_ids(group_ids: list[str]) -> None:
+    for group_id in _normalize_group_ids(group_ids):
+        if _operator_groups.get(group_id) is None:
+            raise ValueError(f"Operator group not found: {group_id}")
 
 
 def _capabilities_allowed_by_operator(
@@ -815,6 +1035,22 @@ def _normalize_operator_id(value: str) -> str:
     if not stripped:
         raise ValueError("operator_id must not be blank.")
     return stripped
+
+
+def _normalize_group_id(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("group_id must not be blank.")
+    return stripped
+
+
+def _normalize_group_ids(values: list[str]) -> tuple[str, ...]:
+    group_ids: list[str] = []
+    for value in values:
+        group_id = _normalize_group_id(value)
+        if group_id and group_id not in group_ids:
+            group_ids.append(group_id)
+    return tuple(sorted(group_ids))
 
 
 def _redact_auth_metadata_text(value: str) -> str:
@@ -896,6 +1132,30 @@ def _record_operator_event(
             "operator_id": record.id,
             "display_name": _redact_auth_metadata_text(record.display_name),
             "role": _redact_auth_metadata_text(record.role),
+            "capabilities": list(_normalize_capabilities(record.capabilities)),
+            "group_ids": list(_normalize_group_ids(record.group_ids)),
+            "effective_capabilities": list(_operator_effective_capabilities(record)),
+            "status": record.status,
+            "deactivated_at": record.deactivated_at.isoformat() if record.deactivated_at else None,
+        },
+    )
+
+
+def _record_operator_group_event(
+    message: str,
+    record: OperatorGroupRecord,
+    *,
+    actor: str | None,
+) -> None:
+    event_log.record(
+        LogEventType.auth,
+        message,
+        actor=actor or "system",
+        subject_id=record.id,
+        metadata={
+            "group_id": record.id,
+            "display_name": _redact_auth_metadata_text(record.display_name),
+            "description": _redact_auth_metadata_text(record.description),
             "capabilities": list(_normalize_capabilities(record.capabilities)),
             "status": record.status,
             "deactivated_at": record.deactivated_at.isoformat() if record.deactivated_at else None,

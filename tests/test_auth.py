@@ -72,6 +72,7 @@ def create_operator(
     auth_token: str = "bootstrap-token",
     display_name: str = "",
     role: str = "",
+    group_ids: list[str] | None = None,
 ) -> dict:
     response = client.post(
         "/auth/operators",
@@ -80,6 +81,30 @@ def create_operator(
             "operator_id": operator_id,
             "display_name": display_name,
             "role": role,
+            "capabilities": capabilities,
+            "group_ids": group_ids or [],
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_operator_group(
+    client: TestClient,
+    group_id: str,
+    capabilities: list[str],
+    *,
+    auth_token: str = "bootstrap-token",
+    display_name: str = "",
+    description: str = "",
+) -> dict:
+    response = client.post(
+        "/auth/operator-groups",
+        headers=bearer(auth_token),
+        json={
+            "group_id": group_id,
+            "display_name": display_name,
+            "description": description,
             "capabilities": capabilities,
         },
     )
@@ -306,6 +331,65 @@ def test_operator_identity_lifecycle_is_persisted_and_safe(
     assert "bootstrap-token" not in json.dumps([event.model_dump(mode="json") for event in logs])
 
 
+def test_operator_group_lifecycle_is_persisted_and_safe(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+
+    create_response = client.post(
+        "/auth/operator-groups",
+        headers=bearer("bootstrap-token"),
+        json={
+            "group_id": " group-alpha ",
+            "display_name": " Operators Alpha ",
+            "description": " task operations ",
+            "capabilities": ["tasks", "logs", "tasks"],
+        },
+    )
+    duplicate_response = client.post(
+        "/auth/operator-groups",
+        headers=bearer("bootstrap-token"),
+        json={"group_id": "group-alpha", "capabilities": ["tasks"]},
+    )
+    list_response = client.get("/auth/operator-groups", headers=bearer("bootstrap-token"))
+    get_settings.cache_clear()
+    restarted = TestClient(create_app())
+    restart_response = restarted.get(
+        "/auth/operator-groups/group-alpha",
+        headers=bearer("bootstrap-token"),
+    )
+    update_response = restarted.patch(
+        "/auth/operator-groups/group-alpha",
+        headers=bearer("bootstrap-token"),
+        json={
+            "display_name": "Operators A",
+            "description": "log review",
+            "capabilities": ["logs"],
+            "status": "inactive",
+        },
+    )
+    state_text = (tmp_path / "state" / "operator-groups.json").read_text(encoding="utf-8")
+    logs = event_log.list(LogEventType.auth)
+
+    assert create_response.status_code == 201
+    assert create_response.json()["id"] == "group-alpha"
+    assert create_response.json()["display_name"] == "Operators Alpha"
+    assert create_response.json()["description"] == "task operations"
+    assert create_response.json()["capabilities"] == ["logs", "tasks"]
+    assert duplicate_response.status_code == 409
+    assert list_response.status_code == 200
+    assert "group-alpha" in list_response.text
+    assert restart_response.status_code == 200
+    assert update_response.status_code == 200
+    assert update_response.json()["display_name"] == "Operators A"
+    assert update_response.json()["description"] == "log review"
+    assert update_response.json()["capabilities"] == ["logs"]
+    assert update_response.json()["status"] == "inactive"
+    assert "bootstrap-token" not in state_text
+    assert "bootstrap-token" not in json.dumps([event.model_dump(mode="json") for event in logs])
+
+
 def test_auth_operator_and_token_metadata_redacts_secret_shaped_values(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -354,6 +438,59 @@ def test_auth_operator_and_token_metadata_redacts_secret_shaped_values(
     assert "operator-display-secret" not in serialized
     assert "operator-role-secret" not in serialized
     assert "token-label-secret" not in serialized
+    assert "[REDACTED]" in serialized
+
+
+def test_auth_operator_group_metadata_redacts_secret_shaped_values(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+
+    create_response = client.post(
+        "/auth/operator-groups",
+        headers=bearer("bootstrap-token"),
+        json={
+            "group_id": "group-alpha",
+            "display_name": "TOKEN=group-display-secret",
+            "description": "password=group-description-secret",
+            "capabilities": ["tasks"],
+        },
+    )
+    update_response = client.patch(
+        "/auth/operator-groups/group-alpha",
+        headers=bearer("bootstrap-token"),
+        json={
+            "display_name": "api_key=group-updated-display-secret",
+            "description": "secret=group-updated-description-secret",
+        },
+    )
+    list_response = client.get("/auth/operator-groups", headers=bearer("bootstrap-token"))
+    get_response = client.get(
+        "/auth/operator-groups/group-alpha",
+        headers=bearer("bootstrap-token"),
+    )
+    state_text = (tmp_path / "state" / "operator-groups.json").read_text(encoding="utf-8")
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.auth)]
+    )
+    serialized = "\n".join(
+        [
+            create_response.text,
+            update_response.text,
+            list_response.text,
+            get_response.text,
+            state_text,
+            logs,
+        ]
+    )
+
+    assert create_response.status_code == 201
+    assert update_response.status_code == 200
+    assert "group-display-secret" not in serialized
+    assert "group-description-secret" not in serialized
+    assert "group-updated-display-secret" not in serialized
+    assert "group-updated-description-secret" not in serialized
     assert "[REDACTED]" in serialized
 
 
@@ -542,6 +679,84 @@ def test_operator_assignment_limits_token_issuance(
     assert unknown_capability.status_code == 422
     assert excessive_token.status_code == 409
     assert allowed_token.status_code == 201
+
+
+def test_operator_group_assignment_limits_operator_mutations(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator_group(client, "group-alpha", ["logs"])
+
+    unknown_group_create = client.post(
+        "/auth/operators",
+        headers=bearer("bootstrap-token"),
+        json={
+            "operator_id": "operator-unknown-group",
+            "capabilities": ["tasks"],
+            "group_ids": ["missing-group"],
+        },
+    )
+    operator = create_operator(client, "operator-alpha", ["tasks"], group_ids=["group-alpha"])
+    unknown_group_update = client.patch(
+        "/auth/operators/operator-alpha",
+        headers=bearer("bootstrap-token"),
+        json={"group_ids": ["missing-group"]},
+    )
+    allowed_update = client.patch(
+        "/auth/operators/operator-alpha",
+        headers=bearer("bootstrap-token"),
+        json={"group_ids": ["group-alpha"]},
+    )
+
+    assert unknown_group_create.status_code == 409
+    assert operator["group_ids"] == ["group-alpha"]
+    assert operator["effective_capabilities"] == ["logs", "tasks"]
+    assert unknown_group_update.status_code == 409
+    assert allowed_update.status_code == 200
+    assert allowed_update.json()["group_ids"] == ["group-alpha"]
+    assert allowed_update.json()["effective_capabilities"] == ["logs", "tasks"]
+
+
+def test_operator_group_capabilities_are_inherited_for_token_issuance_and_runtime(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator_group(client, "group-ops", ["logs", "providers"])
+    operator = create_operator(client, "operator-alpha", ["tasks"], group_ids=["group-ops"])
+
+    issued = issue_auth_token(client, "operator-alpha", ["logs", "providers"])
+    logs_before = client.get("/logs", headers=bearer(issued["token"]))
+    reduce_response = client.patch(
+        "/auth/operator-groups/group-ops",
+        headers=bearer("bootstrap-token"),
+        json={"capabilities": ["providers"]},
+    )
+    operator_after_reduce = client.get(
+        "/auth/operators/operator-alpha",
+        headers=bearer("bootstrap-token"),
+    )
+    logs_after_reduce = client.get("/logs", headers=bearer(issued["token"]))
+    providers_after_reduce = client.get("/providers", headers=bearer(issued["token"]))
+    deactivate_response = client.patch(
+        "/auth/operator-groups/group-ops",
+        headers=bearer("bootstrap-token"),
+        json={"status": "inactive"},
+    )
+    providers_after_deactivate = client.get("/providers", headers=bearer(issued["token"]))
+
+    assert operator["group_ids"] == ["group-ops"]
+    assert operator["effective_capabilities"] == ["logs", "providers", "tasks"]
+    assert issued["record"]["capabilities"] == ["logs", "providers"]
+    assert logs_before.status_code == 200
+    assert reduce_response.status_code == 200
+    assert operator_after_reduce.status_code == 200
+    assert operator_after_reduce.json()["effective_capabilities"] == ["providers", "tasks"]
+    assert logs_after_reduce.status_code == 403
+    assert providers_after_reduce.status_code == 200
+    assert deactivate_response.status_code == 200
+    assert providers_after_deactivate.status_code == 401
 
 
 def test_operator_deactivation_invalidates_linked_persisted_tokens(

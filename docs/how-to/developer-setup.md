@@ -49,7 +49,7 @@ Default settings:
 
 Local development is usable without authentication by default. In `staging` and `production`, DGentic enables bearer-token capability checks unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 
-When authentication is enabled, DGentic requires either at least one valid bootstrap `token=capabilities` entry in `DGENTIC_AUTH_TOKENS` or at least one active persisted generated token in `auth-tokens.json`. Startup fails closed if auth is enabled without a usable environment token or active persisted token. New persisted tokens are issued for active operator identities stored in `operators.json`, and requested token capabilities cannot exceed the operator's assigned capabilities. Operator display/role metadata, auth-token labels, and credential-reference labels are redacted for common secret-shaped values before API responses, audit metadata, and new or mutated JSON persistence.
+When authentication is enabled, DGentic requires either at least one valid bootstrap `token=capabilities` entry in `DGENTIC_AUTH_TOKENS` or at least one active persisted generated token in `auth-tokens.json`. Startup fails closed if auth is enabled without a usable environment token or active persisted token. New persisted tokens are issued for active operator identities stored in `operators.json`; operators can also reference persisted operator groups in `operator-groups.json`, and requested token capabilities cannot exceed the operator's current direct plus active group-inherited effective capabilities. Operator display/role metadata, operator group display/description metadata, auth-token labels, and credential-reference labels are redacted for common secret-shaped values before API responses, audit metadata, and new or mutated JSON persistence.
 
 Token configuration uses semicolon-separated token entries and comma-separated capabilities:
 
@@ -69,32 +69,39 @@ Invoke-RestMethod `
   -Body '{"objective":"Create a guarded plan for indexing project memory."}'
 ```
 
-Persisted generated tokens can be issued and rotated with a bootstrap admin token or another principal that has auth-token management access. Create an operator profile first, then issue a token within that operator's assigned capabilities. The raw token is returned only from create or rotate responses; stored records keep salted PBKDF2 hashes and expose safe metadata when listed:
+Persisted generated tokens can be issued and rotated with a bootstrap admin token or another principal that has auth-token management access. Create optional operator groups, create an operator profile, then issue a token within that operator's effective capabilities. The raw token is returned only from create or rotate responses; stored records keep salted PBKDF2 hashes and expose safe metadata when listed:
 
 ```powershell
+$group = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/auth/operator-groups `
+  -Headers @{ Authorization = "Bearer admin-token" } `
+  -ContentType "application/json" `
+  -Body '{"group_id":"group-ops","display_name":"Operations","capabilities":["logs"]}'
+
 $operator = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/auth/operators `
   -Headers @{ Authorization = "Bearer admin-token" } `
   -ContentType "application/json" `
-  -Body '{"operator_id":"operator-alpha","display_name":"Operator Alpha","role":"automation","capabilities":["tasks","logs"]}'
+  -Body '{"operator_id":"operator-alpha","display_name":"Operator Alpha","role":"automation","capabilities":["tasks"],"group_ids":["group-ops"]}'
 
 $created = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/auth/tokens `
   -Headers @{ Authorization = "Bearer admin-token" } `
   -ContentType "application/json" `
-  -Body '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks"]}'
+  -Body '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks","logs"]}'
 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8000/auth/tokens/$($created.record.id)/rotate" `
   -Headers @{ Authorization = "Bearer admin-token" } `
   -ContentType "application/json" `
-  -Body '{"label":"rotated task automation","capabilities":["tasks"]}'
+  -Body '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
 Deactivate an operator to fail closed for linked persisted tokens:
 
@@ -675,7 +682,7 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with capability assignments, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, vault key rotation or managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential labels, but richer production identity workflows beyond operator groups, vault key rotation or managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
 - Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, explicit executable path boundary checks, configured-safe command path-argument checks, nested shell startup-hardening checks, bare executable workspace/PATH trust checks, single-use bound approval IDs, reviewer operations behind the separate `approvals` capability, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, failed launch run records for claimed synchronous approvals, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides with startup/preload injection blocking, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, local encrypted vault reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but vault key rotation, durable multi-worker circuit state, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters are not implemented yet.

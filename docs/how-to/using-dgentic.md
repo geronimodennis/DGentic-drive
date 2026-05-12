@@ -51,7 +51,7 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
-In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles and issue generated tokens through the auth APIs. Operator records live in `operators.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's assigned capabilities. Operator display/role metadata, generated-token labels, and credential-reference labels are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. CLI approval creation and approved-command execution require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles, operator groups, and generated tokens through the auth APIs. Operator records live in `operators.json`, operator group records live in `operator-groups.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's current effective capabilities from direct assignments plus active group-inherited capabilities. Operator display/role metadata, operator group display/description metadata, generated-token labels, and credential-reference labels are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. CLI approval creation and approved-command execution require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
 
 Example protected request in production mode:
 
@@ -62,23 +62,28 @@ curl -X POST http://127.0.0.1:8000/tasks/plan `
   -d '{"objective":"Create a guarded task plan for indexing project memory."}'
 ```
 
-Create an operator, issue a persisted token, and rotate that token with a bootstrap admin token:
+Create an operator group, assign it to an operator, issue a persisted token inside the operator's effective capabilities, and rotate that token with a bootstrap admin token:
 
 ```powershell
+$group = curl -X POST http://127.0.0.1:8000/auth/operator-groups `
+  -H "Authorization: Bearer admin-token" `
+  -H "Content-Type: application/json" `
+  -d '{"group_id":"group-ops","display_name":"Operations","capabilities":["logs"]}'
+
 $operator = curl -X POST http://127.0.0.1:8000/auth/operators `
   -H "Authorization: Bearer admin-token" `
   -H "Content-Type: application/json" `
-  -d '{"operator_id":"operator-alpha","display_name":"Operator Alpha","role":"automation","capabilities":["tasks"]}'
+  -d '{"operator_id":"operator-alpha","display_name":"Operator Alpha","role":"automation","capabilities":["tasks"],"group_ids":["group-ops"]}'
 
 $created = curl -X POST http://127.0.0.1:8000/auth/tokens `
   -H "Authorization: Bearer admin-token" `
   -H "Content-Type: application/json" `
-  -d '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks"]}'
+  -d '{"operator_id":"operator-alpha","label":"task automation","capabilities":["tasks","logs"]}'
 
 curl -X POST "http://127.0.0.1:8000/auth/tokens/$($created.record.id)/rotate" `
   -H "Authorization: Bearer admin-token" `
   -H "Content-Type: application/json" `
-  -d '{"label":"rotated task automation","capabilities":["tasks"]}'
+  -d '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
 SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db` by default. Set `DGENTIC_DATABASE_URL` to point those services at another SQLAlchemy database URL. Ordered schema migrations are tracked in `schema_migrations`, and file-backed SQLite state can be backed up or restored with the local `backup_sqlite_database` and `restore_sqlite_database` helpers.
@@ -533,7 +538,7 @@ Configure local model providers first:
 Configure strict operating boundaries before running autonomous tasks:
 
 - Workspace `rootDir`
-- Bearer-token authentication, route capabilities, persisted operator profiles, persisted generated token lifecycle APIs, and startup token validation for production/staging APIs
+- Bearer-token authentication, route capabilities, persisted operator profiles, persisted operator groups with capability inheritance, persisted generated token lifecycle APIs, and startup token validation for production/staging APIs
 - Filesystem text, binary, directory, metadata, delete, move, copy, and rename permissions
 - CLI execution mode
 - Configurable CLI allow, approval, and block rules with executable, argument-aware, and agent-role scoped matching
@@ -585,7 +590,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with capability assignment, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault, and shell-free external-process sources, provider-call network/domain guardrails, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/token/credential labels, but richer user/group identity workflows, vault key rotation or managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault, and shell-free external-process sources, provider-call network/domain guardrails, generated-tool Python socket network policy guardrails, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential labels, but richer production identity workflows beyond operator groups, vault key rotation or managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential reference or env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while vault key rotation, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters remain future work.

@@ -339,6 +339,25 @@ def capability_for_path(path: str) -> str | None:
     return CAPABILITY_ADMIN
 
 
+def capability_for_request(method: str, path: str) -> str | None:
+    if path in PUBLIC_PATHS:
+        return None
+
+    parts = path.strip("/").split("/")
+    normalized_method = method.strip().upper()
+    if len(parts) >= 2 and parts[0] == "cli" and parts[1] == "approvals":
+        action = parts[3] if len(parts) >= 4 else ""
+        if action in {"approve", "deny", "review"}:
+            return CAPABILITY_APPROVALS
+        if action == "execute":
+            return CAPABILITY_CLI
+        if len(parts) == 2 and normalized_method == "GET":
+            return CAPABILITY_APPROVALS
+        return CAPABILITY_CLI
+
+    return capability_for_path(path)
+
+
 def has_capability(principal: Principal, capability: str) -> bool:
     return bool(principal.capabilities & frozenset({capability, CAPABILITY_ADMIN, CAPABILITY_ALL}))
 
@@ -590,7 +609,7 @@ async def require_route_capability(request: Request) -> Principal | None:
     if not settings.effective_auth_enabled:
         return None
 
-    required_capability = capability_for_path(request.url.path)
+    required_capability = capability_for_request(request.method, request.url.path)
     if required_capability is None:
         return None
 

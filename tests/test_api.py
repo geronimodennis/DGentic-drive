@@ -3367,37 +3367,68 @@ def test_cli_approval_api_persists_and_executes_approved_command(tmp_path, monke
     get_settings.cache_clear()
 
 
-def test_cli_approval_api_uses_authenticated_principal_as_reviewer(
+def test_cli_approval_api_splits_requester_and_reviewer_capabilities(
     tmp_path,
     monkeypatch,
 ) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
-    token = "cli-review-token"
+    cli_token = "cli-request-token"
+    approval_token = "cli-approval-review-token"
     monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
-    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{token}=cli")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        f"{cli_token}=cli;{approval_token}=approvals",
+    )
     get_settings.cache_clear()
     client = TestClient(create_app())
-    headers = {"Authorization": f"Bearer {token}"}
+    cli_headers = {"Authorization": f"Bearer {cli_token}"}
+    approval_headers = {"Authorization": f"Bearer {approval_token}"}
 
+    approval_create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+        headers=approval_headers,
+    )
     create_response = client.post(
         "/cli/approvals?requested_by=tester",
         json={"command": "python --version", "timeout_seconds": 10},
-        headers=headers,
+        headers=cli_headers,
     )
     approval_id = create_response.json()["id"]
-    approve_response = client.post(
+    cli_list_response = client.get("/cli/approvals", headers=cli_headers)
+    approval_list_response = client.get("/cli/approvals", headers=approval_headers)
+    approval_review_response = client.get(
+        f"/cli/approvals/{approval_id}/review",
+        headers=approval_headers,
+    )
+    cli_approve_response = client.post(
         f"/cli/approvals/{approval_id}/approve",
         json={"decided_by": "spoofed-reviewer"},
-        headers=headers,
+        headers=cli_headers,
+    )
+    approval_approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "spoofed-reviewer"},
+        headers=approval_headers,
     )
 
+    assert approval_create_response.status_code == 403
     assert create_response.status_code == 201
-    assert create_response.json()["requested_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
-    assert approve_response.status_code == 200
-    assert approve_response.json()["decided_by"] == sha256(token.encode("utf-8")).hexdigest()[:12]
+    assert (
+        create_response.json()["requested_by"] == sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    )
+    assert cli_list_response.status_code == 403
+    assert approval_list_response.status_code == 200
+    assert approval_review_response.status_code == 200
+    assert cli_approve_response.status_code == 403
+    assert approval_approve_response.status_code == 200
+    assert (
+        approval_approve_response.json()["decided_by"]
+        == (sha256(approval_token.encode("utf-8")).hexdigest()[:12])
+    )
     get_settings.cache_clear()
 
 
@@ -3408,6 +3439,7 @@ def test_cli_approval_direct_execute_requires_bound_authenticated_requester(
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()
     requester_token = "cli-requester-token"
+    approver_token = "cli-approval-token"
     executor_token = "cli-executor-token"
     requester_actor = sha256(requester_token.encode("utf-8")).hexdigest()[:12]
     executor_actor = sha256(executor_token.encode("utf-8")).hexdigest()[:12]
@@ -3416,11 +3448,12 @@ def test_cli_approval_direct_execute_requires_bound_authenticated_requester(
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv(
         "DGENTIC_AUTH_TOKENS",
-        f"{requester_token}=cli,logs;{executor_token}=cli,logs",
+        f"{requester_token}=cli,logs;{approver_token}=approvals;{executor_token}=cli,logs",
     )
     get_settings.cache_clear()
     client = TestClient(create_app())
     requester_headers = {"Authorization": f"Bearer {requester_token}"}
+    approver_headers = {"Authorization": f"Bearer {approver_token}"}
     executor_headers = {"Authorization": f"Bearer {executor_token}"}
 
     create_response = client.post(
@@ -3432,7 +3465,7 @@ def test_cli_approval_direct_execute_requires_bound_authenticated_requester(
     approve_response = client.post(
         f"/cli/approvals/{approval_id}/approve",
         json={"decided_by": "reviewer"},
-        headers=requester_headers,
+        headers=approver_headers,
     )
     cross_execute_response = client.post(
         f"/cli/approvals/{approval_id}/execute",

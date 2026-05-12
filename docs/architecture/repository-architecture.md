@@ -68,7 +68,7 @@ Python backend package for the DGentic orchestrator API.
 Current modules:
 
 - `main.py`: FastAPI app factory and application instance.
-- `auth.py`: Production/staging bearer-token authentication, route capability mapping, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, operator assignment checks for token issuance/authentication, startup fail-closed configuration validation, and secret-shaped metadata redaction for operator display/role fields plus generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
+- `auth.py`: Production/staging bearer-token authentication, route and method-aware capability mapping, persisted operator identity records with capability assignments and active/inactive status, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, operator assignment checks for token issuance/authentication, startup fail-closed configuration validation, CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator display/role fields plus generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
 - `api/routes.py`: HTTP routes for health checks, persisted operator/auth-token and credential-reference management, tasks, orchestration runs and detached orchestration execution polling, filesystem/command/network guardrails, CLI policy and approvals, provider approvals, providers, routing, owner-scoped orchestration agent reads, memory, tools, sessions, and logs. Authenticated principals are bound into requester/audit actors for direct execution and mutation routes when auth is enabled.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`, including service-authored orchestration shared-memory metadata protections and owner/admin read scoping when auth is enabled.
 - `schemas.py`: Pydantic contracts for tasks, execution runs, orchestration runs, detached orchestration execution records, explicit orchestration shared-memory tags and reuse policy, guardrails, network policy decisions, CLI policy rules, command context, controlled command environments, providers, routing, agents, memory, tools, sessions, logs, auth/operator audit events, and credential audit events.
@@ -207,12 +207,12 @@ Current endpoints:
 - `GET /cli/runs/{run_id}`: Polls a persisted command run by id.
 - `GET /cli/runs/{run_id}/output`: Polls redacted stdout/stderr output chunks by sequence number.
 - `POST /cli/runs/{run_id}/cancel`: Requests cancellation for a running command in the current backend process.
-- `POST /cli/approvals`: Creates a pending approval for approval-required commands. Approval records include command digest, cwd, timeout, requester, agent/task context, environment keys without values, matched policy metadata, and expiry.
-- `GET /cli/approvals`: Lists CLI approval records.
-- `GET /cli/approvals/{approval_id}/review`: Returns the safe approval review contract for UI consumers, including redacted review command, cwd, timeout, permission mode, policy reason, requester, agent/task context, environment keys without values, matched rule metadata, command/environment HMAC digests, bound-execution warnings, direct-execute availability, decision reasons, run id, and lifecycle timestamps.
-- `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command with an optional redacted decision reason.
-- `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command with an optional redacted decision reason.
-- `POST /cli/approvals/{approval_id}/execute`: Executes an approved CLI command once when no environment override is required.
+- `POST /cli/approvals`: Creates a pending approval for approval-required commands. Approval records include command digest, cwd, timeout, requester, agent/task context, environment keys without values, matched policy metadata, and expiry. When auth is enabled, this route requires the `cli` capability.
+- `GET /cli/approvals`: Lists CLI approval records. When auth is enabled, this route requires the `approvals` capability.
+- `GET /cli/approvals/{approval_id}/review`: Returns the safe approval review contract for UI consumers, including redacted review command, cwd, timeout, permission mode, policy reason, requester, agent/task context, environment keys without values, matched rule metadata, command/environment HMAC digests, bound-execution warnings, direct-execute availability, decision reasons, run id, and lifecycle timestamps. When auth is enabled, this route requires the `approvals` capability.
+- `POST /cli/approvals/{approval_id}/approve`: Approves a pending CLI command with an optional redacted decision reason. When auth is enabled, this route requires the `approvals` capability.
+- `POST /cli/approvals/{approval_id}/deny`: Denies a pending CLI command with an optional redacted decision reason. When auth is enabled, this route requires the `approvals` capability.
+- `POST /cli/approvals/{approval_id}/execute`: Executes an approved CLI command once when no environment override is required. When auth is enabled, this route requires the `cli` capability.
 - `GET /cli/runs`: Lists persisted CLI command run history.
 - `GET /providers`: Lists configured providers with safe display base URLs and discovered local model names when reachable.
 - `GET /providers/{provider_id}/health`: Returns provider configuration health after endpoint policy validation.
@@ -330,6 +330,7 @@ Current approval-review contract:
 - `GET /cli/approvals/{approval_id}/review` exposes the UI-facing safe review contract with redacted `review_command`, environment key names only, command/environment HMAC digest identifiers, warnings for redacted-command or environment-bound execution, and `direct_execute_available` only when an approved, unexpired approval can be directly executed without a bound request.
 - Environment values are not persisted in approval records; only environment variable names are stored for review and binding.
 - Approve and deny decision reasons plus approval audit/log metadata are redacted for common secret assignments, secret-like flags, shell substitutions, and structured sensitive metadata keys before persistence or response.
+- When auth is enabled, CLI approval list/review/approve/deny routes require `approvals`, while approval creation and approved-command execution remain under `cli`.
 - Direct execution with a bound approval id validates command, cwd, timeout, requester, agent/task context, environment keys, permission mode, matched policy metadata, and digest before execution.
 - The backend approval review contract is implemented; the interactive approval UI itself remains BL-010/Sprint 16 work.
 

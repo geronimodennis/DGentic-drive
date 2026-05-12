@@ -51,7 +51,7 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
-In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles and issue generated tokens through the auth APIs. Operator records live in `operators.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's assigned capabilities. Operator display/role metadata, generated-token labels, and credential-reference labels are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles and issue generated tokens through the auth APIs. Operator records live in `operators.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's assigned capabilities. Operator display/role metadata, generated-token labels, and credential-reference labels are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. CLI approval creation and approved-command execution require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
 
 Example protected request in production mode:
 
@@ -282,7 +282,7 @@ curl "http://127.0.0.1:8000/cli/runs/[run_id]/output?after_sequence=0"
 curl -X POST http://127.0.0.1:8000/cli/runs/[run_id]/cancel
 ```
 
-Queue, approve, and execute an approval-required CLI command:
+Queue, approve, and execute an approval-required CLI command. When auth is enabled, the queue and execute calls use a token with `cli`, while list/review/approve/deny calls use a token with `approvals`:
 
 ```powershell
 curl -X POST "http://127.0.0.1:8000/cli/approvals?requested_by=operator" `
@@ -304,7 +304,7 @@ curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/approve `
 curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/execute
 ```
 
-The review response is safe for UI consumers: it returns redacted command text, policy context, environment key names without values, command/environment HMAC digest identifiers, warnings for environment-bound, redacted-command, or legacy-digest approvals, and whether direct execution is available. Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
+The review response is safe for UI consumers: it returns redacted command text, policy context, environment key names without values, command/environment HMAC digest identifiers, warnings for environment-bound, redacted-command, or legacy-digest approvals, and whether direct execution is available. `GET /cli/approvals` lists approval records for approval reviewers. Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/execute `

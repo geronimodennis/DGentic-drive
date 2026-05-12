@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009n CLI Approval Reviewer Capability Separation
+
+Status: completed for the scoped CLI approval reviewer capability separation slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell profile/AutoRun command-line hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected CLI approval reviewer capability separation as a bounded Sprint 15 authorization hardening slice.
+- Completed: Architect/Security confirmed CLI approval creation and approved-command execution should stay under `cli`, while list/review/approve/deny operations should require `approvals`, matching provider/tool approval boundaries.
+- Completed: Developer added method-aware route capability resolution for `/cli/approvals` without changing CLI approval record shapes or API route handlers.
+- Completed: QA added auth mapping and API regressions proving `cli` tokens can create/execute CLI approval work but cannot list/review/approve, while `approvals` tokens can list/review/approve but cannot create CLI approval work.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `require_route_capability` now uses method-aware capability mapping so `POST /cli/approvals` and `POST /cli/approvals/{approval_id}/execute` require `cli`, while `GET /cli/approvals`, `GET /cli/approvals/{approval_id}/review`, `POST /cli/approvals/{approval_id}/approve`, and `POST /cli/approvals/{approval_id}/deny` require `approvals`.
+- Implemented in this slice: authenticated reviewer identity binding remains principal-derived; spoofed `decided_by` fields continue to be replaced by the authenticated approval principal.
+- Still out of scope after this slice: interactive approval UI, shell profile/AutoRun command-line hardening, bare executable PATH trust policy, command-specific path arguments for configured-safe tools, and richer user/group identity workflows.
+
+Validation:
+- Focused auth capability gate: `python -m pytest -q tests\test_auth.py -k "capability_for_request or capability_for_path"` passed with 27 tests.
+- Focused API gate: `python -m pytest -q tests\test_api.py -k "cli_approval_api_splits_requester_and_reviewer_capabilities or cli_approval_direct_execute_requires_bound_authenticated_requester"` passed with 2 tests.
+- Broader affected suites: `python -m pytest -q tests\test_auth.py tests\test_api.py` passed with 243 tests after formatting.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 972 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with shell profile/AutoRun command-line hardening, bare executable PATH trust policy, or managed hook-policy/plugin trust foundations; defer web retrieval enforcement until a concrete web retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009m CLI Startup And Preload Environment Override Hardening
 
 Status: completed for the scoped CLI startup/preload environment override hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, shell profile/AutoRun command-line hardening, bare executable PATH trust policy, and command-specific path argument hardening for configured-safe tools.

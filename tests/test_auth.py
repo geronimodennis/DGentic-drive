@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from dgentic.auth import (
     AuthConfigurationError,
     capability_for_path,
+    capability_for_request,
     parse_token_map,
     validate_auth_configuration,
 )
@@ -1358,6 +1359,26 @@ def test_capability_for_path_maps_public_and_sensitive_routes(
     capability: str | None,
 ) -> None:
     assert capability_for_path(path) == capability
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "capability"),
+    [
+        ("POST", "/cli/approvals", "cli"),
+        ("GET", "/cli/approvals", "approvals"),
+        ("GET", "/cli/approvals/approval-1/review", "approvals"),
+        ("POST", "/cli/approvals/approval-1/approve", "approvals"),
+        ("POST", "/cli/approvals/approval-1/deny", "approvals"),
+        ("POST", "/cli/approvals/approval-1/execute", "cli"),
+        ("GET", "/cli/runs", "cli"),
+    ],
+)
+def test_capability_for_request_splits_cli_approval_review_from_execution(
+    method: str,
+    path: str,
+    capability: str | None,
+) -> None:
+    assert capability_for_request(method, path) == capability
 
 
 @pytest.mark.parametrize(

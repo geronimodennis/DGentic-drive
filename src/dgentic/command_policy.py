@@ -703,6 +703,21 @@ def _decision_for_inner_shell_command(
     )
     if script_scan_decision.permission_mode == PermissionMode.blocked:
         return script_scan_decision
+    startup_hardening_violation = _nested_shell_startup_hardening_violation(
+        inner_command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    if startup_hardening_violation is not None:
+        return CommandPolicyDecision(
+            command=outer_command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason=startup_hardening_violation,
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
     if not segments:
         return CommandPolicyDecision(
             command=outer_command,
@@ -1499,6 +1514,90 @@ def _shell_command_executable_tokens(
     return executable_tokens
 
 
+def _nested_shell_startup_hardening_violation(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+    depth: int = 0,
+) -> str | None:
+    if depth > 4:
+        return "Nested shell invocation is too deeply nested to validate startup hardening."
+
+    segments, _has_control_operator = _split_shell_command_segments(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    substitutions = _extract_shell_substitutions(
+        command,
+        powershell_command_context=powershell_command_context,
+    )
+    for segment in [*segments, *substitutions]:
+        tokens = _shell_script_tokens(
+            _strip_leading_shell_assignments(segment),
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        )
+        for command_index in _shell_command_position_token_indexes(tokens):
+            executable = _normalize_shell_executable(tokens[command_index])
+            if executable not in SHELL_COMMAND_FLAGS:
+                continue
+
+            nested_command = " ".join(tokens[command_index:]).strip()
+            parsed_nested = parse_command(nested_command)
+            if executable in CMD_EXECUTABLES:
+                if not _cmd_arguments_disable_autorun(parsed_nested.arguments):
+                    return "Nested cmd invocation is missing /d startup hardening."
+                inner_command = _parse_inner_shell_command(parsed_nested)
+                if inner_command is None:
+                    continue
+                nested_violation = _nested_shell_startup_hardening_violation(
+                    inner_command,
+                    windows_command_context=True,
+                    depth=depth + 1,
+                )
+                if nested_violation is not None:
+                    return nested_violation
+                continue
+
+            if executable in POWERSHELL_EXECUTABLES:
+                inner_command = _parse_inner_shell_command(parsed_nested)
+                if inner_command is None:
+                    continue
+                if not _powershell_arguments_disable_profiles(parsed_nested.arguments):
+                    return (
+                        "Nested PowerShell invocation is missing "
+                        "-NoProfile/-NonInteractive startup hardening."
+                    )
+                nested_violation = _nested_shell_startup_hardening_violation(
+                    inner_command,
+                    powershell_command_context=True,
+                    depth=depth + 1,
+                )
+                if nested_violation is not None:
+                    return nested_violation
+    return None
+
+
+def _cmd_arguments_disable_autorun(arguments: list[str]) -> bool:
+    return any(argument.strip().lower() == "/d" for argument in arguments)
+
+
+def _powershell_arguments_disable_profiles(arguments: list[str]) -> bool:
+    normalized = {_normalize_powershell_switch(argument) for argument in arguments}
+    has_no_profile = bool(normalized & {"-noprofile", "/noprofile", "-nop", "/nop"})
+    has_non_interactive = "-noninteractive" in normalized or "/noninteractive" in normalized
+    return has_no_profile and has_non_interactive
+
+
+def _normalize_powershell_switch(argument: str) -> str:
+    normalized = argument.strip().lower()
+    for separator in (":", "="):
+        normalized = normalized.split(separator, 1)[0]
+    return normalized
+
+
 def _shell_script_tokens(
     command: str,
     *,
@@ -1852,6 +1951,18 @@ def _decision_from_launcher_payload(
         request,
         policy_cwd,
     )
+    if payload_decision.permission_mode != PermissionMode.blocked:
+        startup_hardening_violation = _nested_shell_startup_hardening_violation(payload_command)
+        if startup_hardening_violation is not None:
+            return CommandPolicyDecision(
+                command=outer_command,
+                risk=CommandRisk.blocked,
+                permission_mode=PermissionMode.blocked,
+                reason=f"Launcher payload is blocked: {startup_hardening_violation}",
+                agent_role=request.agent_role,
+                agent_id=request.agent_id,
+                task_id=request.task_id,
+            )
     if payload_decision.permission_mode == PermissionMode.autopilot_safe:
         return None
     reason_prefix = (

@@ -1145,6 +1145,77 @@ def test_configured_safe_rules_do_not_preempt_shell_wrapper_inspection(policy_st
     assert "Inner shell command rm is blocked" in decision.reason
 
 
+@pytest.mark.parametrize(
+    ("command", "reason_fragment"),
+    [
+        (
+            "cmd /c powershell -Command echo hello",
+            "Nested PowerShell invocation is missing -NoProfile/-NonInteractive",
+        ),
+        (
+            "cmd /c cmd /c echo hello",
+            "Nested cmd invocation is missing /d startup hardening",
+        ),
+        (
+            "powershell -Command powershell -Command echo hello",
+            "Nested PowerShell invocation is missing -NoProfile/-NonInteractive",
+        ),
+    ],
+)
+def test_configured_safe_rules_do_not_downgrade_nested_shell_startup_hardening(
+    policy_state,
+    command: str,
+    reason_fragment: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow echo hello text",
+            match_type=CommandPolicyMatchType.contains,
+            pattern="echo hello",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Echo hello is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert decision.matched_rule_id is None
+    assert reason_fragment in decision.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cmd /c powershell -NoProfile -NonInteractive -Command echo hello",
+        "cmd /c cmd /d /c echo hello",
+        "powershell -Command powershell -NoProfile -NonInteractive -Command echo hello",
+    ],
+)
+def test_configured_safe_rules_allow_hardened_nested_shell_startup(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow echo hello text",
+            match_type=CommandPolicyMatchType.contains,
+            pattern="echo hello",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Echo hello is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.matched_rule_id == rule.id
+
+
 def test_configured_approval_rules_do_not_preempt_shell_wrapper_blocking(
     policy_state,
 ) -> None:

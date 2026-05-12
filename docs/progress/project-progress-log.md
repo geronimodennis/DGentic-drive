@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009r Nested Shell Startup Hardening Checks
+
+Status: completed for the scoped nested shell startup hardening slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected nested shell startup hardening as the next bounded CLI host-boundary slice after BL-009q.
+- Completed: Developer added non-downgradable command-policy checks for nested `cmd` invocations that omit `/d` and nested PowerShell/pwsh invocations that omit `-NoProfile -NonInteractive`.
+- Completed: Developer preserved existing blocked-command reasons so dangerous nested payloads still report the underlying blocked command before startup-hardening reasons.
+- Completed: QA added configured-safe downgrade regressions for unsafe nested shell startup and compatibility regressions for explicitly hardened nested startup.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: configured safe rules cannot downgrade nested `cmd` payloads that omit `/d`.
+- Implemented in this slice: configured safe rules cannot downgrade nested PowerShell/pwsh payloads that omit `-NoProfile -NonInteractive`.
+- Implemented in this slice: nested shell payloads that explicitly include the hardening flags can still be allowed by configured safe rules when the rest of the payload is otherwise policy-safe.
+- Still out of scope after this slice: full shell emulation, OS-level sandboxing, richer user/group identity workflows, KMS-backed key rotation, first-class secret-manager adapters, web retrieval enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Validation:
+- Focused nested-shell gate: `python -m pytest -q tests\test_command_policy.py -k "nested_shell_startup_hardening or hardened_nested_shell_startup or broader_windows_posix_shell_invocation_semantics or shell_command_prefixes"` passed with 51 tests.
+- Command-policy regression gate: `python -m pytest -q tests\test_command_policy.py` passed with 305 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1007 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with the next bounded security slice: managed hook-policy/plugin trust foundations if the backend shape is ready, otherwise design-first work for KMS/key rotation or first-class secret-manager adapters.
+
 ### Sprint 15 BL-009q Command Path Argument And CLI Launch Failure Hardening
 
 Status: completed for the scoped command-specific path argument hardening slice and the BL-009p review follow-up; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and nested shell startup hardening.

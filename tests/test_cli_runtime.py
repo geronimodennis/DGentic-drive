@@ -821,6 +821,67 @@ def test_bare_command_resolving_from_workspace_cwd_is_blocked_before_subprocess(
         service.execute_command(CommandExecutionRequest(command="python --version", approved=True))
 
 
+def test_cmd_wrapped_bare_command_from_workspace_cwd_is_blocked_before_subprocess(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    (root_dir / "tool.exe").write_text("@echo hijack\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for cmd-wrapped workspace executables.")
+
+    monkeypatch.setattr("dgentic.cli_runtime.os.name", "nt")
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="Bare executable resolves inside"):
+        service.execute_command(CommandExecutionRequest(command="cmd /c tool"))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cmd /c "echo ok & tool"',
+        "cmd /c call tool",
+        "cmd /c start /b tool",
+    ],
+)
+def test_cmd_wrapped_compound_and_prefix_bare_workspace_commands_block_before_subprocess(
+    runtime,
+    monkeypatch,
+    command: str,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    (root_dir / "tool.exe").write_text("@echo hijack\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for cmd inner workspace executables.")
+
+    monkeypatch.setattr("dgentic.cli_runtime.os.name", "nt")
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="Bare executable resolves inside"):
+        service.execute_command(CommandExecutionRequest(command=command))
+
+
+def test_bare_command_blocks_workspace_exe_when_pathext_omits_exe(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, root_dir, _data_dir = runtime
+    (root_dir / "tool.exe").write_text("@echo hijack\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        pytest.fail("Subprocess should not start for workspace .exe despite PATHEXT.")
+
+    monkeypatch.setenv("PATHEXT", f".BAT{subprocess.os.pathsep}.CMD")
+    monkeypatch.setattr("dgentic.cli_runtime.os.name", "nt")
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="Bare executable resolves inside"):
+        service.execute_command(CommandExecutionRequest(command="tool --version", approved=True))
+
+
 def test_bare_command_workspace_path_entry_is_blocked_before_subprocess(
     runtime,
     monkeypatch,
@@ -1200,6 +1261,47 @@ def test_bound_approval_id_is_claimed_before_subprocess_starts(
     assert result.exit_code == 0
     assert executed.status == CommandApprovalStatus.executed
     assert executed.run_id is not None
+
+
+def test_execute_approved_command_launch_failure_records_failed_run(
+    runtime,
+    monkeypatch,
+) -> None:
+    service, _root_dir, _data_dir = runtime
+    approval = service.create_approval(
+        CommandExecutionRequest(command="python --version", timeout_seconds=5),
+        requested_by="operator",
+    )
+    service.approve_approval(approval.id, decided_by="reviewer")
+
+    def fake_run(*args, **kwargs):
+        claimed = service.list_approvals()[0]
+        assert claimed.status == CommandApprovalStatus.executed
+        assert claimed.run_id is None
+        raise FileNotFoundError("missing executable")
+
+    monkeypatch.setattr("dgentic.cli_runtime.subprocess.run", fake_run)
+
+    with pytest.raises(FileNotFoundError):
+        service.execute_approved_command(approval.id)
+
+    runs = service.list_command_runs()
+    assert len(runs) == 1
+    failed = runs[0]
+    assert failed.approval_id == approval.id
+    assert failed.status == CommandRunStatus.failed
+    assert failed.exit_code == -1
+    assert failed.completed_at is not None
+    assert failed.last_heartbeat_at is not None
+    assert failed.status_reason is not None
+    assert "failed" in failed.status_reason.lower()
+    assert "missing executable" in failed.stderr
+
+    executed = service.list_approvals(CommandApprovalStatus.executed)[0]
+    assert executed.id == approval.id
+    assert executed.run_id == failed.id
+    with pytest.raises(PermissionError, match="not executable"):
+        service.execute_approved_command(approval.id)
 
 
 def test_expired_approval_cannot_be_approved_or_executed(runtime) -> None:

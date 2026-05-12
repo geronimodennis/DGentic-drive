@@ -83,6 +83,13 @@ READ_ONLY_PATH_COMMANDS = {
     "ls",
     "type",
 }
+COMMAND_PATH_ARGUMENT_FLAGS = {
+    "git": frozenset({"-C", "--exec-path", "--git-dir", "--work-tree"}),
+    "npm": frozenset({"--prefix"}),
+    "pnpm": frozenset({"-C", "--dir", "--workspace-dir"}),
+    "uv": frozenset({"--directory", "--project"}),
+    "yarn": frozenset({"--cwd"}),
+}
 SHELL_COMMAND_FLAGS = {
     "cmd": {"/c", "/k"},
     "cmd.exe": {"/c", "/k"},
@@ -449,6 +456,20 @@ def parse_inner_shell_command(command: str) -> str | None:
     return _parse_inner_shell_command(parse_command(command))
 
 
+def shell_command_executable_tokens(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+) -> list[str]:
+    return _shell_command_executable_tokens(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+        depth=0,
+    )
+
+
 def _normalize_executable(token: str) -> str:
     token = _strip_matching_quotes(token.strip())
     if "\\" in token or ":" in token:
@@ -591,6 +612,20 @@ def _default_decision(
             risk=CommandRisk.blocked,
             permission_mode=PermissionMode.blocked,
             reason=f"{executable} references a path outside configured rootDir.",
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
+    if _command_path_arguments_target_outside_root(
+        parsed,
+        policy_cwd,
+        windows_command_context=windows_command_context,
+    ):
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.blocked,
+            permission_mode=PermissionMode.blocked,
+            reason=f"{executable} path argument resolves outside configured rootDir.",
             agent_role=request.agent_role,
             agent_id=request.agent_id,
             task_id=request.task_id,
@@ -1411,6 +1446,57 @@ def _decision_from_shell_script_tokens(
         agent_id=request.agent_id,
         task_id=request.task_id,
     )
+
+
+def _shell_command_executable_tokens(
+    command: str,
+    *,
+    windows_command_context: bool = False,
+    powershell_command_context: bool = False,
+    depth: int = 0,
+) -> list[str]:
+    if depth > 4:
+        return []
+    segments, _has_control_operator = _split_shell_command_segments(
+        command,
+        windows_command_context=windows_command_context,
+        powershell_command_context=powershell_command_context,
+    )
+    substitutions = _extract_shell_substitutions(
+        command,
+        powershell_command_context=powershell_command_context,
+    )
+    executable_tokens: list[str] = []
+    for segment in [*segments, *substitutions]:
+        inspectable_segment = _strip_leading_shell_assignments(segment)
+        tokens = _shell_script_tokens(
+            inspectable_segment,
+            windows_command_context=windows_command_context,
+            powershell_command_context=powershell_command_context,
+        )
+        for command_index in _shell_command_position_token_indexes(tokens):
+            executable_token = _strip_matching_quotes(tokens[command_index])
+            if executable_token and executable_token not in executable_tokens:
+                executable_tokens.append(executable_token)
+
+            normalized = _normalize_shell_executable(executable_token)
+            if normalized not in SHELL_COMMAND_FLAGS:
+                continue
+            nested_command = _parse_inner_shell_command(
+                parse_command(" ".join(tokens[command_index:]))
+            )
+            if nested_command is None:
+                continue
+            nested_tokens = _shell_command_executable_tokens(
+                nested_command,
+                windows_command_context=normalized in CMD_EXECUTABLES,
+                powershell_command_context=normalized in POWERSHELL_EXECUTABLES,
+                depth=depth + 1,
+            )
+            for nested_token in nested_tokens:
+                if nested_token not in executable_tokens:
+                    executable_tokens.append(nested_token)
+    return executable_tokens
 
 
 def _shell_script_tokens(
@@ -2309,16 +2395,91 @@ def _read_only_command_targets_outside_root(
     return False
 
 
+def _command_path_arguments_target_outside_root(
+    parsed: ParsedCommand,
+    policy_cwd: Path,
+    *,
+    windows_command_context: bool = False,
+) -> bool:
+    executable = _canonical_command_path_argument_executable(parsed.executable)
+    path_flags = COMMAND_PATH_ARGUMENT_FLAGS.get(executable)
+    if path_flags is None:
+        return False
+
+    index = 0
+    while index < len(parsed.arguments):
+        raw_argument = parsed.arguments[index]
+        argument = _strip_matching_quotes(raw_argument.strip())
+        if argument == "--":
+            break
+        normalized = argument.lower()
+        flag, inline_value = _split_command_path_argument(normalized, argument, path_flags)
+        if flag is None:
+            index += 1
+            continue
+
+        values: list[str] = []
+        if inline_value is not None:
+            values.append(inline_value)
+        elif index + 1 < len(parsed.arguments):
+            index += 1
+            values.append(_strip_matching_quotes(parsed.arguments[index].strip()))
+
+        for value in values:
+            for candidate in _path_token_candidates(
+                value,
+                windows_command_context=windows_command_context,
+            ):
+                if _path_candidate_targets_outside_root(
+                    candidate,
+                    policy_cwd,
+                    executable,
+                    windows_command_context=windows_command_context,
+                    treat_options_as_paths=True,
+                ):
+                    return True
+        index += 1
+    return False
+
+
+def _canonical_command_path_argument_executable(executable: str) -> str:
+    suffixes = (".cmd", ".exe", ".ps1")
+    for suffix in suffixes:
+        if executable.endswith(suffix):
+            return executable[: -len(suffix)]
+    return executable
+
+
+def _split_command_path_argument(
+    normalized_argument: str,
+    argument: str,
+    path_flags: frozenset[str],
+) -> tuple[str | None, str | None]:
+    for flag in sorted(path_flags, key=len, reverse=True):
+        comparable_flag = flag if len(flag) == 2 else flag.lower()
+        comparable_argument = argument if len(flag) == 2 else normalized_argument
+        if comparable_argument == comparable_flag:
+            return flag, None
+        if comparable_argument.startswith(f"{comparable_flag}="):
+            return flag, argument[len(flag) + 1 :]
+        if comparable_argument.startswith(f"{comparable_flag}:"):
+            return flag, argument[len(flag) + 1 :]
+        if len(flag) == 2 and comparable_argument.startswith(flag) and len(argument) > 2:
+            return flag, argument[2:]
+    return None, None
+
+
 def _path_candidate_targets_outside_root(
     token: str,
     policy_cwd: Path,
     executable: str,
     *,
     windows_command_context: bool = False,
+    treat_options_as_paths: bool = False,
 ) -> bool:
     if not token or token in SHELL_APPROVAL_TOKENS or token in SHELL_CONTROL_OPERATORS:
         return False
-    if _looks_like_command_option(
+    if not treat_options_as_paths and _looks_like_command_option(
         token,
         executable,
         windows_command_context=windows_command_context,

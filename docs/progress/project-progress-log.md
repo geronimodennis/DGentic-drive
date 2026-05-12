@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009q Command Path Argument And CLI Launch Failure Hardening
+
+Status: completed for the scoped command-specific path argument hardening slice and the BL-009p review follow-up; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, and nested shell startup hardening.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected command-specific path arguments as the next bounded CLI host-boundary slice after BL-009p, while prioritizing the review findings from the previous security checkpoint.
+- Completed: Developer hardened direct command policy so configured-safe `git`, `npm`, `pnpm`, `yarn`, and `uv` rules cannot downgrade directory/path flags that resolve outside `rootDir`.
+- Completed: Developer closed the BL-009p review findings by validating `cmd /c` inner bare executables before launch, always including Windows default PATHEXT candidates, and recording failed synchronous launch run records after approval claim.
+- Completed: QA added command-policy regressions for out-of-root command path arguments plus inside-root configured-safe compatibility.
+- Completed: QA added CLI runtime regressions for `cmd /c` inner bare executable blocking, malformed PATHEXT fallback behavior, and failed approved synchronous launch audit binding.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: configured-safe path arguments such as `git -C`, `npm --prefix`, `pnpm --dir`/`-C`, `yarn --cwd`, and `uv --directory`/`--project` fail closed when they resolve outside `rootDir`.
+- Implemented in this slice: inside-root path arguments can still use configured safe policy rules, preserving normal workspace workflow configuration.
+- Implemented in this slice: `cmd /c` bare inner commands now receive the same workspace executable trust preflight as direct bare commands.
+- Implemented in this slice: Windows executable extension probing always includes the default `.com`, `.exe`, `.bat`, and `.cmd` candidates even when inherited PATHEXT is missing or malformed.
+- Implemented in this slice: synchronous approval executions that fail during process launch now record a failed command run and bind the claimed approval to that run id.
+- Still out of scope after this slice: nested shell startup hardening inside reviewed payloads, full shell emulation, OS-level sandboxing, richer user/group identity workflows, KMS-backed key rotation, and first-class secret-manager adapters.
+
+Validation:
+- Focused review-follow-up gate: `python -m pytest -q tests\test_cli_runtime.py::test_cmd_wrapped_compound_and_prefix_bare_workspace_commands_block_before_subprocess tests\test_command_policy.py::test_configured_safe_rules_do_not_downgrade_out_of_root_command_path_arguments tests\test_command_policy.py::test_command_path_argument_scan_respects_option_terminator_for_npm` passed with 13 tests.
+- Focused command-policy gate: `python -m pytest -q tests\test_command_policy.py -k "command_path_arguments or configured_safe_rules_do_not_downgrade or option_terminator"` passed with 26 tests.
+- Focused CLI runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "cmd_wrapped or pathext or launch_failure_records_failed_run"` passed with 6 tests.
+- Broader affected suites: `python -m pytest -q tests\test_cli_runtime.py tests\test_command_policy.py` passed with 386 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1001 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed after formatting.
+
+Next:
+- Continue Sprint 15 with nested shell startup hardening or managed hook-policy/plugin trust foundations; defer web retrieval enforcement until a concrete web retrieval runtime exists and defer key rotation/KMS to a dedicated design slice.
+
 ### Sprint 15 BL-009p Bare Executable Workspace/PATH Trust Checks
 
 Status: completed for the scoped bare executable workspace/PATH trust slice; Sprint 15 remains active for richer user/group identity workflows, vault key rotation or managed KMS integration beyond the operator-supplied local vault key, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, nested shell startup hardening, and command-specific path argument hardening for configured-safe tools.

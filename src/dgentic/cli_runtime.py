@@ -18,7 +18,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from dgentic.command_policy import parse_command, parse_inner_shell_command
+from dgentic.command_policy import (
+    parse_command,
+    parse_inner_shell_command,
+    shell_command_executable_tokens,
+)
 from dgentic.events import event_log
 from dgentic.guardrails import evaluate_command_policy
 from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
@@ -366,12 +370,26 @@ def validate_command_environment(overrides: dict[str, str]) -> list[str]:
 
 
 def validate_bare_executable_trust(command: str, cwd: Path, env: dict[str, str]) -> None:
+    parsed = parse_command(command)
     command_args = _command_args(command)
     raw_executable = (
-        parse_command(command).raw_executable
+        parsed.raw_executable
         if isinstance(command_args, str)
         else str(command_args[0] if command_args else "")
     ).strip()
+    _validate_bare_executable_token(raw_executable, cwd, env)
+
+    if parsed.executable in _CMD_EXECUTABLES:
+        inner_command = parse_inner_shell_command(command)
+        if inner_command is not None:
+            for inner_executable in shell_command_executable_tokens(
+                inner_command,
+                windows_command_context=True,
+            ):
+                _validate_bare_executable_token(inner_executable.strip(), cwd, env)
+
+
+def _validate_bare_executable_token(raw_executable: str, cwd: Path, env: dict[str, str]) -> None:
     if not raw_executable or _is_path_like_executable_token(raw_executable):
         return
 
@@ -443,17 +461,17 @@ def _bare_executable_candidates(executable: str, env: dict[str, str]) -> list[st
     if executable_path.suffix:
         return [executable]
 
-    extensions: list[str]
     if os.name == "nt":
+        extensions = list(_WINDOWS_DEFAULT_EXECUTABLE_EXTENSIONS)
         raw_extensions = env.get("PATHEXT") or os.environ.get("PATHEXT", "")
-        extensions = [
-            extension.lower() for extension in raw_extensions.split(os.pathsep) if extension.strip()
-        ]
-        if not extensions:
-            extensions = list(_WINDOWS_DEFAULT_EXECUTABLE_EXTENSIONS)
-        extensions = [
-            extension if extension.startswith(".") else f".{extension}" for extension in extensions
-        ]
+        for raw_extension in re.split(r"[;:]", raw_extensions):
+            extension = raw_extension.strip().lower()
+            if not extension:
+                continue
+            if not extension.startswith("."):
+                extension = f".{extension}"
+            if extension not in extensions:
+                extensions.append(extension)
         return [executable, *(f"{executable}{extension}" for extension in extensions)]
 
     return [executable]
@@ -1526,6 +1544,33 @@ class CliRuntimeService:
                 duration_ms=duration_ms,
                 started_at=started_at,
                 status=CommandRunStatus.timed_out,
+                requested_by=request.requested_by,
+                agent_id=request.agent_id,
+                agent_role=request.agent_role,
+                task_id=request.task_id,
+                environment_keys=environment_keys,
+                actor=actor,
+            )
+            if run.approval_id is not None:
+                self._mark_approval_executed(
+                    run.approval_id,
+                    run.id,
+                    actor=actor or request.requested_by,
+                )
+            raise
+        except (OSError, subprocess.SubprocessError) as exc:
+            duration_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
+            _result, run = self._record_run(
+                command=decision.command,
+                cwd=cwd,
+                approval_id=approval_id,
+                exit_code=-1,
+                stdout="",
+                stderr=f"Command launch failed: {exc}",
+                permission_mode=decision.permission_mode,
+                duration_ms=duration_ms,
+                started_at=started_at,
+                status=CommandRunStatus.failed,
                 requested_by=request.requested_by,
                 agent_id=request.agent_id,
                 agent_role=request.agent_role,

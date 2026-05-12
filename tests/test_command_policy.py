@@ -813,6 +813,92 @@ def test_configured_safe_rules_do_not_downgrade_out_of_root_read_only_paths(
 
 
 @pytest.mark.parametrize(
+    ("executable", "command"),
+    [
+        ("git", "git -C ../outside status"),
+        ("git", "git --exec-path ../outside status"),
+        ("npm", "npm --prefix ../outside test"),
+        ("npm", "npm --prefix=../outside test"),
+        ("pnpm", "pnpm --dir ../outside test"),
+        ("pnpm", "pnpm -C../outside test"),
+        ("yarn", "yarn --cwd ../outside test"),
+        ("uv", "uv --directory ../outside run pytest"),
+        ("uv", "uv --project=../outside run pytest"),
+    ],
+)
+def test_configured_safe_rules_do_not_downgrade_out_of_root_command_path_arguments(
+    policy_state,
+    executable: str,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name=f"Allow {executable}",
+            match_type=CommandPolicyMatchType.executable,
+            pattern=executable,
+            permission_mode=PermissionMode.autopilot_safe,
+            reason=f"{executable} is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert "path argument" in decision.reason
+    assert "outside configured rootDir" in decision.reason
+    assert decision.matched_rule_id is None
+
+
+def test_command_path_argument_scan_respects_option_terminator_for_npm(
+    policy_state,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow npm test commands",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="npm",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="npm test is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(command="npm test -- --prefix ../fixtures")
+    )
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.matched_rule_id == rule.id
+
+
+def test_configured_safe_rules_preserve_inside_root_command_path_arguments(
+    policy_state,
+) -> None:
+    root_dir, _data_dir = policy_state
+    (root_dir / "packages" / "app").mkdir(parents=True)
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow npm workspace commands",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="npm",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="npm is allowed by configured policy.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(
+        CommandPolicyRequest(command="npm --prefix packages/app test")
+    )
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.matched_rule_id == rule.id
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "../outside-tool --version",

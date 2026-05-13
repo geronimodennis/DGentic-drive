@@ -339,6 +339,40 @@ curl -X POST http://127.0.0.1:8000/cli/execute `
   -d '{"command":"python --version","timeout_seconds":10,"approval_id":"[approval_id]","requested_by":"operator"}'
 ```
 
+Create, preview, approve, execute, and run a reusable command recipe. Recipes are persisted in `command-recipes.json`, expand safe `{{parameter}}` placeholders into an existing CLI execution request, and then use the same command policy, approval, runtime, redaction, and audit behavior as `/cli/execute` and `/cli/runs`. Recipe execution payloads do not accept `approved`; in staging and production, approval-required expanded commands must use a standard bound `approval_id`:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/recipes `
+  -H "Content-Type: application/json" `
+  -d '{"id":"git.status","name":"Git status","command_template":"git status --short {{path}}","parameters":[{"name":"path","default":"."}],"timeout_seconds":10,"tags":["git","inspection"]}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/recipes/git.status/preview `
+  -H "Content-Type: application/json" `
+  -d '{"parameters":{"path":"."},"requested_by":"operator"}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/recipes/git.status/execute `
+  -H "Content-Type: application/json" `
+  -d '{"parameters":{"path":"."},"approval_id":"[approval_id]","requested_by":"operator"}'
+```
+
+```powershell
+curl -X POST "http://127.0.0.1:8000/cli/recipes/git.status/approvals?requested_by=operator" `
+  -H "Content-Type: application/json" `
+  -d '{"parameters":{"path":"."},"requested_by":"operator"}'
+```
+
+```powershell
+curl -X POST http://127.0.0.1:8000/cli/recipes/git.status/runs `
+  -H "Content-Type: application/json" `
+  -d '{"parameters":{"path":"."},"approval_id":"[approval_id]","requested_by":"operator"}'
+```
+
+Recipe templates and parameter defaults cannot contain secret-shaped text. Parameter values are intentionally constrained to safe identifier/path-like text, and unknown parameters fail closed before command policy evaluation.
+
 ```powershell
 curl -X POST http://127.0.0.1:8000/filesystem/write `
   -H "Content-Type: application/json" `

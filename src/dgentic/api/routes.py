@@ -51,6 +51,20 @@ from dgentic.command_policy import (
     list_command_policy_rules,
     update_command_policy_rule,
 )
+from dgentic.command_recipes import (
+    CommandRecipe,
+    CommandRecipeExecutionRequest,
+    CommandRecipeExpansion,
+    CommandRecipeRequest,
+    CommandRecipeUpdate,
+    build_command_recipe_request,
+    create_command_recipe,
+    expand_command_recipe,
+    get_command_recipe,
+    list_command_recipes,
+    record_command_recipe_usage,
+    update_command_recipe,
+)
 from dgentic.credentials import (
     CredentialReferenceError,
     CredentialReferenceRequest,
@@ -1138,6 +1152,139 @@ def patch_cli_policy_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
     return rule
+
+
+@router.post("/cli/recipes", response_model=CommandRecipe, status_code=201)
+def create_cli_command_recipe(
+    payload: CommandRecipeRequest,
+    request: Request,
+) -> CommandRecipe:
+    try:
+        return create_command_recipe(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/cli/recipes", response_model=list[CommandRecipe])
+def get_cli_command_recipes() -> list[CommandRecipe]:
+    return list_command_recipes()
+
+
+@router.get("/cli/recipes/{recipe_id}", response_model=CommandRecipe)
+def get_cli_command_recipe(recipe_id: str) -> CommandRecipe:
+    try:
+        return get_command_recipe(recipe_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/cli/recipes/{recipe_id}", response_model=CommandRecipe)
+def patch_cli_command_recipe(
+    recipe_id: str,
+    payload: CommandRecipeUpdate,
+    request: Request,
+) -> CommandRecipe:
+    try:
+        return update_command_recipe(recipe_id, payload, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/recipes/{recipe_id}/preview", response_model=CommandRecipeExpansion)
+def preview_cli_command_recipe(
+    recipe_id: str,
+    payload: CommandRecipeExecutionRequest,
+    request: Request,
+) -> CommandRecipeExpansion:
+    try:
+        return expand_command_recipe(
+            recipe_id,
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/recipes/{recipe_id}/execute", response_model=CommandExecutionResult)
+def execute_cli_command_recipe(
+    recipe_id: str,
+    payload: CommandRecipeExecutionRequest,
+    request: Request,
+) -> CommandExecutionResult:
+    try:
+        command_request = build_command_recipe_request(
+            recipe_id,
+            _bind_principal_requester(payload, request),
+        )
+        result = cli_runtime_service.execute_command(command_request)
+        record_command_recipe_usage(recipe_id, action="execute", actor=_principal_actor(request))
+        return result
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=408, detail="Command timed out.") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/recipes/{recipe_id}/approvals", response_model=CommandApproval, status_code=201)
+def create_cli_command_recipe_approval(
+    recipe_id: str,
+    payload: CommandRecipeExecutionRequest,
+    request: Request,
+) -> CommandApproval:
+    try:
+        command_request = build_command_recipe_request(
+            recipe_id,
+            _bind_principal_requester(payload, request),
+        )
+        approval = cli_runtime_service.create_approval(
+            command_request,
+            requested_by=_approval_requester(request, command_request.requested_by),
+        )
+        record_command_recipe_usage(recipe_id, action="approval", actor=_principal_actor(request))
+        return approval
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/recipes/{recipe_id}/runs", response_model=CommandRun, status_code=202)
+def start_cli_command_recipe_run(
+    recipe_id: str,
+    payload: CommandRecipeExecutionRequest,
+    request: Request,
+) -> CommandRun:
+    try:
+        command_request = build_command_recipe_request(
+            recipe_id,
+            _bind_principal_requester(payload, request),
+        )
+        run = cli_runtime_service.start_command(command_request)
+        record_command_recipe_usage(recipe_id, action="run", actor=_principal_actor(request))
+        return run
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/guardrails/hooks/rules", response_model=HookPolicyRule, status_code=201)

@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009y Command Recipe Execution Contracts
+
+Status: completed for the scoped backend command-recipe execution contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, plugin-backed recipe distribution/loading, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected command recipe execution contracts as the next bounded Sprint 15 security slice after BL-009x because UI, CLI, VS Code, and plugin surfaces need auditable repeated-command contracts without bypassing backend approvals.
+- Completed: Architect/QA scoped recipes as a thin registry and resolver over existing CLI execution requests, leaving policy evaluation, approval binding, execution, cancellation, output redaction, and audit with CLI policy/runtime services.
+- Completed: Developer added persisted command recipe models, safe placeholder validation, secret-shaped recipe text rejection, safe parameter value validation, preview expansion, usage audit events, and `/cli/recipes` CRUD/preview/execute/approvals/runs routes.
+- Completed: QA added recipe registry, injection rejection, policy-preview, authenticated-principal binding, approval-required production flow, single-use approval replay, and route-capability coverage.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: command recipes persist in `command-recipes.json` with stable safe ids, redacted metadata, enable/disable state, tags, timestamps, and usage counts.
+- Implemented in this slice: recipe templates use declared `{{parameter}}` placeholders only; unknown, duplicate, unused, unsafe, blank, or secret-shaped parameter/template values fail closed before command execution.
+- Implemented in this slice: `POST /cli/recipes/{recipe_id}/preview` expands parameters, resolves cwd, evaluates command policy, and returns redacted command review metadata without executing the command.
+- Implemented in this slice: recipe execute, approval, and async run routes build normal `CommandExecutionRequest` objects and reuse existing CLI approvals, policy, environment validation, runtime, run history, and output redaction.
+- Implemented in this slice: recipe execution request bodies reject extra fields, including recipe-level `approved`; production/staging approval-required recipes must use the existing bound `approval_id` contract.
+- Still out of scope after this slice: plugin-packaged recipe loading, multi-step backend recipe orchestration, recipe-specific approval record families, recipe UI surfaces, and managed policy-source ceilings for recipe/plugin/git policy records.
+
+Validation:
+- Focused recipe gate: `python -m pytest -q tests\test_command_recipes.py` passed with 6 tests.
+- Focused auth gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path or capability_for_request"` passed with 43 tests.
+- Combined affected gate: `python -m pytest -q tests\test_command_recipes.py tests\test_auth.py tests\test_api.py tests\test_cli_runtime.py tests\test_command_policy.py -k "recipe or cli_approval or guarded_cli or capability_for_path or capability_for_request or approval or environment or shell_wrapper or path_argument"` passed with 214 tests and 465 deselected.
+- Lint/format gates for touched implementation/tests passed with `python -m ruff check src\dgentic\command_recipes.py src\dgentic\api\routes.py tests\test_command_recipes.py tests\test_auth.py` and `python -m ruff format --check src\dgentic\command_recipes.py src\dgentic\api\routes.py tests\test_command_recipes.py tests\test_auth.py`.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1068 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with plugin installation/loading governance, guarded git/PR workflow automation, richer managed policy-source controls, managed KMS/secret-manager hardening, web retrieval network enforcement, or generated-tool OS-level egress isolation based on next risk.
+
 ### Sprint 15 BL-009x Managed Settings Precedence Foundation
 
 Status: completed for the scoped backend managed-settings precedence foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.

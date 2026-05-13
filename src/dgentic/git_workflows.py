@@ -9,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from time import monotonic
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,6 +28,7 @@ MAX_COMMIT_MESSAGE_CHARS = 240
 MAX_PR_TITLE_CHARS = 200
 MAX_PR_BODY_CHARS = 2_000
 MAX_PR_BRANCH_CHARS = 120
+GH_TOKEN_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GHE_TOKEN")
 PROTECTED_BRANCHES = frozenset({"main", "master", "production", "release"})
 PROTECTED_FILE_SUFFIXES = frozenset({".key", ".pem", ".pfx", ".p12"})
 PROTECTED_FILE_NAMES = frozenset(
@@ -134,6 +136,28 @@ class GitPrApprovalRequest(BaseModel):
         return _normalize_test_evidence(value)
 
 
+class GitPrRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=MAX_PR_TITLE_CHARS)
+    body: str = Field(default="", max_length=MAX_PR_BODY_CHARS)
+    base_branch: str | None = Field(default=None, max_length=MAX_PR_BRANCH_CHARS)
+    draft: bool = False
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=60, ge=1, le=300)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
 class GitCommitRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -222,6 +246,31 @@ class GitPushRunResult(BaseModel):
     behind_before: int
     ahead_after: int
     behind_after: int
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class GitPrRunResult(BaseModel):
+    action: Literal["pr"] = "pr"
+    repo_root: Path
+    cwd: Path
+    branch: str
+    upstream: str
+    remote_name: str
+    remote_url_digest: str
+    head_sha: str
+    checkpoint_digest: str
+    title_digest: str
+    body_digest: str
+    base_branch: str = ""
+    head_branch: str
+    draft: bool
+    pr_url: str = ""
+    exit_code: int
+    duration_ms: int
     requested_by: str | None = None
     agent_id: str | None = None
     agent_role: str | None = None
@@ -581,6 +630,144 @@ def run_git_push_workflow(
     return result
 
 
+def run_git_pr_workflow(
+    request: GitPrRunRequest,
+    *,
+    actor: str | None = None,
+) -> GitPrRunResult:
+    title = _validate_pr_text(
+        request.title,
+        field_name="Git PR title",
+        max_chars=MAX_PR_TITLE_CHARS,
+        allow_empty=False,
+    )
+    body = _validate_pr_text(
+        request.body,
+        field_name="Git PR body",
+        max_chars=MAX_PR_BODY_CHARS,
+        allow_empty=True,
+    )
+    base_branch = _validate_optional_pr_branch(request.base_branch, field_name="Git PR base branch")
+    title_digest = _text_digest(title)
+    body_digest = _text_digest(body)
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="pr",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git PR runner requires a ready PR checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git PR runner requires a fresh matching checkpoint digest.")
+    _require_pr_checkpoint_for_approval(checkpoint, workflow_name="Git PR runner")
+    head_branch = _validate_pr_branch(checkpoint.branch, field_name="Git PR head branch")
+    git_executable = _resolve_git_executable()
+    gh_executable = _resolve_gh_executable()
+    remote_host = _remote_url_host(git_executable, checkpoint.repo_root, checkpoint.remote_name)
+    if not remote_host:
+        raise ValueError("Git PR runner requires an upstream remote host.")
+    gh_config_dir = tempfile.TemporaryDirectory(prefix="dgentic-gh-config-")
+    started = monotonic()
+    try:
+        with gh_config_dir as isolated_config_dir:
+            completed = subprocess.run(
+                [
+                    gh_executable,
+                    *_gh_pr_create_args(
+                        title=title,
+                        body=body,
+                        base_branch=base_branch,
+                        head_branch=head_branch,
+                        draft=request.draft,
+                    ),
+                ],
+                cwd=checkpoint.repo_root,
+                env=_gh_environment(Path(isolated_config_dir)),
+                capture_output=True,
+                text=True,
+                timeout=request.timeout_seconds,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        _record_pr_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=None,
+            duration_ms=int((monotonic() - started) * 1000),
+            status="timed_out",
+            title_digest=title_digest,
+            body_digest=body_digest,
+            base_branch=base_branch or "",
+            head_branch=head_branch,
+            draft=request.draft,
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise TimeoutError("Git PR runner timed out.") from exc
+
+    duration_ms = int((monotonic() - started) * 1000)
+    if completed.returncode != 0:
+        _record_pr_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            status="failed",
+            title_digest=title_digest,
+            body_digest=body_digest,
+            base_branch=base_branch or "",
+            head_branch=head_branch,
+            draft=request.draft,
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise ValueError("Git PR runner failed.")
+
+    pr_url = _extract_pr_url(completed.stdout, allowed_host=remote_host)
+    result = GitPrRunResult(
+        repo_root=checkpoint.repo_root,
+        cwd=checkpoint.cwd,
+        branch=checkpoint.branch,
+        upstream=checkpoint.upstream,
+        remote_name=checkpoint.remote_name,
+        remote_url_digest=checkpoint.remote_url_digest,
+        head_sha=checkpoint.head_sha,
+        checkpoint_digest=checkpoint.checkpoint_digest,
+        title_digest=title_digest,
+        body_digest=body_digest,
+        base_branch=base_branch or "",
+        head_branch=head_branch,
+        draft=request.draft,
+        pr_url=pr_url,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    _record_pr_run_event(
+        checkpoint=checkpoint,
+        actor=actor or request.requested_by,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        status="completed",
+        title_digest=title_digest,
+        body_digest=body_digest,
+        base_branch=base_branch or "",
+        head_branch=head_branch,
+        draft=request.draft,
+        test_evidence_count=len(request.test_evidence),
+        pr_url=pr_url,
+    )
+    return result
+
+
 def build_git_push_approval_request(
     request: GitPushApprovalRequest,
     *,
@@ -829,16 +1016,17 @@ def _push_target_for_checkpoint(checkpoint: GitWorkflowCheckpoint) -> tuple[str,
 def _require_pr_checkpoint_for_approval(
     checkpoint: GitWorkflowCheckpoint,
     *,
+    workflow_name: str = "Git PR approval",
     error_type: type[Exception] = ValueError,
 ) -> None:
     if not checkpoint.upstream:
-        raise error_type("Git PR approval requires a configured upstream branch.")
+        raise error_type(f"{workflow_name} requires a configured upstream branch.")
     if not checkpoint.remote_name or not checkpoint.remote_url_digest:
-        raise error_type("Git PR approval requires a bound upstream remote URL.")
+        raise error_type(f"{workflow_name} requires a bound upstream remote URL.")
     if checkpoint.ahead > 0:
-        raise error_type("Git PR approval requires the branch to be pushed before PR creation.")
+        raise error_type(f"{workflow_name} requires the branch to be pushed before PR creation.")
     if checkpoint.behind > 0:
-        raise error_type("Git PR approval requires the branch to be current with upstream.")
+        raise error_type(f"{workflow_name} requires the branch to be current with upstream.")
 
 
 def _normalize_test_evidence(value: list[str]) -> list[str]:
@@ -921,7 +1109,11 @@ def _git_commit_command(commit_message: str) -> str:
 
 
 def _commit_message_digest(commit_message: str) -> str:
-    return f"sha256:{sha256(commit_message.encode('utf-8')).hexdigest()}"
+    return _text_digest(commit_message)
+
+
+def _text_digest(value: str) -> str:
+    return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
 
 
 def _gh_pr_create_command(
@@ -943,6 +1135,31 @@ def _gh_pr_create_command(
     if draft:
         parts.append("--draft")
     return " ".join(parts)
+
+
+def _gh_pr_create_args(
+    *,
+    title: str,
+    body: str,
+    base_branch: str | None,
+    head_branch: str,
+    draft: bool,
+) -> list[str]:
+    args = [
+        "pr",
+        "create",
+        "--title",
+        title,
+        "--body",
+        body,
+        "--head",
+        head_branch,
+    ]
+    if base_branch:
+        args.extend(["--base", base_branch])
+    if draft:
+        args.append("--draft")
+    return args
 
 
 def _resolve_checkpoint_cwd(cwd: Path | None) -> Path:
@@ -973,6 +1190,21 @@ def _resolve_git_executable() -> str:
         raise RuntimeError("Git executable is not available.") from exc
     if resolved == root_dir or root_dir in resolved.parents:
         raise PermissionError("Git executable resolves inside configured rootDir.")
+    return str(resolved)
+
+
+def _resolve_gh_executable() -> str:
+    executable = shutil.which("gh")
+    if executable is None:
+        raise RuntimeError("GitHub CLI executable is not available.")
+    gh_path = Path(executable)
+    root_dir = get_settings().root_dir.resolve()
+    try:
+        resolved = gh_path.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("GitHub CLI executable is not available.") from exc
+    if resolved == root_dir or root_dir in resolved.parents:
+        raise PermissionError("GitHub CLI executable resolves inside configured rootDir.")
     return str(resolved)
 
 
@@ -1035,6 +1267,71 @@ def _git_environment() -> dict[str, str]:
     env["GIT_PAGER"] = "cat"
     env["GIT_OPTIONAL_LOCKS"] = "0"
     return env
+
+
+def _gh_environment(config_dir: Path) -> dict[str, str]:
+    env = _git_environment()
+    env.pop("HOME", None)
+    token_found = False
+    for key in GH_TOKEN_ENV_KEYS:
+        token_value = os.environ.get(key)
+        if token_value:
+            env[key] = token_value
+            token_found = True
+    if not token_found:
+        raise ValueError("Git PR runner requires an explicit GitHub CLI token environment.")
+    env["GH_CONFIG_DIR"] = str(config_dir)
+    env["GH_PROMPT_DISABLED"] = "1"
+    env["NO_COLOR"] = "1"
+    return env
+
+
+def _extract_pr_url(output: str, *, allowed_host: str) -> str:
+    candidates: list[str] = []
+    for token in output.split():
+        candidate = token.strip().strip("\"'<>()[]{},.;")
+        if _is_safe_pr_url(candidate, allowed_host=allowed_host):
+            candidates.append(candidate)
+    unique_candidates = list(dict.fromkeys(candidates))
+    if len(unique_candidates) == 1:
+        return unique_candidates[0]
+    return ""
+
+
+def _is_safe_pr_url(candidate: str, *, allowed_host: str) -> bool:
+    if not candidate.startswith("https://"):
+        return False
+    if len(candidate) > 500 or redact_sensitive_values(candidate) != candidate:
+        return False
+    parsed = urlparse(candidate)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.hostname != allowed_host.lower()
+        or parsed.username
+        or parsed.password
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", parsed.netloc):
+        return False
+    raw_path_parts = parsed.path.split("/")
+    if len(raw_path_parts) != 5 or raw_path_parts[0] != "":
+        return False
+    path_parts = raw_path_parts[1:]
+    if len(path_parts) != 4 or path_parts[2] != "pull" or not path_parts[3].isdigit():
+        return False
+    owner, repo = path_parts[0], path_parts[1]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo):
+        return False
+    for part in path_parts:
+        if redact_sensitive_values(part) != part:
+            return False
+    return True
 
 
 def _git_status(git_executable: str, repo_root: Path) -> _GitStatus:
@@ -1130,6 +1427,28 @@ def _remote_url_digest(git_executable: str, repo_root: Path, remote_name: str) -
     if not remote_url:
         return ""
     return f"sha256:{sha256(remote_url.encode('utf-8')).hexdigest()}"
+
+
+def _remote_url_host(git_executable: str, repo_root: Path, remote_name: str) -> str:
+    if not remote_name:
+        return ""
+    remote_url = _git_optional_output(git_executable, repo_root, ["remote", "get-url", remote_name])
+    return _parse_remote_url_host(remote_url)
+
+
+def _parse_remote_url_host(remote_url: str) -> str:
+    normalized = remote_url.strip()
+    if not normalized:
+        return ""
+    parsed = urlparse(normalized)
+    if parsed.hostname:
+        return parsed.hostname.lower()
+    if re.match(r"^[A-Za-z]:[\\/]", normalized):
+        return ""
+    match = re.match(r"(?:[^@/\s]+@)?(?P<host>[A-Za-z0-9.-]+):", normalized)
+    if match:
+        return match.group("host").lower()
+    return ""
 
 
 def _combined_diff_stat(git_executable: str, repo_root: Path) -> GitDiffStat:
@@ -1371,6 +1690,53 @@ def _record_push_run_event(
             "behind_before": checkpoint.behind,
             "ahead_after": ahead_after,
             "behind_after": behind_after,
+            "test_evidence_count": test_evidence_count,
+            "requested_by": checkpoint.requested_by,
+            "agent_id": checkpoint.agent_id,
+            "agent_role": checkpoint.agent_role,
+            "task_id": checkpoint.task_id,
+        },
+    )
+
+
+def _record_pr_run_event(
+    *,
+    checkpoint: GitWorkflowCheckpoint,
+    actor: str | None,
+    exit_code: int | None,
+    duration_ms: int,
+    status: str,
+    title_digest: str,
+    body_digest: str,
+    base_branch: str,
+    head_branch: str,
+    draft: bool,
+    test_evidence_count: int,
+    pr_url: str = "",
+) -> None:
+    event_log.record(
+        LogEventType.cli,
+        "Ran direct git PR workflow.",
+        actor=actor or "system",
+        subject_id=checkpoint.checkpoint_digest,
+        metadata={
+            "action": "pr",
+            "status": status,
+            "repo_root": str(checkpoint.repo_root),
+            "branch": checkpoint.branch,
+            "upstream": checkpoint.upstream,
+            "remote_name": checkpoint.remote_name,
+            "remote_url_digest": checkpoint.remote_url_digest,
+            "head_sha": checkpoint.head_sha,
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title_digest": title_digest,
+            "body_digest": body_digest,
+            "base_branch": base_branch,
+            "head_branch": head_branch,
+            "draft": draft,
+            "pr_url_digest": _text_digest(pr_url) if pr_url else "",
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
             "test_evidence_count": test_evidence_count,
             "requested_by": checkpoint.requested_by,
             "agent_id": checkpoint.agent_id,

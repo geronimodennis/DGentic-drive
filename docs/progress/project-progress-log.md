@@ -4,6 +4,41 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009at Direct Git PR Runner
+
+Status: completed for the scoped direct GitHub PR creation runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM resumed the active Sprint 15 git workflow automation lane, pulled latest from `origin/main`, confirmed role-boundary governance, and selected Full Sprint mode because direct PR creation is a public API path with networked GitHub CLI side effects.
+- Completed: Architect/Security scoped the runner to direct PR creation only: fresh ready PR checkpoint digest, already-pushed/current-with-upstream branch, checkpoint-derived head branch, bounded PR title/body/base inputs, explicit GitHub CLI token environment, isolated `gh` config, strict safe PR URL extraction, no caller-supplied remote/head/flags/templates/reviewers, no raw command output, and no CLI approval creation.
+- Completed: Developer added `GitPrRunRequest`, `GitPrRunResult`, `run_git_pr_workflow`, strict upstream-host-bound PR URL extraction, explicit token/isolated `GH_CONFIG_DIR` handling, safe PR-run audit metadata, and `POST /cli/git/pr-runs` under the existing `cli` capability mapping.
+- Completed: Security review found and Developer fixed two medium issues before validation: PR URL extraction now requires a strict `/owner/repo/pull/<number>` URL from the checkpointed upstream host, and direct `gh` execution now requires explicit token env instead of ambient GitHub CLI login state.
+- Completed: QA added direct PR runner coverage for success with exact fake `gh` argv, isolated `gh` environment, token-required rejection, stale digest rejection, dirty worktree rejection, no-upstream/unpushed/behind rejection, arbitrary payload rejection, secret-shaped and multiline PR text rejection, unrelated-host PR URL suppression, and auth/capability principal binding.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/pr-runs` re-runs a PR checkpoint and only invokes `gh pr create` when the supplied `checkpoint_digest` still matches a fresh ready PR checkpoint.
+- Implemented in this slice: direct PR execution requires the branch to have a configured upstream remote URL digest, be pushed, and be current with upstream before `gh` is invoked.
+- Implemented in this slice: direct PR execution uses shell-free argv `gh pr create --title ... --body ... --head [checkpoint-branch]` with optional `--base` and `--draft`; the request does not accept caller-supplied remote, head branch, arbitrary command, flags, labels, reviewers, projects, templates, or browser mode.
+- Implemented in this slice: `gh` must resolve outside `rootDir`, receive an explicit GitHub token environment, run with `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, and a temporary isolated `GH_CONFIG_DIR`, and run without inherited `HOME`.
+- Implemented in this slice: successful responses include repo/cwd, branch/upstream, remote name, remote URL digest, head SHA, checkpoint digest, title/body digests, head/base branch, draft flag, duration, requester/context metadata, and a sanitized PR URL only when exactly one safe URL from the checkpointed upstream host is emitted.
+- Implemented in this slice: CLI audit metadata records safe PR-run facts plus title/body/URL digests without raw title, body, stdout, stderr, remote URLs, tokens, or approval records.
+- Still out of scope after this slice: direct `gh` labels/reviewers/assignees/projects/templates, browser-based PR creation, remote fetch freshness checks beyond the local upstream tracking state, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused direct PR runner gate: `python -m pytest tests\test_git_workflows.py -q -k "pr_run" --maxfail=1 -x` passed with 9 tests and 41 deselected.
+- Focused auth capability mapping gate: `python -m pytest tests\test_auth.py -q -k "capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 70 tests and 58 deselected.
+- Combined git/auth gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py -q -k "git or capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 120 tests and 58 deselected.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_git_workflows.py tests\test_auth.py tests\test_api.py --maxfail=1 -x` with 388 tests.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,267 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009as Direct Git Push Runner
 
 Status: completed for the scoped direct configured-upstream git push runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct PR workflow runner beyond approval-bound CLI execution.

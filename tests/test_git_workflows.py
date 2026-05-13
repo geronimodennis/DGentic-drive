@@ -1,6 +1,8 @@
 import json
+import os
 import shutil
 import subprocess
+import sys
 from hashlib import sha256
 from pathlib import Path
 
@@ -89,6 +91,73 @@ def _push_ready_workspace(git_workspace: Path, *, ahead: bool = True) -> Path:
 
 def _bare_remote_head(remote_dir: Path, branch: str) -> str:
     return _git(remote_dir, "rev-parse", f"refs/heads/{branch}").stdout.strip()
+
+
+def _install_fake_gh(
+    bin_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    record_path: Path,
+    stdout: str = "https://github.com/example/repo/pull/42\n",
+    returncode: int = 0,
+    token: str | None = "fake-gh-token",
+) -> Path:
+    bin_dir.mkdir()
+    fake_script = bin_dir / "fake-gh.py"
+    record_literal = json.dumps(str(record_path))
+    stdout_literal = json.dumps(stdout)
+    fake_script.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "import sys",
+                "from pathlib import Path",
+                f"Path({record_literal}).write_text(",
+                "    json.dumps({",
+                "        'argv': sys.argv[1:],",
+                "        'cwd': os.getcwd(),",
+                "        'env': {",
+                "            key: os.environ.get(key)",
+                "            for key in (",
+                "                'GH_CONFIG_DIR',",
+                "                'GH_PROMPT_DISABLED',",
+                "                'GH_TOKEN',",
+                "                'GITHUB_TOKEN',",
+                "                'GH_ENTERPRISE_TOKEN',",
+                "                'GHE_TOKEN',",
+                "                'HOME',",
+                "                'NO_COLOR',",
+                "            )",
+                "        },",
+                "    }),",
+                "    encoding='utf-8',",
+                ")",
+                f"sys.stdout.write({stdout_literal})",
+                f"sys.exit({returncode})",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        launcher = bin_dir / "gh.cmd"
+        launcher.write_text(
+            f'@echo off\n"{sys.executable}" "{fake_script}" %*\n',
+            encoding="utf-8",
+        )
+    else:
+        launcher = bin_dir / "gh"
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{fake_script}" "$@"\n',
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+
+    if token is not None:
+        monkeypatch.setenv("GH_TOKEN", token)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return launcher
 
 
 def test_git_checkpoint_rejects_cwd_outside_root(tmp_path, monkeypatch) -> None:
@@ -1503,6 +1572,428 @@ def test_git_pr_approval_api_uses_cli_capability_and_authenticated_principal(
     )
     allowed = client.post(
         "/cli/git/pr-approvals",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open authenticated PR",
+            "body": "Authenticated principal is bound.",
+            "test_evidence": ["pytest -q"],
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+
+    assert wrong_capability.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["requested_by"] == expected_actor
+    get_settings.cache_clear()
+
+
+def test_git_pr_run_api_invokes_fake_gh_outside_root_with_exact_argv(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    base_branch = _git(git_workspace, "branch", "--show-current").stdout.strip()
+    _push_ready_workspace(git_workspace, ahead=False)
+    _git(git_workspace, "remote", "set-url", "origin", "https://github.com/example/repo.git")
+    checkpoint = _checkpoint("pr", git_workspace, evidence=["python -m pytest -q"])
+    record_path = tmp_path / "gh-record.json"
+    ambient_home = tmp_path / "ambient-gh-home"
+    raw_gh_secret = "gh-output-secret-token"
+    safe_pr_url = "https://github.com/example/repo/pull/42"
+    monkeypatch.setenv("HOME", str(ambient_home))
+    fake_gh = _install_fake_gh(
+        tmp_path / "bin",
+        monkeypatch,
+        record_path=record_path,
+        stdout=f"https://user:{raw_gh_secret}@github.com/example/repo/pull/1\n{safe_pr_url}\n",
+    )
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open direct PR",
+            "body": "Focused direct PR.",
+            "base_branch": base_branch,
+            "draft": True,
+            "test_evidence": ["python -m pytest -q"],
+            "requested_by": "qa-agent",
+        },
+    )
+    assert response.status_code == 201, response.text
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    approvals = client.get("/cli/approvals").json()
+    logs = json.dumps([event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)])
+
+    assert fake_gh.resolve() != git_workspace.resolve()
+    assert git_workspace.resolve() not in fake_gh.resolve().parents
+    assert response.json()["action"] == "pr"
+    assert response.json()["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert response.json()["title_digest"].startswith("sha256:")
+    assert response.json()["body_digest"].startswith("sha256:")
+    assert response.json()["head_branch"] == "feature/push-approval"
+    assert response.json()["base_branch"] == base_branch
+    assert response.json()["draft"] is True
+    assert response.json()["pr_url"] == safe_pr_url
+    assert response.json()["requested_by"] == "qa-agent"
+    assert record["cwd"] == str(git_workspace.resolve())
+    gh_config_dir = Path(record["env"]["GH_CONFIG_DIR"])
+    assert record["env"]["HOME"] is None
+    assert record["env"]["GH_TOKEN"] == "fake-gh-token"
+    assert record["env"]["GH_PROMPT_DISABLED"] == "1"
+    assert record["env"]["NO_COLOR"] == "1"
+    assert gh_config_dir.name.startswith("dgentic-gh-config-")
+    assert git_workspace.resolve() not in gh_config_dir.resolve().parents
+    assert gh_config_dir.resolve() != ambient_home.resolve()
+    assert not gh_config_dir.exists()
+    assert record["argv"] == [
+        "pr",
+        "create",
+        "--title",
+        "Open direct PR",
+        "--body",
+        "Focused direct PR.",
+        "--head",
+        "feature/push-approval",
+        "--base",
+        base_branch,
+        "--draft",
+    ]
+    assert approvals == []
+    assert raw_gh_secret not in response.text
+    assert raw_gh_secret not in logs
+
+
+def test_git_pr_run_ignores_pr_url_from_unmatched_remote_host(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    _git(git_workspace, "remote", "set-url", "origin", "https://github.com/example/repo.git")
+    checkpoint = _checkpoint("pr", git_workspace, evidence=["python -m pytest -q"])
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(
+        tmp_path / "bin",
+        monkeypatch,
+        record_path=record_path,
+        stdout="https://evil.example.test/example/repo/pull/42\n",
+    )
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open direct PR",
+            "body": "Focused direct PR.",
+            "test_evidence": ["python -m pytest -q"],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["pr_url"] == ""
+
+
+def test_git_pr_run_requires_explicit_token_without_invoking_gh(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    _git(git_workspace, "remote", "set-url", "origin", "https://github.com/example/repo.git")
+    checkpoint = _checkpoint("pr", git_workspace)
+    record_path = tmp_path / "gh-record.json"
+    for key in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GHE_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path, token=None)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject missing token",
+            "body": "Token environment is required.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "explicit GitHub CLI token environment" in response.json()["detail"]
+    assert not record_path.exists()
+
+
+def test_git_pr_run_rejects_stale_checkpoint_digest_without_invoking_gh(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nAnother direct PR commit.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    _git(git_workspace, "commit", "-m", "Add stale direct PR change")
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject stale direct PR digest",
+            "body": "State changed after checkpoint.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "fresh matching checkpoint digest" in response.json()["detail"]
+    assert not record_path.exists()
+
+
+def test_git_pr_run_rejects_dirty_worktree_without_invoking_gh(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nDirty direct PR worktree.\n",
+        encoding="utf-8",
+    )
+    checkpoint = _checkpoint("pr", git_workspace)
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject dirty direct PR",
+            "body": "Worktree is not clean.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert checkpoint.ready is False
+    assert response.status_code == 400
+    assert "ready PR checkpoint" in response.json()["detail"]
+    assert not record_path.exists()
+
+
+def test_git_pr_run_rejects_missing_unpushed_and_behind_upstream_without_invoking_gh(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path)
+    client = TestClient(create_app())
+
+    _git(git_workspace, "checkout", "-b", "feature/direct-pr-no-upstream")
+    no_upstream = _checkpoint("pr", git_workspace)
+    missing_upstream_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": no_upstream.checkpoint_digest,
+            "title": "Reject missing upstream",
+            "body": "No upstream branch is configured.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    _git(git_workspace, "checkout", "-")
+    _push_ready_workspace(git_workspace, ahead=True)
+    unpushed = _checkpoint("pr", git_workspace)
+    unpushed_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": unpushed.checkpoint_digest,
+            "title": "Reject unpushed branch",
+            "body": "Branch still has local commits ahead.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    _git(git_workspace, "reset", "--hard", "origin/feature/push-approval")
+    tree_sha = _git(git_workspace, "rev-parse", "HEAD^{tree}").stdout.strip()
+    head_sha = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    remote_only_commit = subprocess.run(
+        ["git", "commit-tree", tree_sha, "-p", head_sha, "-m", "Remote-only direct PR change"],
+        cwd=git_workspace,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _git(
+        git_workspace, "update-ref", "refs/remotes/origin/feature/push-approval", remote_only_commit
+    )
+    behind = _checkpoint("pr", git_workspace)
+    behind_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": behind.checkpoint_digest,
+            "title": "Reject stale upstream",
+            "body": "Remote tracking branch is ahead.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert no_upstream.ready is True
+    assert missing_upstream_response.status_code == 400
+    assert "configured upstream" in missing_upstream_response.json()["detail"]
+    assert unpushed.ready is True
+    assert unpushed.ahead == 1
+    assert unpushed_response.status_code == 400
+    assert "branch to be pushed" in unpushed_response.json()["detail"]
+    assert behind.ready is True
+    assert behind.behind == 1
+    assert behind_response.status_code == 400
+    assert "current with upstream" in behind_response.json()["detail"]
+    assert not record_path.exists()
+
+
+def test_git_pr_run_rejects_arbitrary_command_remote_and_flags_payload(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject arbitrary payload",
+            "body": "Only structured PR fields are allowed.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+            "command": "gh pr create --web",
+            "remote": "origin",
+            "flags": ["--web"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_git_pr_run_rejects_secret_and_multiline_title_body_without_leakage(
+    git_workspace,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    raw_secret = "direct-pr-secret-token"
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path)
+    client = TestClient(create_app())
+
+    title_secret_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": f"API_KEY={raw_secret}",
+            "body": "Rejected title secret.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    title_multiline_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject direct PR\nwith title newline",
+            "body": "Rejected multiline title.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    body_secret_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject PR body secret",
+            "body": f"ACCESS_TOKEN={raw_secret}",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    body_multiline_response = client.post(
+        "/cli/git/pr-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject multiline body",
+            "body": "Rejected direct PR\nwith body newline",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    logs = json.dumps([event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)])
+
+    assert title_secret_response.status_code == 400
+    assert body_secret_response.status_code == 400
+    assert "secret-shaped text" in title_secret_response.json()["detail"]
+    assert "secret-shaped text" in body_secret_response.json()["detail"]
+    assert title_multiline_response.status_code == 400
+    assert body_multiline_response.status_code == 400
+    assert "single printable line" in title_multiline_response.json()["detail"]
+    assert "single printable line" in body_multiline_response.json()["detail"]
+    assert raw_secret not in title_secret_response.text
+    assert raw_secret not in body_secret_response.text
+    assert raw_secret not in logs
+    assert not record_path.exists()
+
+
+def test_git_pr_run_api_uses_cli_capability_and_authenticated_principal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable is not available")
+
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("DGENTIC_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("DGENTIC_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("DGENTIC_AUTH_TOKENS", raising=False)
+    get_settings.cache_clear()
+    _git(root_dir, "init")
+    _git(root_dir, "config", "user.email", "qa@example.test")
+    _git(root_dir, "config", "user.name", "QA Agent")
+    root_dir.joinpath("README.md").write_text("# PR run auth\n", encoding="utf-8")
+    _git(root_dir, "add", "README.md")
+    _git(root_dir, "commit", "-m", "Initial commit")
+    _push_ready_workspace(root_dir, ahead=False)
+    _git(root_dir, "remote", "set-url", "origin", "https://github.com/example/repo.git")
+    checkpoint = _checkpoint("pr", root_dir, evidence=["pytest -q"])
+    record_path = tmp_path / "gh-record.json"
+    _install_fake_gh(tmp_path / "bin", monkeypatch, record_path=record_path)
+
+    cli_token = "git-pr-run-cli-token"
+    expected_actor = sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{cli_token}=cli;task-token=tasks")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    wrong_capability = client.post(
+        "/cli/git/pr-runs",
+        headers={"Authorization": "Bearer task-token"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open authenticated PR",
+            "body": "Wrong capability is rejected.",
+            "test_evidence": ["pytest -q"],
+        },
+    )
+    allowed = client.post(
+        "/cli/git/pr-runs",
         headers={"Authorization": f"Bearer {cli_token}"},
         json={
             "checkpoint_digest": checkpoint.checkpoint_digest,

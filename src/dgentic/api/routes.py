@@ -86,6 +86,8 @@ from dgentic.git_workflows import (
     GitCommitRunRequest,
     GitCommitRunResult,
     GitPrApprovalRequest,
+    GitPrRunRequest,
+    GitPrRunResult,
     GitPushApprovalRequest,
     GitPushRunRequest,
     GitPushRunResult,
@@ -96,6 +98,7 @@ from dgentic.git_workflows import (
     build_git_push_approval_request,
     create_git_workflow_checkpoint,
     run_git_commit_workflow,
+    run_git_pr_workflow,
     run_git_push_workflow,
 )
 from dgentic.guardrails import (
@@ -1600,6 +1603,26 @@ def create_cli_git_pr_approval(
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/git/pr-runs", response_model=GitPrRunResult, status_code=201)
+def run_cli_git_pr(
+    payload: GitPrRunRequest,
+    request: Request,
+) -> GitPrRunResult:
+    try:
+        return run_git_pr_workflow(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

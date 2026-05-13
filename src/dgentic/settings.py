@@ -31,6 +31,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "managed_cli_policy_rules",
         "managed_hook_policy_rules",
         "managed_policy_locks",
+        "managed_plugin_trust_records",
         "max_filesystem_bytes",
         "network_domain_policy",
         "ollama_base_url",
@@ -52,6 +53,7 @@ _JSON_STRING_SETTINGS_FIELDS = frozenset(
         "managed_cli_policy_rules",
         "managed_hook_policy_rules",
         "managed_policy_locks",
+        "managed_plugin_trust_records",
         "network_domain_policy",
         "provider_pricing_catalog",
         "provider_role_routing",
@@ -87,6 +89,18 @@ _MANAGED_HOOK_POLICY_RULE_ALLOWED_FIELDS = frozenset(
         "agent_roles",
         "enabled",
         "priority",
+    }
+)
+_MANAGED_PLUGIN_TRUST_RECORD_MAX_COUNT = 100
+_MANAGED_PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_MANAGED_PLUGIN_DIGEST_RE = re.compile(r"^[a-fA-F0-9]{64}$")
+_MANAGED_PLUGIN_TRUST_ALLOWED_FIELDS = frozenset(
+    {
+        "plugin_id",
+        "manifest_digest",
+        "status",
+        "reason",
+        "decided_by",
     }
 )
 _MANAGED_RULE_TIMESTAMP = datetime(1970, 1, 1, tzinfo=UTC)
@@ -133,6 +147,7 @@ class Settings(BaseSettings):
     managed_cli_policy_rules: str = ""
     managed_hook_policy_rules: str = ""
     managed_policy_locks: str = ""
+    managed_plugin_trust_records: str = ""
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
@@ -191,6 +206,15 @@ class EffectiveSettingsView(BaseModel):
     managed_settings_digest: str | None = None
     managed_fields: list[str] = Field(default_factory=list)
     settings: list[EffectiveSettingValue] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ManagedPluginTrustRecord:
+    plugin_id: str
+    manifest_digest: str
+    status: Literal["trusted", "blocked"]
+    reason: str = ""
+    decided_by: str = "managed"
 
 
 @dataclass(frozen=True)
@@ -271,6 +295,13 @@ def managed_hook_policy_rules():
     if metadata.sources.get("managed_hook_policy_rules") != "managed":
         return tuple()
     return _parse_managed_hook_policy_rules(get_settings().managed_hook_policy_rules)
+
+
+def managed_plugin_trust_records() -> tuple[ManagedPluginTrustRecord, ...]:
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_plugin_trust_records") != "managed":
+        return tuple()
+    return _parse_managed_plugin_trust_records(get_settings().managed_plugin_trust_records)
 
 
 def require_managed_policy_surface_mutable(surface: str) -> None:
@@ -374,6 +405,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
             _parse_managed_cli_policy_rules(value)
         if key == "managed_hook_policy_rules":
             _parse_managed_hook_policy_rules(value)
+        if key == "managed_plugin_trust_records":
+            _parse_managed_plugin_trust_records(value)
         if key == "managed_policy_locks":
             _parse_managed_policy_locks(value)
         if _managed_value_contains_secret_shape(key, value):
@@ -565,6 +598,66 @@ def _parse_managed_hook_policy_rules(raw_value: str):
             )
         )
     return tuple(rules)
+
+
+def _parse_managed_plugin_trust_records(
+    raw_value: str,
+) -> tuple[ManagedPluginTrustRecord, ...]:
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_plugin_trust_records must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_plugin_trust_records must be a list.")
+    if len(parsed) > _MANAGED_PLUGIN_TRUST_RECORD_MAX_COUNT:
+        raise ManagedSettingsError("managed_plugin_trust_records declares too many records.")
+
+    records: list[ManagedPluginTrustRecord] = []
+    seen_plugin_ids: set[str] = set()
+    for raw_record in parsed:
+        if not isinstance(raw_record, dict):
+            raise ManagedSettingsError("managed_plugin_trust_records entries must be objects.")
+        normalized_record = {
+            _normalize_managed_settings_key(str(key)): value for key, value in raw_record.items()
+        }
+        unknown_fields = sorted(set(normalized_record) - _MANAGED_PLUGIN_TRUST_ALLOWED_FIELDS)
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed plugin trust record field: {unknown_fields[0]}"
+            )
+        plugin_id = normalized_record.get("plugin_id")
+        manifest_digest = normalized_record.get("manifest_digest")
+        status = normalized_record.get("status")
+        reason = normalized_record.get("reason", "")
+        decided_by = normalized_record.get("decided_by", "managed")
+        if not isinstance(plugin_id, str) or not _MANAGED_PLUGIN_ID_RE.fullmatch(plugin_id):
+            raise ManagedSettingsError("Managed plugin trust record plugin_id is invalid.")
+        if redact_sensitive_values(plugin_id) != plugin_id:
+            raise ManagedSettingsError("Managed plugin trust record plugin_id is invalid.")
+        if plugin_id in seen_plugin_ids:
+            raise ManagedSettingsError(f"Duplicate managed plugin trust record: {plugin_id}")
+        seen_plugin_ids.add(plugin_id)
+        if not isinstance(manifest_digest, str) or not _MANAGED_PLUGIN_DIGEST_RE.fullmatch(
+            manifest_digest
+        ):
+            raise ManagedSettingsError("Managed plugin trust record manifest_digest is invalid.")
+        if status not in {"trusted", "blocked"}:
+            raise ManagedSettingsError("Managed plugin trust record status is invalid.")
+        if not isinstance(reason, str) or not isinstance(decided_by, str):
+            raise ManagedSettingsError("Managed plugin trust record metadata is invalid.")
+        records.append(
+            ManagedPluginTrustRecord(
+                plugin_id=plugin_id,
+                manifest_digest=manifest_digest.lower(),
+                status=status,
+                reason=redact_sensitive_values(reason.strip()),
+                decided_by=redact_sensitive_values(decided_by.strip()) or "managed",
+            )
+        )
+    return tuple(records)
 
 
 def _normalize_managed_hook_policy_action(action: str) -> str:

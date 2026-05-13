@@ -13,6 +13,7 @@ from dgentic.settings import (
     get_settings,
     managed_cli_policy_rules,
     managed_hook_policy_rules,
+    managed_plugin_trust_records,
     managed_policy_locks,
     require_managed_policy_surface_mutable,
 )
@@ -124,6 +125,123 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
     with pytest.raises(PermissionError, match="plugin_components"):
         require_managed_policy_surface_mutable("plugin_components")
     require_managed_policy_surface_mutable("command_recipes")
+
+
+def test_managed_plugin_trust_records_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_PLUGIN_TRUST_RECORDS",
+        json.dumps(
+            [
+                {
+                    "plugin_id": "env-plugin",
+                    "manifest_digest": "a" * 64,
+                    "status": "trusted",
+                    "reason": "Environment trust is not managed.",
+                }
+            ]
+        ),
+    )
+
+    assert managed_plugin_trust_records() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_plugin_trust_records": [
+                    {
+                        "plugin_id": "managed-plugin",
+                        "manifest_digest": "B" * 64,
+                        "status": "trusted",
+                        "reason": "Deployment reviewed manifest digest.",
+                        "decided_by": "platform-security",
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    records = managed_plugin_trust_records()
+
+    assert json.loads(settings.managed_plugin_trust_records)[0]["plugin_id"] == "managed-plugin"
+    assert fields["managed_plugin_trust_records"].source == "managed"
+    assert view.managed_fields == ["managed_plugin_trust_records"]
+    assert len(records) == 1
+    assert records[0].plugin_id == "managed-plugin"
+    assert records[0].manifest_digest == "b" * 64
+    assert records[0].status == "trusted"
+    assert records[0].decided_by == "platform-security"
+
+
+@pytest.mark.parametrize(
+    ("records_payload", "error_match"),
+    [
+        ({"plugin_id": "not-a-list"}, "must be a list"),
+        (
+            [{"plugin_id": "bad-plugin", "unknown": True}],
+            "Unknown managed plugin trust record field",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "missing-digest",
+                    "status": "trusted",
+                }
+            ],
+            "manifest_digest is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "duplicate-plugin",
+                    "manifest_digest": "a" * 64,
+                    "status": "trusted",
+                },
+                {
+                    "plugin_id": "duplicate-plugin",
+                    "manifest_digest": "b" * 64,
+                    "status": "blocked",
+                },
+            ],
+            "Duplicate managed plugin trust record",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "secret-plugin",
+                    "manifest_digest": "a" * 64,
+                    "status": "trusted",
+                    "reason": "TOKEN=raw-secret",
+                }
+            ],
+            "secret-shaped",
+        ),
+    ],
+)
+def test_managed_plugin_trust_records_fail_closed(
+    tmp_path,
+    monkeypatch,
+    records_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_plugin_trust_records": records_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
 
 
 def test_managed_cli_policy_rules_apply_only_from_managed_settings(

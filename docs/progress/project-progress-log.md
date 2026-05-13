@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009al Managed Plugin Trust Records
+
+Status: completed for the scoped managed plugin trust record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/plugin-trust policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected managed plugin trust records after BL-009ak to extend deployment-owned policy-source controls beyond CLI and hook-policy records.
+- Completed: Architect/Security scoped the contract to exact-manifest-digest managed trust/block records that override local trust for the same plugin id and become stale on manifest drift.
+- Completed: Developer added `managed_plugin_trust_records` parsing, effective-settings source reporting, managed trust-source fields, managed-over-local discovery behavior, stale drift handling, and local trust mutation rejection for managed plugin ids.
+- Completed: QA added managed-settings and API coverage for managed-only loading, fail-closed validation, trust-source reporting, local mutation rejection, no local trust persistence, and manifest drift staleness.
+- Completed: Reviewer/Security validated that managed trust does not persist to `plugin-trust.json`, cannot silently trust changed plugin bytes, and remains read-only through local plugin trust mutation routes.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_plugin_trust_records` with `plugin_id`, exact `manifest_digest`, `trusted` or `blocked` status, reason, and decider metadata.
+- Implemented in this slice: `GET /plugins` and `GET /plugins/{plugin_id}` report `trust_source: "managed"` when a managed record controls the plugin id, return the managed trust decision only when the manifest digest matches, and return `stale` when the manifest bytes drift.
+- Implemented in this slice: managed plugin trust records override local trust records for the same plugin id and reject `PATCH /plugins/{plugin_id}/trust` with a read-only error while leaving unmanaged plugin ids mutable unless `plugin_trust` is locked.
+- Still out of scope after this slice: managed policy sources for command recipes or plugin component records, managed KMS, first-class secret managers, full web retrieval/fetch runtime, generated-tool network approval workflows, OS-level egress isolation, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused managed plugin trust settings gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_plugin_trust"` passed with 6 tests.
+- Focused managed plugin trust API gate: `python -m pytest -q tests\test_api.py -k "managed_plugin_trust or plugin_trust_persists or plugin_routes_require_tools_capability"` passed with 3 tests.
+- Broader plugin API gate: `python -m pytest -q tests\test_api.py -k "plugin"` passed with 15 tests.
+- Managed-settings file gate: `python -m pytest -q tests\test_managed_settings.py` passed with 33 tests.
+- Source/test lint and format gates passed for touched source and tests.
+- Affected suite gate passed: `python -m pytest -q tests\test_api.py tests\test_auth.py tests\test_managed_settings.py` with 346 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,176 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with generated-tool network approval workflow design, OS-level/non-Python egress isolation, managed KMS/secret-manager hardening, richer production identity workflows, plugin loading governance from inert records, managed policy-source controls beyond CLI/hook/plugin trust, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009ak Inert Plugin Reference Component Registry Governance
 
 Status: completed for the scoped metadata-only plugin reference component registry contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

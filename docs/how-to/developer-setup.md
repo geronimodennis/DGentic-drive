@@ -129,6 +129,8 @@ Example:
 
 Use `GET /settings/effective` with an admin-capable token to inspect effective values, source labels, managed field names, and the managed-file SHA-256 digest. Secret-bearing settings are redacted in that view.
 
+The same managed file can publish deployment-owned plugin trust records with `managed_plugin_trust_records`. Each record pins one plugin id to an exact manifest digest and `trusted` or `blocked` status. Managed plugin trust is reported as `trust_source: "managed"`, overrides local `plugin-trust.json` for that plugin id, and rejects local trust mutation until the managed record is removed or changed.
+
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
 ```powershell

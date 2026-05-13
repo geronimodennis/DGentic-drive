@@ -119,6 +119,24 @@ The same managed-source pattern is available for hook policies through `managed_
 }
 ```
 
+Managed settings can also pin plugin trust to exact manifest digests through `managed_plugin_trust_records`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, reported with `trust_source: "managed"` by `GET /plugins`, override local `plugin-trust.json` records for the same plugin id, reject local trust mutation as read-only, and become `stale` when the manifest bytes change:
+
+```json
+{
+  "settings": {
+    "managed_plugin_trust_records": [
+      {
+        "plugin_id": "example-plugin",
+        "manifest_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "status": "trusted",
+        "reason": "Deployment reviewed this exact manifest digest.",
+        "decided_by": "platform-security"
+      }
+    ]
+  }
+}
+```
+
 Example protected request in production mode:
 
 ```powershell

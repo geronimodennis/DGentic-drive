@@ -24,7 +24,7 @@ from dgentic.hook_policy import (
 )
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import HookPolicyRuleRequest, LogEventType
-from dgentic.settings import get_settings
+from dgentic.settings import ManagedPluginTrustRecord, get_settings, managed_plugin_trust_records
 from dgentic.storage import JsonCollection
 
 PLUGIN_MANIFEST_NAME = "dgentic-plugin.json"
@@ -181,6 +181,7 @@ class PluginDiscoveryView(BaseModel):
     manifest_digest: str
     manifest_size_bytes: int = Field(ge=0)
     trust_status: PluginTrustStatus = "untrusted"
+    trust_source: Literal["none", "local", "managed"] = "none"
     trust_reason: str = ""
     trusted_manifest_digest: str = ""
     decided_by: str = ""
@@ -364,6 +365,8 @@ def update_plugin_trust(
     actor: str | None = None,
 ) -> PluginDiscoveryView:
     plugin = get_plugin(plugin_id)
+    if _managed_plugin_trust_record(plugin.plugin_id) is not None:
+        raise PermissionError("Managed plugin trust records are read-only.")
     now = datetime.now(UTC)
     record = PluginTrustRecord(
         plugin_id=plugin.plugin_id,
@@ -788,9 +791,30 @@ def _plugin_view_from_manifest_path(manifest_path: Path) -> PluginDiscoveryView:
     if manifest.plugin_id != manifest_path.parent.name:
         raise ValueError("Plugin manifest id must match its directory name.")
     trust_record = _plugin_trust.get(manifest.plugin_id)
+    managed_trust_record = _managed_plugin_trust_record(manifest.plugin_id)
     trust_status: PluginTrustStatus = "untrusted"
-    if trust_record is not None:
+    trust_source: Literal["none", "local", "managed"] = "none"
+    trust_reason = ""
+    trusted_manifest_digest = ""
+    decided_by = ""
+    trust_updated_at: datetime | None = None
+    if managed_trust_record is not None:
+        trust_status = (
+            managed_trust_record.status
+            if managed_trust_record.manifest_digest == digest
+            else "stale"
+        )
+        trust_source = "managed"
+        trust_reason = managed_trust_record.reason
+        trusted_manifest_digest = managed_trust_record.manifest_digest
+        decided_by = managed_trust_record.decided_by
+    elif trust_record is not None:
         trust_status = trust_record.status if trust_record.manifest_digest == digest else "stale"
+        trust_source = "local"
+        trust_reason = trust_record.reason
+        trusted_manifest_digest = trust_record.manifest_digest
+        decided_by = trust_record.decided_by
+        trust_updated_at = trust_record.updated_at
     return PluginDiscoveryView(
         plugin_id=manifest.plugin_id,
         name=manifest.name,
@@ -808,10 +832,11 @@ def _plugin_view_from_manifest_path(manifest_path: Path) -> PluginDiscoveryView:
         manifest_digest=digest,
         manifest_size_bytes=len(raw_manifest),
         trust_status=trust_status,
-        trust_reason=trust_record.reason if trust_record else "",
-        trusted_manifest_digest=trust_record.manifest_digest if trust_record else "",
-        decided_by=trust_record.decided_by if trust_record else "",
-        trust_updated_at=trust_record.updated_at if trust_record else None,
+        trust_source=trust_source,
+        trust_reason=trust_reason,
+        trusted_manifest_digest=trusted_manifest_digest,
+        decided_by=decided_by,
+        trust_updated_at=trust_updated_at,
     )
 
 
@@ -860,6 +885,18 @@ def _trusted_plugin_for_activation(plugin_id: str) -> PluginDiscoveryView:
     if plugin.trusted_manifest_digest != plugin.manifest_digest:
         raise PermissionError("Plugin trust digest has drifted.")
     return plugin
+
+
+def _managed_plugin_trust_record(plugin_id: str) -> ManagedPluginTrustRecord | None:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    return next(
+        (
+            record
+            for record in managed_plugin_trust_records()
+            if record.plugin_id == normalized_plugin_id
+        ),
+        None,
+    )
 
 
 def _load_plugin_command_recipe_components(

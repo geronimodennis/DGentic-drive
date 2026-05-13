@@ -3688,6 +3688,7 @@ def test_plugin_trust_persists_redacted_decision_and_becomes_stale(
 
     assert trust_response.status_code == 200
     assert trust_body["trust_status"] == "trusted"
+    assert trust_body["trust_source"] == "local"
     assert trust_body["trust_reason"] == (
         "Approved after reviewing TOKEN=[REDACTED] and Authorization: Bearer [REDACTED]"
     )
@@ -3706,8 +3707,79 @@ def test_plugin_trust_persists_redacted_decision_and_becomes_stale(
     assert "trust-auth-secret" not in logs_response.text
     assert stale_response.status_code == 200
     assert stale_response.json()["trust_status"] == "stale"
+    assert stale_response.json()["trust_source"] == "local"
     assert stale_response.json()["trusted_manifest_digest"] == trust_body["manifest_digest"]
     assert stale_response.json()["manifest_digest"] != trust_body["manifest_digest"]
+    get_settings.cache_clear()
+
+
+def test_managed_plugin_trust_records_are_read_only_and_digest_scoped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    data_dir.mkdir()
+    manifest = {
+        "plugin_id": "managed-plugin",
+        "name": "Managed plugin",
+        "version": "1.0.0",
+        "description": "Managed trust.",
+    }
+    _write_plugin_manifest(root_dir, "managed-plugin", manifest)
+    manifest_path = root_dir / "plugins" / "managed-plugin" / "dgentic-plugin.json"
+    manifest_digest = sha256(manifest_path.read_bytes()).hexdigest()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_plugin_trust_records": [
+                        {
+                            "plugin_id": "managed-plugin",
+                            "manifest_digest": manifest_digest,
+                            "status": "trusted",
+                            "reason": "Deployment reviewed plugin digest.",
+                            "decided_by": "platform-security",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    trusted_response = client.get("/plugins/managed-plugin")
+    patch_response = client.patch(
+        "/plugins/managed-plugin/trust",
+        json={"status": "blocked", "reason": "Local override should fail."},
+    )
+    manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "managed-plugin", manifest)
+    stale_response = client.get("/plugins/managed-plugin")
+
+    assert trusted_response.status_code == 200
+    trusted_body = trusted_response.json()
+    assert trusted_body["trust_status"] == "trusted"
+    assert trusted_body["trust_source"] == "managed"
+    assert trusted_body["trust_reason"] == "Deployment reviewed plugin digest."
+    assert trusted_body["decided_by"] == "platform-security"
+    assert trusted_body["trusted_manifest_digest"] == manifest_digest
+    assert patch_response.status_code == 403
+    assert "Managed plugin trust records are read-only" in patch_response.text
+    assert not (data_dir / "plugin-trust.json").exists()
+    assert stale_response.status_code == 200
+    stale_body = stale_response.json()
+    assert stale_body["trust_status"] == "stale"
+    assert stale_body["trust_source"] == "managed"
+    assert stale_body["trusted_manifest_digest"] == manifest_digest
+    assert stale_body["manifest_digest"] != manifest_digest
     get_settings.cache_clear()
 
 

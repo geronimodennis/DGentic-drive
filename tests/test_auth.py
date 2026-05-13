@@ -1886,6 +1886,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/web-retrieval/network/check", "network"),
         ("/web-retrieval/network/approvals", "network"),
         ("/web-retrieval/network/authorize", "network"),
+        ("/web-retrieval/fetch", "network"),
         ("/network/approvals", "approvals"),
         ("/filesystem/read", "filesystem"),
         ("/filesystem/delete", "filesystem"),

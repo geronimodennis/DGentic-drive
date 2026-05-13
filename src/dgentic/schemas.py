@@ -77,6 +77,7 @@ class LogEventType(StrEnum):
     approval = "approval"
     memory = "memory"
     session = "session"
+    web_retrieval = "web_retrieval"
 
 
 class CommandRisk(StrEnum):
@@ -739,6 +740,11 @@ class WebRetrievalNetworkRequest(AgentActionContext):
     requested_by: str | None = Field(default=None, max_length=256)
 
 
+class WebRetrievalFetchRequest(WebRetrievalNetworkRequest):
+    timeout_seconds: float | None = Field(default=None, ge=0.1, le=30.0)
+    max_response_bytes: int | None = Field(default=None, ge=1, le=2 * 1024 * 1024)
+
+
 class NetworkPolicyDecision(BaseModel):
     allowed: bool
     url: str
@@ -747,6 +753,22 @@ class NetworkPolicyDecision(BaseModel):
     matched_domain: str | None = None
     reason: str
     hook_policy: HookPolicyDecision | None = None
+
+
+class WebRetrievalFetchResponse(BaseModel):
+    url: str
+    host: str
+    mode: Literal["allow", "approval_required", "audit"]
+    matched_domain: str | None = None
+    policy_reason: str
+    status_code: int | None = None
+    content_type: str = ""
+    charset: str = ""
+    content_sha256: str
+    size_bytes: int = Field(ge=0)
+    truncated: bool = False
+    content_text: str
+    network_approval_id: str | None = None
 
 
 class FileReadRequest(AgentActionContext):

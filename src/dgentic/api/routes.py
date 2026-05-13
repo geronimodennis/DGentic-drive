@@ -262,6 +262,8 @@ from dgentic.schemas import (
     ToolGenerationResult,
     ToolGovernanceUpdate,
     ToolManifest,
+    WebRetrievalFetchRequest,
+    WebRetrievalFetchResponse,
     WebRetrievalNetworkRequest,
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
@@ -291,9 +293,12 @@ from dgentic.tools import (
     update_tool_governance,
 )
 from dgentic.web_retrieval import (
+    WebRetrievalFetchError,
+    WebRetrievalRedirectError,
     authorize_web_retrieval_network_request,
     create_web_retrieval_network_approval,
     evaluate_web_retrieval_network_policy,
+    fetch_web_retrieval_url,
 )
 
 router = APIRouter()
@@ -1262,6 +1267,37 @@ def authorize_web_retrieval_network_policy(
         reason=redact_sensitive_values(decision.reason),
         hook_policy=decision.hook_policy,
     )
+
+
+@router.post("/web-retrieval/fetch", response_model=WebRetrievalFetchResponse)
+def fetch_web_retrieval_url_route(
+    payload: WebRetrievalFetchRequest,
+    http_request: Request,
+) -> WebRetrievalFetchResponse:
+    try:
+        return fetch_web_retrieval_url(
+            payload.url,
+            approval_id=payload.approval_id,
+            requested_by=_approval_requester(http_request, payload.requested_by),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
+            timeout_seconds=payload.timeout_seconds,
+            max_response_bytes=payload.max_response_bytes,
+        )
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (NetworkApprovalRequiredError, OrchestrationContextAuthorizationError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (PermissionError, WebRetrievalRedirectError) as exc:
+        raise HTTPException(status_code=403, detail=redact_sensitive_values(str(exc))) from exc
+    except WebRetrievalFetchError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=redact_sensitive_values(str(exc)),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)

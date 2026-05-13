@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 import pytest
 from fastapi.testclient import TestClient
 
-from dgentic import provider_runtime, provider_transport, providers
+from dgentic import provider_runtime, provider_transport, providers, web_retrieval
 from dgentic.api.routes import cli_runtime_service
 from dgentic.cli_runtime import CommandRun, CommandRunStatus, ProcessSnapshot
 from dgentic.credentials import CredentialReferenceRequest, create_credential_reference
@@ -75,6 +75,64 @@ def _write_plugin_component(root_dir, plugin_id: str, relative_path: str, payloa
     component_path = root_dir / "plugins" / plugin_id / relative_path
     component_path.parent.mkdir(parents=True, exist_ok=True)
     component_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+class _FakeWebRetrievalHeaders(dict):
+    def get_content_charset(self) -> str | None:
+        content_type = self.get("Content-Type", "")
+        marker = "charset="
+        if marker not in content_type.lower():
+            return None
+        return content_type.lower().split(marker, 1)[1].split(";", 1)[0].strip()
+
+
+class _FakeWebRetrievalResponse:
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        status: int = 200,
+        content_type: str = "text/plain; charset=utf-8",
+    ) -> None:
+        self._body = body
+        self.status = status
+        self.headers = _FakeWebRetrievalHeaders({"Content-Type": content_type})
+        self.read_calls: list[int] = []
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_calls.append(size)
+        if size < 0:
+            return self._body
+        return self._body[:size]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeWebRetrievalOpener:
+    def __init__(
+        self,
+        response: _FakeWebRetrievalResponse | None = None,
+        *,
+        exc: BaseException | None = None,
+    ) -> None:
+        self.response = response or _FakeWebRetrievalResponse(b"ok")
+        self.exc = exc
+        self.calls: list[dict[str, object]] = []
+
+    def open(self, request, timeout):
+        self.calls.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+            }
+        )
+        if self.exc is not None:
+            raise self.exc
+        return self.response
 
 
 def test_health_returns_service_status() -> None:
@@ -2436,6 +2494,428 @@ def test_web_retrieval_network_authorize_rejects_missing_or_wrong_approval(
     assert approve_response.status_code == 200
     assert wrong_surface_response.status_code == 403
     assert "not bound" in wrong_surface_response.text
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("mode", ["allow", "audit"])
+def test_web_retrieval_fetch_returns_bounded_text_with_policy_metadata(
+    tmp_path,
+    monkeypatch,
+    mode: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": mode,
+                        "reason": "Fetch policy token=policy-secret.",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    response = _FakeWebRetrievalResponse(b"hello TOKEN=body-secret")
+    opener = _FakeWebRetrievalOpener(response)
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+
+    fetch_response = client.post(
+        "/web-retrieval/fetch",
+        json={
+            "url": "https://retrieval.example.test/articles/1?token=url-secret",
+            "requested_by": "operator SECRET=requester-secret",
+            "timeout_seconds": 3,
+            "max_response_bytes": 128,
+        },
+    )
+    logs_response = client.get("/logs?event_type=web_retrieval")
+
+    assert fetch_response.status_code == 200
+    body = fetch_response.json()
+    assert body["url"] == "https://retrieval.example.test/articles/1"
+    assert body["host"] == "retrieval.example.test"
+    assert body["mode"] == mode
+    assert body["matched_domain"] == "retrieval.example.test"
+    assert body["status_code"] == 200
+    assert body["content_type"] == "text/plain"
+    assert body["charset"] == "utf-8"
+    assert body["content_sha256"] == sha256(b"hello TOKEN=body-secret").hexdigest()
+    assert body["size_bytes"] == len(b"hello TOKEN=body-secret")
+    assert body["truncated"] is False
+    assert body["content_text"] == "hello TOKEN=[REDACTED]"
+    assert body["network_approval_id"] is None
+    assert opener.calls == [
+        {
+            "url": "https://retrieval.example.test/articles/1?token=url-secret",
+            "method": "GET",
+            "headers": {
+                "Accept": web_retrieval.WEB_RETRIEVAL_ACCEPT_HEADER,
+                "Accept-encoding": "identity",
+                "User-agent": "DGentic-WebRetrieval/1.0",
+            },
+            "timeout": 3.0,
+        }
+    ]
+    assert response.closed is True
+    logs = logs_response.json()
+    assert logs_response.status_code == 200
+    assert logs[-1]["metadata"]["url"] == "https://retrieval.example.test/articles/1"
+    assert logs[-1]["metadata"]["mode"] == mode
+    serialized = json.dumps({"fetch": body, "logs": logs})
+    for secret in ["url-secret", "policy-secret", "requester-secret", "body-secret"]:
+        assert secret not in serialized
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("mode", "detail"),
+    [
+        ("deny", "Denied by policy token"),
+        ("approval_required", "bound network approval"),
+    ],
+)
+def test_web_retrieval_fetch_blocks_before_transport_without_permission(
+    tmp_path,
+    monkeypatch,
+    mode: str,
+    detail: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": mode,
+                        "reason": "Denied by policy token=policy-secret.",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener()
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://retrieval.example.test/articles/1?token=url-secret"},
+    )
+
+    assert response.status_code == 403
+    assert detail in response.text
+    assert "url-secret" not in response.text
+    assert "policy-secret" not in response.text
+    assert opener.calls == []
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_requires_explicit_policy_rule_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener()
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://retrieval.example.test/articles/1"},
+    )
+
+    assert response.status_code == 403
+    assert "explicit network policy rule" in response.text
+    assert opener.calls == []
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_claims_single_use_approval(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener(_FakeWebRetrievalResponse(b"approved fetch"))
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+    url = "https://retrieval.example.test/articles/1?token=url-secret"
+
+    create_response = client.post(
+        "/web-retrieval/network/approvals",
+        json={"url": url, "requested_by": "operator"},
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    fetch_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": url, "approval_id": approval_id, "requested_by": "operator"},
+    )
+    second_fetch_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": url, "approval_id": approval_id, "requested_by": "operator"},
+    )
+    executed_response = client.get("/network/approvals?status=executed")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert fetch_response.status_code == 200
+    assert fetch_response.json()["network_approval_id"] == approval_id
+    assert second_fetch_response.status_code == 403
+    assert "not executable" in second_fetch_response.text
+    assert executed_response.status_code == 200
+    assert executed_response.json()[0]["id"] == approval_id
+    assert len(opener.calls) == 1
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_rejects_wrong_approval_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener()
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+    url = "https://retrieval.example.test/articles/1"
+
+    provider_approval_response = client.post(
+        "/network/approvals",
+        json={
+            "url": url,
+            "surface": "provider",
+            "action": "fetch",
+            "requested_by": "operator",
+        },
+    )
+    approval_id = provider_approval_response.json()["id"]
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    fetch_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": url, "approval_id": approval_id, "requested_by": "operator"},
+    )
+
+    assert provider_approval_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert fetch_response.status_code == 403
+    assert "not bound" in fetch_response.text
+    assert opener.calls == []
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_rejects_unneeded_approval_and_invalid_url_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "allow",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener()
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+
+    unneeded_approval_response = client.post(
+        "/web-retrieval/fetch",
+        json={
+            "url": "https://retrieval.example.test/articles/1",
+            "approval_id": "network-approval-unused",
+        },
+    )
+    credential_url_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://user:pass@retrieval.example.test/articles/1"},
+    )
+    fragment_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://retrieval.example.test/articles/1#fragment-secret"},
+    )
+
+    assert unneeded_approval_response.status_code == 403
+    assert "only valid when web retrieval policy requires approval" in (
+        unneeded_approval_response.text
+    )
+    assert credential_url_response.status_code == 400
+    assert "must not include credentials" in credential_url_response.text
+    assert fragment_response.status_code == 400
+    assert "must not include a fragment" in fragment_response.text
+    assert "fragment-secret" not in fragment_response.text
+    assert opener.calls == []
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_truncates_bounded_text_response(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "retrieval.example.test", "mode": "allow"}]}),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener(_FakeWebRetrievalResponse(b"abcdef"))
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/web-retrieval/fetch",
+        json={
+            "url": "https://retrieval.example.test/articles/1",
+            "max_response_bytes": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content_text"] == "abcde"
+    assert body["size_bytes"] == 5
+    assert body["truncated"] is True
+    assert opener.response.read_calls == [6]
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_blocks_binary_content_and_redirects(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "retrieval.example.test", "mode": "allow"}]}),
+    )
+    get_settings.cache_clear()
+    binary_response = _FakeWebRetrievalResponse(
+        b"\x00\x01\x02",
+        content_type="application/octet-stream",
+    )
+    binary_opener = _FakeWebRetrievalOpener(binary_response)
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", binary_opener)
+    client = TestClient(create_app())
+
+    binary_fetch_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://retrieval.example.test/articles/1"},
+    )
+
+    redirect_opener = _FakeWebRetrievalOpener(
+        exc=web_retrieval.WebRetrievalRedirectError("Web retrieval redirects are blocked.")
+    )
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", redirect_opener)
+    redirect_response = client.post(
+        "/web-retrieval/fetch",
+        json={"url": "https://retrieval.example.test/articles/2?token=url-secret"},
+    )
+
+    assert binary_fetch_response.status_code == 415
+    assert "text-like" in binary_fetch_response.text
+    assert binary_response.read_calls == []
+    assert redirect_response.status_code == 403
+    assert "redirects are blocked" in redirect_response.text
+    assert "url-secret" not in redirect_response.text
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_fetch_blocks_partial_active_orchestration_context(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "retrieval.example.test", "mode": "allow"}]}),
+    )
+    get_settings.cache_clear()
+    opener = _FakeWebRetrievalOpener()
+    monkeypatch.setattr(web_retrieval, "_WEB_RETRIEVAL_OPENER", opener)
+    client = TestClient(create_app())
+    create_run_response = client.post(
+        "/tasks/orchestrations",
+        json={
+            "objective": "Block partial web retrieval context.",
+            "tasks": [
+                {
+                    "id": "qa-validation",
+                    "title": "QA validation",
+                    "description": "Validate web retrieval context binding.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_api.py"],
+                    "validation": "Web retrieval context is verified.",
+                }
+            ],
+        },
+    )
+    task = create_run_response.json()["tasks"][0]
+
+    response = client.post(
+        "/web-retrieval/fetch",
+        json={
+            "url": "https://retrieval.example.test/articles/1",
+            "agent_id": task["agent_id"],
+        },
+    )
+
+    assert create_run_response.status_code == 201
+    assert response.status_code == 403
+    assert "require agent_id, agent_role, and task_id" in response.text
+    assert opener.calls == []
     get_settings.cache_clear()
 
 

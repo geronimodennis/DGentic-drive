@@ -46,6 +46,8 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "provider_retry_max_attempts",
         "provider_retry_max_delay_seconds",
         "provider_role_routing",
+        "web_retrieval_max_response_bytes",
+        "web_retrieval_timeout_seconds",
     }
 )
 _MANAGED_SETTINGS_MAX_BYTES = 256 * 1024
@@ -203,6 +205,12 @@ class Settings(BaseSettings):
     credential_process_adapters: str = ""
     credential_process_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
     credential_process_max_output_bytes: int = Field(default=4096, ge=1, le=65536)
+    web_retrieval_timeout_seconds: float = Field(default=10.0, ge=0.1, le=30.0)
+    web_retrieval_max_response_bytes: int = Field(
+        default=256 * 1024,
+        ge=1,
+        le=2 * 1024 * 1024,
+    )
 
     @property
     def effective_auth_enabled(self) -> bool:

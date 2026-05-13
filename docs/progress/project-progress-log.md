@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ap Guarded Web Retrieval Fetch Runtime
+
+Status: completed for the scoped guarded web retrieval fetch runtime slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected guarded web retrieval fetch runtime after BL-009ao because the transport-free `web_retrieval`/`fetch` guard contract already existed and the missing runtime was now a concrete bounded security gap.
+- Completed: Architect/Security scoped the runtime to a single `POST /web-retrieval/fetch` endpoint with explicit host policy requirements, GET-only transport, no redirects, no caller headers/cookies/proxies, text-like content only, bounded/truncated responses, and existing single-use network approval binding.
+- Completed: Developer added web retrieval timeout/byte-cap settings, fetch request/response schemas, `LogEventType.web_retrieval`, the guarded fetch service, redirect-disabled/proxy-disabled transport, safe text decoding, audit metadata, and the API route under the existing `network` capability prefix.
+- Completed: QA added API/auth coverage for allow/audit success with mocked transport, denial and missing approval before transport, explicit policy requirements, approval-required single-use execution, wrong/reused approvals, stray approval ids, URL credentials/fragments, truncation, binary content rejection, redirect blocking, active-task context rejection, and response/log redaction.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /web-retrieval/fetch` executes one guarded GET request only after the target host matches an explicit network policy rule.
+- Implemented in this slice: `approval_required` web retrieval fetches consume a single-use network approval bound to `surface: "web_retrieval"` and `action: "fetch"`; approval ids are rejected when the active host policy is `allow` or `audit`.
+- Implemented in this slice: fetch transport blocks redirects, proxies, caller-supplied headers, cookies, request bodies, URL credentials, URL fragments, non-text-like content, and oversized reads beyond the configured cap plus one-byte truncation detection.
+- Implemented in this slice: fetch responses include sanitized URL, host, status, content type, charset, SHA-256 digest, bounded redacted text, size, truncation state, policy metadata, and consumed approval id; audit events omit fetched body text and raw query strings.
+- Still out of scope after this slice: crawling, HTML parsing, indexing, summarization, redirect re-authorization, caller-supplied headers/auth/cookies, OS-level/non-Python egress isolation, first-class secret-manager adapters, managed KMS, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused web retrieval API gate: `python -m pytest -q tests\test_api.py -k "web_retrieval" --maxfail=1 -x` passed with 13 tests and 197 deselected.
+- Combined web retrieval/network/auth/settings gate: `python -m pytest -q tests\test_network_policy.py tests\test_auth.py tests\test_managed_settings.py -k "web_retrieval or network_approval or capability_for_path or managed_settings or effective_settings" --maxfail=1 -x` passed with 110 tests and 76 deselected.
+- Affected suite gate passed: `python -m pytest -q tests\test_api.py tests\test_network_policy.py tests\test_auth.py tests\test_managed_settings.py --maxfail=1 -x` with 396 tests.
+- Full lint/format hygiene gates passed: `python -m ruff check .` and `python -m ruff format --check .`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,223 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009ao Managed Plugin Component Records
 
 Status: completed for the scoped managed plugin component record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

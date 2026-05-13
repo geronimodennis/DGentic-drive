@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ai Web Retrieval Network Guard Contract
+
+Status: completed for the scoped transport-free web retrieval network guard contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected a bounded web retrieval guard contract after BL-009ah because the backlog calls out web retrieval network enforcement but the repo does not yet have a concrete fetcher/crawler runtime.
+- Completed: Developer added `web_retrieval.py` with `web_retrieval`/`fetch`-scoped policy evaluation, approval creation, and approval-claim authorization helpers, plus API routes under `/web-retrieval/network/*` and `network` capability mapping.
+- Completed: QA added network-policy, API, and auth coverage proving web retrieval approvals are surface/action-bound, single-use, sanitized, hook-policy aware, and protected by the `network` capability.
+- Completed: Reviewer/Security validated that the slice does not implement outbound fetching, crawling, or HTML parsing, keeps approval binding on the existing network approval machinery, and avoids exposing URL query strings, fragments, or secret-shaped policy reasons in web-retrieval policy responses.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /web-retrieval/network/check` evaluates a URL through the normal network policy engine using the pinned `fetch` action for hook-policy escalation.
+- Implemented in this slice: `POST /web-retrieval/network/approvals` creates a normal network approval pinned to `surface: "web_retrieval"` and `action: "fetch"` when policy requires approval.
+- Implemented in this slice: `POST /web-retrieval/network/authorize` claims a matching approved network approval before a future retrieval client can fetch, and rejects missing, wrong-surface, expired, denied, stale, or already-executed approvals.
+- Implemented in this slice: web retrieval policy responses use sanitized URL previews without query strings or fragments and redacted policy reasons, while persisted approval records keep existing digest-bound URL/policy binding.
+- Still out of scope after this slice: actual web fetch/crawler transport, HTML/document parsing, content ingestion into memory, browser retrieval, generated-tool network approval workflows, OS-level egress isolation, managed KMS, first-class secret managers, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused web-retrieval network-policy gate: `python -m pytest -q tests\test_network_policy.py -k "web_retrieval or network_approval"` passed with 8 tests.
+- Focused web-retrieval API gate: `python -m pytest -q tests\test_api.py -k "web_retrieval_network or network_approval_api or guardrails_network_returns_policy_decision"` passed with 5 tests.
+- Focused auth capability gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution"` passed with 59 tests.
+- Focused lint/format gates passed for touched source and tests.
+- Affected suite gate passed: `python -m pytest -q tests\test_network_policy.py tests\test_api.py tests\test_auth.py tests\test_provider_runtime.py tests\test_tool_runtime.py` with 494 tests.
+- Full lint and format gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,163 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with generated-tool network approval workflows, OS-level/non-Python generated-tool egress isolation, managed KMS/secret-manager hardening, richer production identity workflows, plugin hook-code/tool/agent/skill loading governance, managed policy-source controls beyond CLI/hook policy rules, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009ah Managed Hook-Policy Rule Precedence
 
 Status: completed for the scoped managed hook-policy rule precedence slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

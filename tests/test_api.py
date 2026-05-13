@@ -2290,6 +2290,142 @@ def test_network_approval_api_lifecycle_redacts_safe_metadata(tmp_path, monkeypa
     get_settings.cache_clear()
 
 
+def test_web_retrieval_network_api_pins_surface_claims_approval_and_redacts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                        "reason": "Review retrieval token=policy-secret.",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "url": "https://retrieval.example.test/articles/1?token=url-secret",
+        "approval_id": "ignored-for-create",
+        "requested_by": "operator SECRET=requester-secret",
+    }
+
+    check_response = client.post("/web-retrieval/network/check", json=payload)
+    create_response = client.post("/web-retrieval/network/approvals", json=payload)
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={
+            "decided_by": "reviewer TOKEN=reviewer-secret",
+            "reason": "Approved PASSWORD=reason-secret",
+        },
+    )
+    authorize_response = client.post(
+        "/web-retrieval/network/authorize",
+        json={
+            **payload,
+            "approval_id": approval_id,
+        },
+    )
+    executed_response = client.get("/network/approvals?status=executed")
+
+    assert check_response.status_code == 200
+    assert check_response.json()["mode"] == "approval_required"
+    assert create_response.status_code == 201
+    approval = create_response.json()
+    assert approval["url"] == "https://retrieval.example.test/articles/1"
+    assert approval["surface"] == "web_retrieval"
+    assert approval["action"] == "fetch"
+    assert approval["requested_by"] == "operator SECRET=[REDACTED]"
+    assert approve_response.status_code == 200
+    assert authorize_response.status_code == 200
+    assert authorize_response.json()["mode"] == "approval_required"
+    assert executed_response.status_code == 200
+    assert executed_response.json()[0]["id"] == approval_id
+
+    response_text = json.dumps(
+        {
+            "check": check_response.json(),
+            "create": create_response.json(),
+            "approve": approve_response.json(),
+            "authorize": authorize_response.json(),
+            "executed": executed_response.json(),
+        }
+    )
+    stored = (tmp_path / "state" / "network-approvals.json").read_text(encoding="utf-8")
+    for secret in [
+        "url-secret",
+        "policy-secret",
+        "requester-secret",
+        "reviewer-secret",
+        "reason-secret",
+    ]:
+        assert secret not in response_text
+        assert secret not in stored
+    get_settings.cache_clear()
+
+
+def test_web_retrieval_network_authorize_rejects_missing_or_wrong_approval(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    url = "https://retrieval.example.test/articles/1"
+
+    missing_response = client.post(
+        "/web-retrieval/network/authorize",
+        json={"url": url, "requested_by": "operator"},
+    )
+    provider_approval_response = client.post(
+        "/network/approvals",
+        json={
+            "url": url,
+            "surface": "provider",
+            "action": "fetch",
+            "requested_by": "operator",
+        },
+    )
+    approval_id = provider_approval_response.json()["id"]
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    wrong_surface_response = client.post(
+        "/web-retrieval/network/authorize",
+        json={"url": url, "approval_id": approval_id, "requested_by": "operator"},
+    )
+
+    assert missing_response.status_code == 403
+    assert "bound network approval" in missing_response.text
+    assert provider_approval_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert wrong_surface_response.status_code == 403
+    assert "not bound" in wrong_surface_response.text
+    get_settings.cache_clear()
+
+
 def test_network_approval_api_blocks_partial_active_orchestration_context(
     tmp_path,
     monkeypatch,

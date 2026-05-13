@@ -123,6 +123,7 @@ from dgentic.hook_policy import (
 from dgentic.memory import add_memory, search_memory
 from dgentic.network_policy import (
     NetworkApproval,
+    NetworkApprovalRequiredError,
     NetworkApprovalReview,
     NetworkApprovalStatus,
     NetworkDomainPolicyError,
@@ -132,6 +133,7 @@ from dgentic.network_policy import (
     evaluate_network_domain_policy,
     get_network_approval_review,
     list_network_approvals,
+    safe_network_url_for_review,
 )
 from dgentic.orchestration import (
     OrchestrationContextAuthorizationError,
@@ -183,6 +185,7 @@ from dgentic.providers import (
     choose_provider,
     list_providers,
 )
+from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import (
     AgentBrief,
     AgentOutput,
@@ -253,6 +256,7 @@ from dgentic.schemas import (
     ToolGenerationResult,
     ToolGovernanceUpdate,
     ToolManifest,
+    WebRetrievalNetworkRequest,
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
 from dgentic.settings import (
@@ -279,6 +283,11 @@ from dgentic.tools import (
     list_tools,
     register_tool,
     update_tool_governance,
+)
+from dgentic.web_retrieval import (
+    authorize_web_retrieval_network_request,
+    create_web_retrieval_network_approval,
+    evaluate_web_retrieval_network_policy,
 )
 
 router = APIRouter()
@@ -1165,6 +1174,88 @@ def deny_network_policy_approval(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/web-retrieval/network/check", response_model=NetworkPolicyDecision)
+def check_web_retrieval_network_policy(
+    payload: WebRetrievalNetworkRequest,
+    http_request: Request,
+) -> NetworkPolicyDecision:
+    try:
+        decision = evaluate_web_retrieval_network_policy(
+            payload.url,
+            actor=_principal_actor(http_request),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
+        )
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return NetworkPolicyDecision(
+        allowed=decision.allowed,
+        url=safe_network_url_for_review(decision.url),
+        host=decision.host,
+        mode=decision.mode,
+        matched_domain=decision.matched_domain,
+        reason=redact_sensitive_values(decision.reason),
+        hook_policy=decision.hook_policy,
+    )
+
+
+@router.post(
+    "/web-retrieval/network/approvals",
+    response_model=NetworkApproval,
+    status_code=201,
+)
+def create_web_retrieval_network_policy_approval(
+    payload: WebRetrievalNetworkRequest,
+    http_request: Request,
+) -> NetworkApproval:
+    try:
+        return create_web_retrieval_network_approval(
+            payload.url,
+            requested_by=_approval_requester(http_request, payload.requested_by),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
+        )
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OrchestrationContextAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/web-retrieval/network/authorize", response_model=NetworkPolicyDecision)
+def authorize_web_retrieval_network_policy(
+    payload: WebRetrievalNetworkRequest,
+    http_request: Request,
+) -> NetworkPolicyDecision:
+    try:
+        decision = authorize_web_retrieval_network_request(
+            payload.url,
+            approval_id=payload.approval_id,
+            requested_by=_approval_requester(http_request, payload.requested_by),
+            agent_id=payload.agent_id,
+            agent_role=payload.agent_role,
+            task_id=payload.task_id,
+        )
+    except NetworkDomainPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (NetworkApprovalRequiredError, OrchestrationContextAuthorizationError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return NetworkPolicyDecision(
+        allowed=decision.allowed,
+        url=safe_network_url_for_review(decision.url),
+        host=decision.host,
+        mode=decision.mode,
+        matched_domain=decision.matched_domain,
+        reason=redact_sensitive_values(decision.reason),
+        hook_policy=decision.hook_policy,
+    )
 
 
 @router.post("/cli/policy/rules", response_model=CommandPolicyRule, status_code=201)

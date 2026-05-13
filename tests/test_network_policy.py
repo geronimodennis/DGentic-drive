@@ -28,6 +28,11 @@ from dgentic.schemas import (
     OrchestrationTaskSpec,
 )
 from dgentic.settings import Settings, get_settings
+from dgentic.web_retrieval import (
+    authorize_web_retrieval_network_request,
+    create_web_retrieval_network_approval,
+    evaluate_web_retrieval_network_policy,
+)
 
 
 @pytest.fixture()
@@ -350,3 +355,109 @@ def test_bound_network_approval_rejects_hook_policy_drift(network_approval_state
             action="generate",
             requested_by="operator",
         )
+
+
+def test_web_retrieval_network_approval_is_surface_bound_and_single_use(
+    network_approval_state,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                        "reason": "Review web retrieval.",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    url = "https://retrieval.example.test/articles/1?token=query-secret"
+
+    provider_approval = create_network_approval(
+        url,
+        surface="provider",
+        action="fetch",
+        requested_by="operator",
+    )
+    approve_network_approval(provider_approval.id, decided_by="reviewer")
+    with pytest.raises(NetworkApprovalRequiredError, match="not bound"):
+        authorize_web_retrieval_network_request(
+            url,
+            approval_id=provider_approval.id,
+            requested_by="operator",
+        )
+
+    approval = create_web_retrieval_network_approval(url, requested_by="operator")
+    approve_network_approval(approval.id, decided_by="reviewer")
+    decision = authorize_web_retrieval_network_request(
+        url,
+        approval_id=approval.id,
+        requested_by="operator",
+    )
+
+    assert approval.surface == "web_retrieval"
+    assert approval.action == "fetch"
+    assert approval.url == "https://retrieval.example.test/articles/1"
+    assert decision.mode == "approval_required"
+    assert list_network_approvals()[1].status == NetworkApprovalStatus.executed
+    with pytest.raises(NetworkApprovalRequiredError, match="not executable"):
+        authorize_web_retrieval_network_request(
+            url,
+            approval_id=approval.id,
+            requested_by="operator",
+        )
+
+
+def test_web_retrieval_network_policy_uses_fetch_hook_action(
+    network_approval_state,
+) -> None:
+    hook_rule = create_hook_policy_rule(
+        HookPolicyRuleRequest(
+            name="Block web retrieval fetch",
+            surface=HookPolicySurface.network,
+            action="fetch",
+            match_type=HookPolicyMatchType.contains,
+            pattern="https://retrieval.example.test/private",
+            effect=HookPolicyEffect.blocked,
+            reason="Web retrieval fetch is blocked.",
+        )
+    )
+
+    web_decision = evaluate_web_retrieval_network_policy("https://retrieval.example.test/private")
+    generic_decision = evaluate_network_domain_policy(
+        "https://retrieval.example.test/private",
+        action="request",
+    )
+
+    assert web_decision.mode == "deny"
+    assert web_decision.hook_policy is not None
+    assert web_decision.hook_policy.matched_rule_id == hook_rule.id
+    assert generic_decision.mode == "allow"
+
+
+def test_web_retrieval_authorization_requires_bound_approval(
+    network_approval_state,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "retrieval.example.test",
+                        "mode": "approval_required",
+                    }
+                ]
+            }
+        ),
+    )
+    get_settings.cache_clear()
+
+    with pytest.raises(NetworkApprovalRequiredError, match="bound network approval"):
+        authorize_web_retrieval_network_request("https://retrieval.example.test/articles/1")

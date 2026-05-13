@@ -618,6 +618,10 @@ def network_url_digest(url: str) -> str:
     return _network_hmac_digest(_canonical_json(_canonical_url_for_binding(parts)))
 
 
+def safe_network_url_for_review(url: str) -> str:
+    return _safe_url_for_review(_url_parts_for_approval(url))
+
+
 def network_policy_decision_digest(
     decision: NetworkDomainPolicyDecision,
     *,

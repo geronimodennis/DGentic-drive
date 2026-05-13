@@ -732,6 +732,12 @@ class NetworkApprovalRequest(AgentActionContext):
     requested_by: str | None = Field(default=None, max_length=256)
 
 
+class WebRetrievalNetworkRequest(AgentActionContext):
+    url: str = Field(min_length=1, max_length=2048)
+    approval_id: str | None = None
+    requested_by: str | None = Field(default=None, max_length=256)
+
+
 class NetworkPolicyDecision(BaseModel):
     allowed: bool
     url: str

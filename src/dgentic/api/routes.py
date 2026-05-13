@@ -15,6 +15,7 @@ from dgentic.agents import (
 )
 from dgentic.auth import (
     CAPABILITY_CLI,
+    CAPABILITY_HOOKS,
     AuthTokenCreateResponse,
     AuthTokenRequest,
     AuthTokenRotateRequest,
@@ -142,12 +143,16 @@ from dgentic.plugins import (
     PluginCommandRecipeActivationResponse,
     PluginDiscoveryResponse,
     PluginDiscoveryView,
+    PluginHookPolicyActivationResponse,
     PluginTrustRequest,
     disable_plugin_command_recipe_activation,
+    disable_plugin_hook_policy_activation,
     discover_plugins,
     get_plugin,
     install_plugin_command_recipes,
+    install_plugin_hook_policies,
     preview_plugin_command_recipe_activation,
+    preview_plugin_hook_policy_activation,
     update_plugin_trust,
 )
 from dgentic.provider_pricing import ProviderPricingConfigurationError
@@ -1534,6 +1539,63 @@ def disable_local_plugin_command_recipes(
     try:
         require_managed_policy_surface_mutable("plugin_command_recipes")
         return disable_plugin_command_recipe_activation(plugin_id, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/hook-policies/preview",
+    response_model=PluginHookPolicyActivationResponse,
+)
+def preview_local_plugin_hook_policies(
+    plugin_id: str,
+    request: Request,
+) -> PluginHookPolicyActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_HOOKS)
+    try:
+        return preview_plugin_hook_policy_activation(plugin_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/hook-policies/install",
+    response_model=PluginHookPolicyActivationResponse,
+)
+def install_local_plugin_hook_policies(
+    plugin_id: str,
+    request: Request,
+) -> PluginHookPolicyActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_HOOKS)
+    try:
+        require_managed_policy_surface_mutable("plugin_hook_policies")
+        return install_plugin_hook_policies(plugin_id, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/hook-policies/disable",
+    response_model=PluginHookPolicyActivationResponse,
+)
+def disable_local_plugin_hook_policies(
+    plugin_id: str,
+    request: Request,
+) -> PluginHookPolicyActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_HOOKS)
+    try:
+        require_managed_policy_surface_mutable("plugin_hook_policies")
+        return disable_plugin_hook_policy_activation(plugin_id, actor=_principal_actor(request))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

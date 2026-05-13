@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009af Trusted Declarative Plugin Hook-Policy Activation Governance
+
+Status: completed for the scoped declarative plugin hook-policy activation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, per-record managed policy-source precedence beyond coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected trusted declarative plugin hook-policy activation as the next bounded Sprint 15 slice after BL-009ae because hook-policy activation should reuse the trusted-current-manifest model before any plugin hook-code loading is considered.
+- Completed: Architect/Security scoped the slice to bounded JSON component reads, no plugin import/load/execution, trusted-current-manifest-only preview/install, plugin provenance, disable/reinstall semantics, manual plugin-owned mutation blocking, and `tools` plus `hooks` authorization.
+- Completed: Developer added plugin hook-policy manifest component declarations, activation preview/install/disable services and routes, plugin provenance fields on hook-policy rules, plugin-owned hook-policy install/disable helpers, `plugin_hook_policies` managed locks, and evaluation skipping for disabled plugin-owned rules.
+- Completed: QA added coverage for trusted-only preview/install, single-component list payloads, persisted provenance, command hook-policy evaluation, plugin-owned manual patch rejection, disable/reinstall behavior, blocked/stale/secret-shaped component rejection without leakage, `tools` plus `hooks` route authorization, plugin route capability mapping, and managed lock enforcement.
+- Completed: Reviewer/Security validated that activation is declarative JSON-only, bounded and root-confined component reads are reused, plugin-owned rules cannot be patched through local hook-policy routes, auth requires both `tools` and `hooks` or `admin`, and lock behavior is consistent with plugin command recipe activation.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: trusted current plugin manifests may declare hook-policy components with relative JSON paths such as `{"hook_policies":[{"path":"hooks/deploy.json"}]}`.
+- Implemented in this slice: hook-policy components may be one rule object or a list of rule objects; activation validates them through the normal hook-policy schema and rejects secret-shaped persisted match patterns.
+- Implemented in this slice: installed plugin-owned hook-policy rules persist plugin id, manifest digest, component path, component digest, source type, and active/disabled activation status in `hook-policy-rules.json`.
+- Implemented in this slice: plugin-owned hook-policy rules cannot be manually mutated through `/guardrails/hooks/rules/{rule_id}`, can be disabled/reinstalled through `/plugins/{plugin_id}/hook-policies/*`, and are skipped during evaluation when disabled.
+- Implemented in this slice: plugin hook-policy activation routes require `tools` plus `hooks`, or `admin`, when auth is enabled; install/disable are covered by the new `plugin_hook_policies` managed policy lock surface.
+- Still out of scope after this slice: loading plugin hook code, plugin tool/agent/skill loading, plugin dependency lifecycle management, direct git/PR runners, per-record managed policy-source precedence, managed KMS, first-class secret managers, web retrieval network enforcement, and OS-level/non-Python generated-tool egress isolation.
+
+Validation:
+- Focused plugin hook-policy gate: `python -m pytest -q tests\test_api.py -k "plugin_hook_policy or managed_policy_locks"` passed with 4 tests.
+- Focused auth/settings gates: `python -m pytest -q tests\test_auth.py -k "capability_for_path_maps_public_and_sensitive_routes"` passed with 40 tests, and `python -m pytest -q tests\test_managed_settings.py` passed with 13 tests.
+- Affected broad gate: `python -m pytest -q tests\test_api.py tests\test_auth.py tests\test_hook_policy.py tests\test_managed_settings.py tests\test_command_recipes.py tests\test_network_policy.py` passed with 330 tests.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate was run in chunks after the one-shot shell command exceeded its timeout without a result: affected broad gate passed with 330 tests; CLI/runtime/policy/filesystem/git chunk passed with 431 tests and 2 skipped; orchestration/database/storage chunk passed with 141 tests; memory/retrieval/vector chunk passed with 27 tests; provider runtime chunk passed with 123 tests; tool runtime/registry chunk passed with 73 tests. This covers all 1,127 collected tests.
+
+Next:
+- Continue Sprint 15 with per-record managed policy-source precedence, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, richer production identity workflows, or plugin hook-code/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009ae Checkpoint-Bound Guarded PR Approval Creation
 
 Status: completed for the scoped PR-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

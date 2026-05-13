@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+from pydantic import BaseModel, Field
+
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import (
@@ -21,32 +23,27 @@ _hook_policy_rules = JsonCollection("hook-policy-rules", HookPolicyRule)
 MAX_HOOK_SUBJECT_CHARS = 500
 
 
+class PluginHookPolicyInstallRequest(BaseModel):
+    rule_id: str = Field(min_length=1, max_length=120)
+    rule: HookPolicyRuleRequest
+    plugin_id: str = Field(min_length=1, max_length=80)
+    manifest_digest: str = Field(min_length=64, max_length=64)
+    component_path: str = Field(min_length=1, max_length=300)
+    component_digest: str = Field(min_length=64, max_length=64)
+
+
 def create_hook_policy_rule(
     request: HookPolicyRuleRequest,
     *,
     actor: str | None = None,
 ) -> HookPolicyRule:
+    payload = _normalized_rule_payload(request)
     rule = HookPolicyRule(
         id=f"hookpolicy-{uuid4()}",
-        name=redact_sensitive_values(request.name),
-        surface=request.surface,
-        action=_normalize_action(request.action),
-        match_type=request.match_type,
-        pattern=_stored_pattern(request.surface, request.match_type, request.pattern),
-        effect=request.effect,
-        reason=redact_sensitive_values(request.reason),
-        agent_roles=_normalize_agent_roles(request.agent_roles),
-        enabled=request.enabled,
-        priority=request.priority,
+        **payload,
     )
     _hook_policy_rules.upsert(rule)
-    event_log.record(
-        LogEventType.hook,
-        "Created hook policy rule.",
-        actor=actor or "system",
-        subject_id=rule.id,
-        metadata=rule.model_dump(mode="json"),
-    )
+    _record_hook_policy_event("Created hook policy rule.", rule, actor=actor)
     return rule
 
 
@@ -63,6 +60,8 @@ def update_hook_policy_rule(
     rule = _hook_policy_rules.get(rule_id)
     if rule is None:
         return None
+    if rule.source == "plugin":
+        raise PermissionError("Plugin-owned hook policy rules must be managed through plugins.")
 
     updates = update.model_dump(exclude_unset=True)
     if "name" in updates and updates["name"] is not None:
@@ -94,14 +93,87 @@ def update_hook_policy_rule(
         setattr(rule, field, value)
     rule.updated_at = datetime.now(UTC)
     _hook_policy_rules.upsert(rule)
-    event_log.record(
-        LogEventType.hook,
-        "Updated hook policy rule.",
-        actor=actor or "system",
-        subject_id=rule.id,
-        metadata=rule.model_dump(mode="json"),
-    )
+    _record_hook_policy_event("Updated hook policy rule.", rule, actor=actor)
     return rule
+
+
+def validate_hook_policy_rule_request(request: HookPolicyRuleRequest) -> HookPolicyRuleRequest:
+    payload = _normalized_rule_payload(request)
+    return HookPolicyRuleRequest(**payload)
+
+
+def install_plugin_hook_policy_rule(
+    request: PluginHookPolicyInstallRequest,
+    *,
+    actor: str | None = None,
+) -> HookPolicyRule:
+    now = datetime.now(UTC)
+    payload = _normalized_rule_payload(request.rule)
+    rule = HookPolicyRule(
+        id=request.rule_id,
+        **payload,
+        source="plugin",
+        source_plugin_id=request.plugin_id,
+        source_plugin_manifest_digest=request.manifest_digest,
+        source_plugin_component_path=request.component_path,
+        source_plugin_component_digest=request.component_digest,
+        source_plugin_status="active",
+        created_at=now,
+        updated_at=now,
+    )
+
+    def upsert(items: list[HookPolicyRule]) -> tuple[list[HookPolicyRule], HookPolicyRule]:
+        updated_items: list[HookPolicyRule] = []
+        replaced = False
+        created_at = now
+        for item in items:
+            if item.id != rule.id:
+                updated_items.append(item)
+                continue
+            if item.source != "plugin" or item.source_plugin_id != rule.source_plugin_id:
+                raise ValueError(f"Hook policy rule id is already in use: {rule.id}")
+            created_at = item.created_at
+            updated_items.append(rule.model_copy(update={"created_at": created_at}))
+            replaced = True
+        saved = rule.model_copy(update={"created_at": created_at})
+        if not replaced:
+            updated_items.append(saved)
+        return updated_items, saved
+
+    saved = _hook_policy_rules.transact(upsert)
+    _record_hook_policy_event("Installed plugin hook policy rule.", saved, actor=actor)
+    return saved
+
+
+def disable_plugin_hook_policy_rules(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> list[HookPolicyRule]:
+    now = datetime.now(UTC)
+    disabled: list[HookPolicyRule] = []
+
+    def disable(items: list[HookPolicyRule]) -> tuple[list[HookPolicyRule], list[HookPolicyRule]]:
+        updated_items: list[HookPolicyRule] = []
+        for item in items:
+            if item.source == "plugin" and item.source_plugin_id == plugin_id:
+                updated = item.model_copy(
+                    update={
+                        "enabled": False,
+                        "source_plugin_status": "disabled",
+                        "updated_at": now,
+                    }
+                )
+                updated_items.append(updated)
+                disabled.append(updated)
+            else:
+                updated_items.append(item)
+        return updated_items, disabled
+
+    saved = _hook_policy_rules.transact(disable)
+    for rule in saved:
+        _record_hook_policy_event("Disabled plugin hook policy rule.", rule, actor=actor)
+    return saved
 
 
 def evaluate_hook_policy(
@@ -120,6 +192,8 @@ def evaluate_hook_policy(
     safe_subject = _safe_subject_for_surface(surface, raw_subject)
     for rule in _sorted_rules(_hook_policy_rules.list()):
         if not rule.enabled:
+            continue
+        if rule.source == "plugin" and rule.source_plugin_status != "active":
             continue
         if rule.surface != surface:
             continue
@@ -149,6 +223,36 @@ def evaluate_hook_policy(
         )
         return decision
     return None
+
+
+def _normalized_rule_payload(request: HookPolicyRuleRequest) -> dict:
+    return {
+        "name": redact_sensitive_values(request.name),
+        "surface": request.surface,
+        "action": _normalize_action(request.action),
+        "match_type": request.match_type,
+        "pattern": _stored_pattern(request.surface, request.match_type, request.pattern),
+        "effect": request.effect,
+        "reason": redact_sensitive_values(request.reason),
+        "agent_roles": _normalize_agent_roles(request.agent_roles),
+        "enabled": request.enabled,
+        "priority": request.priority,
+    }
+
+
+def _record_hook_policy_event(
+    message: str,
+    rule: HookPolicyRule,
+    *,
+    actor: str | None,
+) -> None:
+    event_log.record(
+        LogEventType.hook,
+        message,
+        actor=actor or "system",
+        subject_id=rule.id,
+        metadata=rule.model_dump(mode="json"),
+    )
 
 
 def _decision_from_rule(

@@ -145,8 +145,40 @@ class HookPolicyRuleRequest(BaseModel):
 
 class HookPolicyRule(HookPolicyRuleRequest):
     id: str = ""
+    source: Literal["local", "plugin"] = "local"
+    source_plugin_id: str | None = Field(default=None, max_length=80)
+    source_plugin_manifest_digest: str | None = Field(default=None, min_length=64, max_length=64)
+    source_plugin_component_path: str | None = Field(default=None, max_length=300)
+    source_plugin_component_digest: str | None = Field(default=None, min_length=64, max_length=64)
+    source_plugin_status: Literal["active", "disabled"] | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="after")
+    def hook_policy_source_must_be_complete(self) -> "HookPolicyRule":
+        if self.source == "local":
+            if any(
+                (
+                    self.source_plugin_id,
+                    self.source_plugin_manifest_digest,
+                    self.source_plugin_component_path,
+                    self.source_plugin_component_digest,
+                    self.source_plugin_status,
+                )
+            ):
+                raise ValueError("Local hook policy rules must not include plugin provenance.")
+            return self
+        if not all(
+            (
+                self.source_plugin_id,
+                self.source_plugin_manifest_digest,
+                self.source_plugin_component_path,
+                self.source_plugin_component_digest,
+                self.source_plugin_status,
+            )
+        ):
+            raise ValueError("Plugin hook policy rules require complete plugin provenance.")
+        return self
 
 
 class HookPolicyRuleUpdate(BaseModel):

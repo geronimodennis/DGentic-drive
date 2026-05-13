@@ -2053,6 +2053,7 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
                         "hook_policy",
                         "plugin_trust",
                         "plugin_command_recipes",
+                        "plugin_hook_policies",
                     ]
                 }
             }
@@ -2106,6 +2107,8 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
         json={"status": "trusted", "reason": "Managed deployment owns plugin trust."},
     )
     plugin_recipe_install = client.post("/plugins/locked-plugin/command-recipes/install")
+    plugin_hook_install = client.post("/plugins/locked-plugin/hook-policies/install")
+    plugin_hook_disable = client.post("/plugins/locked-plugin/hook-policies/disable")
     cli_policy_list = client.get("/cli/policy/rules")
     hook_list = client.get("/guardrails/hooks/rules")
     recipe_list = client.get("/cli/recipes")
@@ -2121,6 +2124,10 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
     assert "plugin_trust" in plugin_trust.text
     assert plugin_recipe_install.status_code == 403
     assert "plugin_command_recipes" in plugin_recipe_install.text
+    assert plugin_hook_install.status_code == 403
+    assert "plugin_hook_policies" in plugin_hook_install.text
+    assert plugin_hook_disable.status_code == 403
+    assert "plugin_hook_policies" in plugin_hook_disable.text
     assert cli_policy_list.status_code == 200
     assert hook_list.status_code == 200
     assert recipe_list.status_code == 200
@@ -3952,6 +3959,304 @@ def test_plugin_command_recipe_activation_requires_tools_and_cli_capabilities(
     assert cli_install_response.status_code == 403
     assert combo_install_response.status_code == 200
     assert combo_install_response.json()["command_recipes"][0]["status"] == "installed"
+    get_settings.cache_clear()
+
+
+def test_plugin_hook_policy_install_requires_trust_and_controls_evaluation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "hook-plugin",
+        "hooks/deploy.json",
+        [
+            {
+                "name": "Plugin deploy approval",
+                "surface": "command",
+                "action": "execute",
+                "match_type": "contains",
+                "pattern": "deploy",
+                "effect": "approval_required",
+                "reason": "Review plugin deploy.",
+                "agent_roles": ["Developer"],
+                "priority": 5,
+            },
+            {
+                "name": "Plugin protected audit",
+                "surface": "filesystem",
+                "action": "write",
+                "match_type": "prefix",
+                "pattern": "protected/",
+                "effect": "audit",
+                "reason": "Audit protected writes.",
+                "priority": 25,
+            },
+        ],
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "hook-plugin",
+        {
+            "plugin_id": "hook-plugin",
+            "name": "Hook plugin",
+            "version": "1.0.0",
+            "components": {"hook_policies": ["Plugin deploy approval"]},
+            "hook_policies": [{"path": "hooks/deploy.json"}],
+        },
+    )
+    client = TestClient(create_app())
+
+    untrusted_preview_response = client.post("/plugins/hook-plugin/hook-policies/preview")
+    trust_response = client.patch(
+        "/plugins/hook-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed hook policies."},
+    )
+    preview_response = client.post("/plugins/hook-plugin/hook-policies/preview")
+    assert not (data_dir / "hook-policy-rules.json").exists()
+    install_response = client.post("/plugins/hook-plugin/hook-policies/install")
+    installed_rule = install_response.json()["hook_policies"][0]
+    policy_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python deploy.py", "agent_role": "developer"},
+    )
+    patch_response = client.patch(
+        f"/guardrails/hooks/rules/{installed_rule['rule_id']}",
+        json={"enabled": False},
+    )
+    disable_response = client.post("/plugins/hook-plugin/hook-policies/disable")
+    disabled_policy_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python deploy.py", "agent_role": "developer"},
+    )
+    reinstall_response = client.post("/plugins/hook-plugin/hook-policies/install")
+    restored_policy_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python deploy.py", "agent_role": "developer"},
+    )
+
+    assert untrusted_preview_response.status_code == 403
+    assert trust_response.status_code == 200
+    assert preview_response.status_code == 200
+    preview_rules = preview_response.json()["hook_policies"]
+    assert [rule["status"] for rule in preview_rules] == ["ready", "ready"]
+    assert len({rule["rule_id"] for rule in preview_rules}) == 2
+    assert install_response.status_code == 200
+    assert installed_rule["status"] == "installed"
+    assert installed_rule["component_path"] == "hooks/deploy.json"
+    assert len(installed_rule["component_digest"]) == 64
+    assert policy_response.status_code == 200
+    assert policy_response.json()["permission_mode"] == "approval_required"
+    assert policy_response.json()["hook_policy"]["matched_rule_id"] == installed_rule["rule_id"]
+    assert patch_response.status_code == 403
+    assert "managed through plugins" in patch_response.text
+    assert disable_response.status_code == 200
+    assert [rule["status"] for rule in disable_response.json()["hook_policies"]] == [
+        "disabled",
+        "disabled",
+    ]
+    assert disabled_policy_response.status_code == 200
+    assert disabled_policy_response.json()["hook_policy"] is None
+    assert reinstall_response.status_code == 200
+    assert restored_policy_response.status_code == 200
+    assert (
+        restored_policy_response.json()["hook_policy"]["matched_rule_id"]
+        == installed_rule["rule_id"]
+    )
+    persisted = json.loads((data_dir / "hook-policy-rules.json").read_text(encoding="utf-8"))
+    persisted_rule = next(rule for rule in persisted if rule["id"] == installed_rule["rule_id"])
+    assert persisted_rule["source"] == "plugin"
+    assert persisted_rule["source_plugin_id"] == "hook-plugin"
+    assert (
+        persisted_rule["source_plugin_manifest_digest"] == trust_response.json()["manifest_digest"]
+    )
+    assert persisted_rule["source_plugin_component_path"] == "hooks/deploy.json"
+    assert persisted_rule["source_plugin_component_digest"] == installed_rule["component_digest"]
+    assert persisted_rule["source_plugin_status"] == "active"
+    get_settings.cache_clear()
+
+
+def test_plugin_hook_policy_install_fails_for_blocked_stale_and_secret_components(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "blocked-hook-plugin",
+        "hooks/deploy.json",
+        {
+            "name": "Blocked plugin deploy",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "deploy",
+            "effect": "blocked",
+            "reason": "Block deploy.",
+        },
+    )
+    blocked_manifest = {
+        "plugin_id": "blocked-hook-plugin",
+        "name": "Blocked hook plugin",
+        "version": "1.0.0",
+        "hook_policies": [{"path": "hooks/deploy.json"}],
+    }
+    _write_plugin_manifest(root_dir, "blocked-hook-plugin", blocked_manifest)
+    _write_plugin_component(
+        root_dir,
+        "secret-hook-plugin",
+        "hooks/secret.json",
+        {
+            "name": "Secret plugin hook",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "TOKEN=raw-secret",
+            "effect": "blocked",
+            "reason": "Reject secret-shaped values.",
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "secret-hook-plugin",
+        {
+            "plugin_id": "secret-hook-plugin",
+            "name": "Secret hook plugin",
+            "version": "1.0.0",
+            "hook_policies": [{"path": "hooks/secret.json"}],
+        },
+    )
+    client = TestClient(create_app())
+
+    blocked_trust_response = client.patch(
+        "/plugins/blocked-hook-plugin/trust",
+        json={"status": "blocked", "reason": "Do not install."},
+    )
+    blocked_install_response = client.post("/plugins/blocked-hook-plugin/hook-policies/install")
+    trusted_response = client.patch(
+        "/plugins/blocked-hook-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed now."},
+    )
+    blocked_manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "blocked-hook-plugin", blocked_manifest)
+    stale_install_response = client.post("/plugins/blocked-hook-plugin/hook-policies/install")
+    secret_trust_response = client.patch(
+        "/plugins/secret-hook-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed manifest."},
+    )
+    secret_install_response = client.post("/plugins/secret-hook-plugin/hook-policies/install")
+
+    assert blocked_trust_response.status_code == 200
+    assert blocked_trust_response.json()["trust_status"] == "blocked"
+    assert blocked_install_response.status_code == 403
+    assert trusted_response.status_code == 200
+    assert stale_install_response.status_code == 403
+    assert secret_trust_response.status_code == 200
+    assert secret_install_response.status_code == 400
+    assert "raw-secret" not in secret_install_response.text
+    assert "TOKEN=" not in secret_install_response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_hook_policy_activation_requires_tools_and_hooks_capabilities(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "tools-token=tools;hooks-token=hooks;combo-token=tools,hooks;admin-token=admin",
+    )
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "auth-hook-plugin",
+        "hooks/deploy.json",
+        {
+            "name": "Auth plugin deploy",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "deploy",
+            "effect": "approval_required",
+            "reason": "Review auth plugin deploy.",
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "auth-hook-plugin",
+        {
+            "plugin_id": "auth-hook-plugin",
+            "name": "Auth hook plugin",
+            "version": "1.0.0",
+            "hook_policies": [{"path": "hooks/deploy.json"}],
+        },
+    )
+    client = TestClient(create_app())
+    tools_headers = {"Authorization": "Bearer tools-token"}
+    hooks_headers = {"Authorization": "Bearer hooks-token"}
+    combo_headers = {"Authorization": "Bearer combo-token"}
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    trust_response = client.patch(
+        "/plugins/auth-hook-plugin/trust",
+        headers=tools_headers,
+        json={"status": "trusted", "reason": "Reviewed by tools."},
+    )
+    tools_preview_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/preview",
+        headers=tools_headers,
+    )
+    hooks_preview_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/preview",
+        headers=hooks_headers,
+    )
+    combo_preview_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/preview",
+        headers=combo_headers,
+    )
+    tools_install_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/install",
+        headers=tools_headers,
+    )
+    hooks_install_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/install",
+        headers=hooks_headers,
+    )
+    combo_install_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/install",
+        headers=combo_headers,
+    )
+    admin_disable_response = client.post(
+        "/plugins/auth-hook-plugin/hook-policies/disable",
+        headers=admin_headers,
+    )
+
+    assert trust_response.status_code == 200
+    assert tools_preview_response.status_code == 403
+    assert hooks_preview_response.status_code == 403
+    assert combo_preview_response.status_code == 200
+    assert tools_install_response.status_code == 403
+    assert hooks_install_response.status_code == 403
+    assert combo_install_response.status_code == 200
+    assert combo_install_response.json()["hook_policies"][0]["status"] == "installed"
+    assert admin_disable_response.status_code == 200
+    assert admin_disable_response.json()["hook_policies"][0]["status"] == "disabled"
     get_settings.cache_clear()
 
 

@@ -57,6 +57,7 @@ MANAGED_POLICY_LOCK_SURFACES = frozenset(
         "command_recipes",
         "hook_policy",
         "plugin_command_recipes",
+        "plugin_hook_policies",
         "plugin_trust",
     }
 )

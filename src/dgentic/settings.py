@@ -29,6 +29,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "external_openai_compatible_models",
         "lm_studio_base_url",
         "managed_cli_policy_rules",
+        "managed_hook_policy_rules",
         "managed_policy_locks",
         "max_filesystem_bytes",
         "network_domain_policy",
@@ -49,6 +50,7 @@ _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
         "managed_cli_policy_rules",
+        "managed_hook_policy_rules",
         "managed_policy_locks",
         "network_domain_policy",
         "provider_pricing_catalog",
@@ -64,6 +66,23 @@ _MANAGED_CLI_POLICY_RULE_ALLOWED_FIELDS = frozenset(
         "match_type",
         "pattern",
         "permission_mode",
+        "reason",
+        "agent_roles",
+        "enabled",
+        "priority",
+    }
+)
+_MANAGED_HOOK_POLICY_RULE_MAX_COUNT = 100
+_MANAGED_HOOK_POLICY_RULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
+_MANAGED_HOOK_POLICY_RULE_ALLOWED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "surface",
+        "action",
+        "match_type",
+        "pattern",
+        "effect",
         "reason",
         "agent_roles",
         "enabled",
@@ -111,6 +130,7 @@ class Settings(BaseSettings):
     approval_digest_key: str = ""
     managed_settings_file: str = ""
     managed_cli_policy_rules: str = ""
+    managed_hook_policy_rules: str = ""
     managed_policy_locks: str = ""
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -245,6 +265,13 @@ def managed_cli_policy_rules():
     return _parse_managed_cli_policy_rules(get_settings().managed_cli_policy_rules)
 
 
+def managed_hook_policy_rules():
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_hook_policy_rules") != "managed":
+        return tuple()
+    return _parse_managed_hook_policy_rules(get_settings().managed_hook_policy_rules)
+
+
 def require_managed_policy_surface_mutable(surface: str) -> None:
     normalized = _normalize_managed_policy_lock_surface(surface)
     if normalized in managed_policy_locks():
@@ -344,6 +371,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
     for key, value in values.items():
         if key == "managed_cli_policy_rules":
             _parse_managed_cli_policy_rules(value)
+        if key == "managed_hook_policy_rules":
+            _parse_managed_hook_policy_rules(value)
         if key == "managed_policy_locks":
             _parse_managed_policy_locks(value)
         if _managed_value_contains_secret_shape(key, value):
@@ -458,6 +487,90 @@ def _parse_managed_cli_policy_rules(raw_value: str):
 
 
 def _normalize_managed_cli_policy_agent_roles(agent_roles: list[str]) -> list[str]:
+    return sorted({role.strip().lower() for role in agent_roles if role.strip()})
+
+
+def _parse_managed_hook_policy_rules(raw_value: str):
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_hook_policy_rules must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_hook_policy_rules must be a list.")
+    if len(parsed) > _MANAGED_HOOK_POLICY_RULE_MAX_COUNT:
+        raise ManagedSettingsError("managed_hook_policy_rules declares too many rules.")
+
+    from dgentic.schemas import HookPolicyMatchType, HookPolicyRule, HookPolicyRuleRequest
+
+    rules: list[HookPolicyRule] = []
+    seen_ids: set[str] = set()
+    for raw_rule in parsed:
+        if not isinstance(raw_rule, dict):
+            raise ManagedSettingsError("managed_hook_policy_rules entries must be objects.")
+        normalized_rule = {
+            _normalize_managed_settings_key(str(key)): value for key, value in raw_rule.items()
+        }
+        unknown_fields = sorted(set(normalized_rule) - _MANAGED_HOOK_POLICY_RULE_ALLOWED_FIELDS)
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed hook policy rule field: {unknown_fields[0]}"
+            )
+        rule_id = normalized_rule.pop("id", None)
+        if not isinstance(rule_id, str) or not _MANAGED_HOOK_POLICY_RULE_ID_RE.fullmatch(rule_id):
+            raise ManagedSettingsError("Managed hook policy rule id is invalid.")
+        if redact_sensitive_values(rule_id) != rule_id:
+            raise ManagedSettingsError("Managed hook policy rule id is invalid.")
+        if rule_id in seen_ids:
+            raise ManagedSettingsError(f"Duplicate managed hook policy rule id: {rule_id}")
+        seen_ids.add(rule_id)
+        try:
+            request = HookPolicyRuleRequest.model_validate(normalized_rule)
+        except ValueError as exc:
+            raise ManagedSettingsError("Managed hook policy rule is invalid.") from exc
+
+        pattern = request.pattern.strip()
+        if request.match_type == HookPolicyMatchType.any:
+            stored_pattern = redact_sensitive_values(pattern)
+        else:
+            if redact_sensitive_values(pattern) != pattern:
+                raise ManagedSettingsError(
+                    "Managed hook policy patterns must use stable non-secret match values."
+                )
+            if request.surface == "network" and ("?" in pattern or "#" in pattern):
+                raise ManagedSettingsError(
+                    "Managed network hook policy patterns must not include query strings "
+                    "or fragments."
+                )
+            stored_pattern = pattern
+        rules.append(
+            HookPolicyRule(
+                id=rule_id,
+                name=redact_sensitive_values(request.name),
+                surface=request.surface,
+                action=_normalize_managed_hook_policy_action(request.action),
+                match_type=request.match_type,
+                pattern=stored_pattern,
+                effect=request.effect,
+                reason=redact_sensitive_values(request.reason),
+                agent_roles=_normalize_managed_hook_policy_agent_roles(request.agent_roles),
+                enabled=request.enabled,
+                priority=request.priority,
+                source="managed",
+                created_at=_MANAGED_RULE_TIMESTAMP,
+                updated_at=_MANAGED_RULE_TIMESTAMP,
+            )
+        )
+    return tuple(rules)
+
+
+def _normalize_managed_hook_policy_action(action: str) -> str:
+    return action.strip().lower() or "*"
+
+
+def _normalize_managed_hook_policy_agent_roles(agent_roles: list[str]) -> list[str]:
     return sorted({role.strip().lower() for role in agent_roles if role.strip()})
 
 

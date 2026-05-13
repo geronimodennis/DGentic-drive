@@ -17,6 +17,7 @@ from dgentic.schemas import (
     LogEventType,
     PermissionMode,
 )
+from dgentic.settings import managed_hook_policy_rules
 from dgentic.storage import JsonCollection
 
 _hook_policy_rules = JsonCollection("hook-policy-rules", HookPolicyRule)
@@ -48,7 +49,7 @@ def create_hook_policy_rule(
 
 
 def list_hook_policy_rules() -> list[HookPolicyRule]:
-    return _sorted_rules(_hook_policy_rules.list())
+    return _combined_hook_policy_rules()
 
 
 def update_hook_policy_rule(
@@ -57,6 +58,8 @@ def update_hook_policy_rule(
     *,
     actor: str | None = None,
 ) -> HookPolicyRule | None:
+    if _managed_hook_policy_rule(rule_id) is not None:
+        raise PermissionError("Managed hook policy rules cannot be modified through the API.")
     rule = _hook_policy_rules.get(rule_id)
     if rule is None:
         return None
@@ -107,6 +110,9 @@ def install_plugin_hook_policy_rule(
     *,
     actor: str | None = None,
 ) -> HookPolicyRule:
+    if _managed_hook_policy_rule(request.rule_id) is not None:
+        raise ValueError(f"Hook policy rule id is managed: {request.rule_id}")
+
     now = datetime.now(UTC)
     payload = _normalized_rule_payload(request.rule)
     rule = HookPolicyRule(
@@ -190,7 +196,7 @@ def evaluate_hook_policy(
     normalized_action = _normalize_action(action)
     raw_subject = subject.strip()
     safe_subject = _safe_subject_for_surface(surface, raw_subject)
-    for rule in _sorted_rules(_hook_policy_rules.list()):
+    for rule in _combined_hook_policy_rules():
         if not rule.enabled:
             continue
         if rule.source == "plugin" and rule.source_plugin_status != "active":
@@ -287,7 +293,25 @@ def _decision_from_rule(
 
 
 def _sorted_rules(rules: list[HookPolicyRule]) -> list[HookPolicyRule]:
-    return sorted(rules, key=lambda rule: (rule.priority, rule.created_at, rule.id))
+    return sorted(
+        rules,
+        key=lambda rule: (_rule_source_rank(rule), rule.priority, rule.created_at, rule.id),
+    )
+
+
+def _combined_hook_policy_rules() -> list[HookPolicyRule]:
+    managed_rules = list(managed_hook_policy_rules())
+    managed_ids = {rule.id for rule in managed_rules}
+    local_rules = [rule for rule in _hook_policy_rules.list() if rule.id not in managed_ids]
+    return _sorted_rules([*managed_rules, *local_rules])
+
+
+def _managed_hook_policy_rule(rule_id: str) -> HookPolicyRule | None:
+    return next((rule for rule in managed_hook_policy_rules() if rule.id == rule_id), None)
+
+
+def _rule_source_rank(rule: HookPolicyRule) -> int:
+    return 0 if rule.source == "managed" else 1
 
 
 def _rule_applies_to_context(rule: HookPolicyRule, agent_role: str | None) -> bool:

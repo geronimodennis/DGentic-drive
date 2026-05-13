@@ -4,6 +4,44 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ah Managed Hook-Policy Rule Precedence
+
+Status: completed for the scoped managed hook-policy rule precedence slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected per-record managed hook-policy rule precedence as the next bounded Sprint 15 slice after BL-009ag because deployment-owned hook escalation policy should coexist with local and plugin hook rules without relying only on coarse surface locks.
+- Completed: Developer added `managed_hook_policy_rules` managed-settings parsing, managed-source provenance on hook policy rules, managed-before-local/plugin rule merging, local/plugin ID collision hiding, API/runtime read-only enforcement for managed IDs, and plugin install collision rejection for managed IDs.
+- Completed: QA added managed-settings parser, hook-policy service, API, and CLI approval runtime coverage for managed source attribution, precedence, fail-closed validation, local persistence isolation, local/plugin coexistence, read-only managed records, role scoping, disabled rules, and stale managed-hook approval binding.
+- Completed: Reviewer/Security validated that managed hook rules are not persisted to local mutable state, cannot be patched through the API, sort before local/plugin rules, block plugin installation collisions by managed IDs, and keep approval-bound execution stale when managed hook identity changes.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_hook_policy_rules` with bounded stable ids, rule names, surface/action/match/effect fields, reason, optional agent roles, enabled state, and priority.
+- Implemented in this slice: managed hook policy rules are honored only from the managed settings file, fail closed for malformed, duplicate-id, unknown-field, missing-required, secret-shaped, or unsafe network-pattern input, and are reported with managed source in list responses.
+- Implemented in this slice: `GET /guardrails/hooks/rules` returns managed, local, and plugin hook rules in evaluation order, with managed rules sorted first and source-attributed as `managed`.
+- Implemented in this slice: managed hook rules participate in command/filesystem/network hook evaluation before local and plugin rules, remain excluded from `hook-policy-rules.json`, and cannot be modified through `/guardrails/hooks/rules/{rule_id}`.
+- Implemented in this slice: local hook-rule creation/update and plugin hook-policy activation remain available when per-record managed rules exist unless `managed_policy_locks` includes the relevant surface.
+- Implemented in this slice: CLI approval records that include hook-policy decisions fail bound execution validation after managed hook rule identity changes, preserving stale-approval safety.
+- Still out of scope after this slice: managed KMS, first-class secret-manager adapters, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance, managed policy-source controls beyond CLI/hook policy rules, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused managed-settings hook gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_hook_policy"` passed with 8 tests.
+- Focused hook-policy managed gate: `python -m pytest -q tests\test_hook_policy.py -k "managed_hook_policy"` passed with 4 tests.
+- Hook-policy file gate: `python -m pytest -q tests\test_hook_policy.py` passed with 7 tests.
+- Managed-settings file gate: `python -m pytest -q tests\test_managed_settings.py` passed with 27 tests.
+- Focused API hook gate: `python -m pytest -q tests\test_api.py -k "managed_hook_policy or hook_policy_rule_api"` passed with 4 tests.
+- Broader API hook gate: `python -m pytest -q tests\test_api.py -k "hook_policy or managed_policy_locks"` passed with 10 tests.
+- Focused CLI approval runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "changed_managed_hook_policy_rule"` passed with 1 test.
+- Final lint and format gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_hook_policy.py tests\test_managed_settings.py tests\test_api.py tests\test_cli_runtime.py` with 312 tests and 2 skipped.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,155 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, richer production identity workflows, plugin hook-code/tool/agent/skill loading governance, managed policy-source controls beyond CLI/hook policy rules, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009ag Managed CLI Policy Rule Precedence
 
 Status: completed for the scoped managed CLI policy rule precedence slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

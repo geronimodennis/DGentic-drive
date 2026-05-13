@@ -144,8 +144,8 @@ class HookPolicyRuleRequest(BaseModel):
 
 
 class HookPolicyRule(HookPolicyRuleRequest):
-    id: str = ""
-    source: Literal["local", "plugin"] = "local"
+    id: str = Field(default="", max_length=120)
+    source: Literal["local", "plugin", "managed"] = "local"
     source_plugin_id: str | None = Field(default=None, max_length=80)
     source_plugin_manifest_digest: str | None = Field(default=None, min_length=64, max_length=64)
     source_plugin_component_path: str | None = Field(default=None, max_length=300)
@@ -156,7 +156,7 @@ class HookPolicyRule(HookPolicyRuleRequest):
 
     @model_validator(mode="after")
     def hook_policy_source_must_be_complete(self) -> "HookPolicyRule":
-        if self.source == "local":
+        if self.source in {"local", "managed"}:
             if any(
                 (
                     self.source_plugin_id,
@@ -166,7 +166,9 @@ class HookPolicyRule(HookPolicyRuleRequest):
                     self.source_plugin_status,
                 )
             ):
-                raise ValueError("Local hook policy rules must not include plugin provenance.")
+                raise ValueError(
+                    "Local and managed hook policy rules must not include plugin provenance."
+                )
             return self
         if not all(
             (

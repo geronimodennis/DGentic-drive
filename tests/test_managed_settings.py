@@ -12,6 +12,7 @@ from dgentic.settings import (
     get_effective_settings_view,
     get_settings,
     managed_cli_policy_rules,
+    managed_hook_policy_rules,
     managed_policy_locks,
     require_managed_policy_surface_mutable,
 )
@@ -242,6 +243,174 @@ def test_managed_cli_policy_rules_fail_closed(
     managed_path, _raw_payload = _write_managed_settings(
         tmp_path,
         {"settings": {"managed_cli_policy_rules": rules_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
+
+
+def test_managed_hook_policy_rules_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_HOOK_POLICY_RULES",
+        json.dumps(
+            [
+                {
+                    "id": "env.hook",
+                    "name": "Environment hook",
+                    "surface": "command",
+                    "action": "execute",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "effect": "blocked",
+                    "reason": "Environment hooks are not managed.",
+                }
+            ]
+        ),
+    )
+
+    assert managed_hook_policy_rules() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_hook_policy_rules": [
+                    {
+                        "id": "managed.deploy-hook",
+                        "name": "Managed deploy hook",
+                        "surface": "command",
+                        "action": " EXECUTE ",
+                        "match_type": "contains",
+                        "pattern": "deploy",
+                        "effect": "approval_required",
+                        "reason": "Deploy hooks require managed approval.",
+                        "agent_roles": [" QA ", "developer", "qa"],
+                        "priority": 15,
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    rules = managed_hook_policy_rules()
+
+    assert json.loads(settings.managed_hook_policy_rules)[0]["id"] == "managed.deploy-hook"
+    assert fields["managed_hook_policy_rules"].source == "managed"
+    assert view.managed_fields == ["managed_hook_policy_rules"]
+    assert len(rules) == 1
+    assert rules[0].id == "managed.deploy-hook"
+    assert rules[0].source == "managed"
+    assert rules[0].action == "execute"
+    assert rules[0].agent_roles == ["developer", "qa"]
+    assert rules[0].priority == 15
+
+
+@pytest.mark.parametrize(
+    ("rules_payload", "error_match"),
+    [
+        ({"id": "not-a-list"}, "must be a list"),
+        ([{"id": "bad.unknown", "unknown": True}], "Unknown managed hook policy rule field"),
+        (
+            [
+                {
+                    "id": "missing-required-fields",
+                    "name": "Missing required fields",
+                }
+            ],
+            "Managed hook policy rule is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "duplicate.hook",
+                    "name": "First duplicate",
+                    "surface": "command",
+                    "action": "execute",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "effect": "blocked",
+                    "reason": "First duplicate rule.",
+                },
+                {
+                    "id": "duplicate.hook",
+                    "name": "Second duplicate",
+                    "surface": "command",
+                    "action": "execute",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "effect": "blocked",
+                    "reason": "Second duplicate rule.",
+                },
+            ],
+            "Duplicate managed hook policy rule id",
+        ),
+        (
+            [
+                {
+                    "id": "secret.pattern",
+                    "name": "Secret pattern",
+                    "surface": "command",
+                    "action": "execute",
+                    "match_type": "contains",
+                    "pattern": "TOKEN=raw-secret",
+                    "effect": "blocked",
+                    "reason": "Reject secret-shaped patterns.",
+                }
+            ],
+            "stable non-secret",
+        ),
+        (
+            [
+                {
+                    "id": "network.query",
+                    "name": "Network query",
+                    "surface": "network",
+                    "action": "request",
+                    "match_type": "contains",
+                    "pattern": "https://api.example.test/private?page=1",
+                    "effect": "blocked",
+                    "reason": "Reject query strings.",
+                }
+            ],
+            "query strings",
+        ),
+        (
+            [
+                {
+                    "id": "secret.reason",
+                    "name": "Secret-shaped reason",
+                    "surface": "command",
+                    "action": "execute",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "effect": "blocked",
+                    "reason": "TOKEN=raw-secret",
+                }
+            ],
+            "secret-shaped",
+        ),
+    ],
+)
+def test_managed_hook_policy_rules_fail_closed(
+    tmp_path,
+    monkeypatch,
+    rules_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_hook_policy_rules": rules_payload}},
     )
     monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
 

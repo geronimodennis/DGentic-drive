@@ -397,6 +397,10 @@ def list_network_approvals(
     return [approval for approval in approvals if approval.status == requested_status]
 
 
+def get_network_approval(approval_id: str) -> NetworkApproval:
+    return _get_network_approval_or_raise(approval_id)
+
+
 def get_network_approval_review(approval_id: str) -> NetworkApprovalReview:
     approval = _get_network_approval_or_raise(approval_id)
     warnings = [

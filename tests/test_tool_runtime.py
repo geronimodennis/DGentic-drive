@@ -12,6 +12,12 @@ import dgentic.tool_runtime as tool_runtime
 from dgentic.database import get_db_session, reset_database_state
 from dgentic.events import event_log
 from dgentic.memory.schemas import ToolRegistryCreateRequest
+from dgentic.network_policy import (
+    NetworkApprovalStatus,
+    approve_network_approval,
+    create_network_approval,
+    list_network_approvals,
+)
 from dgentic.orchestration import OrchestrationService
 from dgentic.redaction import REDACTED_SECRET_MARKER
 from dgentic.schemas import (
@@ -27,6 +33,8 @@ from dgentic.schemas import (
 )
 from dgentic.settings import get_settings
 from dgentic.tool_runtime import (
+    GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+    GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
     TIMEOUT_EXIT_CODE,
     ToolApprovalStatus,
     approve_tool_approval,
@@ -1704,6 +1712,351 @@ def test_execute_tool_preserves_network_policy_allow_and_audit_modes(
 
     assert result.exit_code == 0
     assert result.parsed_output == {"ok": True}
+
+
+def test_execute_tool_consumes_generated_tool_network_approval_once(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "approval_required",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "network-approved-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            f"    with socket.create_connection(({host!r}, {port}), timeout=2):\n"
+            "        return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="network-approved-tool",
+            description="Consumes a bound generated-tool network approval.",
+            entrypoint="localmcp/network-approved-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    approval = create_network_approval(
+        f"https://{host}:{port}",
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+
+    try:
+        result = execute_tool(
+            "network-approved-tool",
+            {},
+            network_approval_id=approval.id,
+            requested_by="operator",
+        )
+    finally:
+        listener.close()
+
+    assert result.exit_code == 0
+    assert result.parsed_output == {"ok": True}
+    assert result.network_approval_id == approval.id
+    assert list_network_approvals(NetworkApprovalStatus.executed)[0].id == approval.id
+    assert event_log.list(LogEventType.tool)[-1].metadata["network_approval_id"] == approval.id
+
+    def fail_if_started(*_args, **_kwargs):
+        raise AssertionError("subprocess should not start after network approval is consumed")
+
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fail_if_started)
+    with pytest.raises(PermissionError, match="not executable"):
+        execute_tool(
+            "network-approved-tool",
+            {},
+            network_approval_id=approval.id,
+            requested_by="operator",
+        )
+
+
+def test_execute_tool_rejects_pending_wrong_surface_and_portless_network_approvals(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    listener.close()
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "approval_required",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "network-prelaunch-block-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            f"    with socket.create_connection(({host!r}, {port}), timeout=2):\n"
+            "        return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="network-prelaunch-block-tool",
+            description="Network approvals should fail before subprocess launch.",
+            entrypoint="localmcp/network-prelaunch-block-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    pending = create_network_approval(
+        f"https://{host}:{port}",
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by="operator",
+    )
+    wrong_surface = create_network_approval(
+        f"https://{host}:{port}",
+        surface="provider",
+        action="generate",
+        requested_by="operator",
+    )
+    approve_network_approval(wrong_surface.id, decided_by="reviewer")
+    portless = create_network_approval(
+        f"https://{host}",
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by="operator",
+    )
+    approve_network_approval(portless.id, decided_by="reviewer")
+
+    def fail_if_started(*_args, **_kwargs):
+        raise AssertionError("subprocess should not start for invalid network approval")
+
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fail_if_started)
+    with pytest.raises(PermissionError, match="not executable"):
+        execute_tool(
+            "network-prelaunch-block-tool",
+            {},
+            network_approval_id=pending.id,
+            requested_by="operator",
+        )
+    with pytest.raises(PermissionError, match="generated_tool/socket_connect"):
+        execute_tool(
+            "network-prelaunch-block-tool",
+            {},
+            network_approval_id=wrong_surface.id,
+            requested_by="operator",
+        )
+    with pytest.raises(PermissionError, match="explicit port"):
+        execute_tool(
+            "network-prelaunch-block-tool",
+            {},
+            network_approval_id=portless.id,
+            requested_by="operator",
+        )
+
+    approvals = {approval.id: approval.status for approval in list_network_approvals()}
+    assert approvals[pending.id] == NetworkApprovalStatus.pending
+    assert approvals[wrong_surface.id] == NetworkApprovalStatus.approved
+    assert approvals[portless.id] == NetworkApprovalStatus.approved
+
+
+def test_create_tool_approval_rejects_network_approval_id(
+    local_tool_state: tuple[Path, Path],
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    _write_tool(
+        root_dir,
+        "network-id-not-tool-approval",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="network-id-not-tool-approval",
+            description="Tool approval should not silently bind network approvals.",
+            entrypoint="localmcp/network-id-not-tool-approval/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+
+    with pytest.raises(ValueError, match="network_approval_id"):
+        create_tool_approval(
+            "network-id-not-tool-approval",
+            ToolExecutionRequest(
+                payload={},
+                network_approval_id="network-approval-placeholder",
+            ),
+            requested_by="operator",
+        )
+
+    assert list_tool_approvals() == []
+
+
+def test_execute_tool_preserves_network_approval_when_tool_approval_binding_fails(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    host = "127.0.0.1"
+    port = 443
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "approval_required",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "network-plus-tool-approval",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="network-plus-tool-approval",
+            description="Requires both tool and network approvals.",
+            entrypoint="localmcp/network-plus-tool-approval/tool.py",
+            permission_mode=PermissionMode.approval_required,
+        )
+    )
+    tool_approval = create_tool_approval(
+        "network-plus-tool-approval",
+        ToolExecutionRequest(payload={"expected": "value"}, timeout_seconds=5),
+        requested_by="operator",
+    )
+    approve_tool_approval(tool_approval.id, decided_by="reviewer")
+    network_approval = create_network_approval(
+        f"https://{host}:{port}",
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by="operator",
+    )
+    approve_network_approval(network_approval.id, decided_by="reviewer")
+
+    def fail_if_started(*_args, **_kwargs):
+        raise AssertionError("subprocess should not start when tool approval is mismatched")
+
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fail_if_started)
+    with pytest.raises(PermissionError, match="not bound"):
+        execute_tool(
+            "network-plus-tool-approval",
+            {"expected": "different"},
+            approval_id=tool_approval.id,
+            network_approval_id=network_approval.id,
+            timeout_seconds=5,
+            requested_by="operator",
+        )
+
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.approved
+
+
+def test_execute_tool_rejects_network_approval_after_policy_drift(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    host = "127.0.0.1"
+    port = 443
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "approval_required",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "network-policy-drift-tool",
+        tool_source="def run(payload):\n    return {'ok': True}\n",
+    )
+    register_tool(
+        ToolManifest(
+            name="network-policy-drift-tool",
+            description="Rejects stale network approval policy binding.",
+            entrypoint="localmcp/network-policy-drift-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+    approval = create_network_approval(
+        f"https://{host}:{port}",
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "allow",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+
+    def fail_if_started(*_args, **_kwargs):
+        raise AssertionError("subprocess should not start after network policy drift")
+
+    monkeypatch.setattr(tool_runtime.subprocess, "Popen", fail_if_started)
+    with pytest.raises(PermissionError, match="not required"):
+        execute_tool(
+            "network-policy-drift-tool",
+            {},
+            network_approval_id=approval.id,
+            requested_by="operator",
+        )
+
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.approved
 
 
 def test_execute_tool_does_not_expose_network_policy_handoff_to_tool(

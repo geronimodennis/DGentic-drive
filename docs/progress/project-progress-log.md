@@ -4,6 +4,43 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009am Generated-Tool Network Approval Consumption
+
+Status: completed for the scoped generated-tool network approval consumption slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/plugin-trust policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected generated-tool network approval consumption after BL-009al because generated-tool `approval_required` socket policy still failed closed with no approval path.
+- Completed: Architect/Security scoped the change to a Python runtime socket guardrail, with one single-use network approval bound to `surface: "generated_tool"`, `action: "socket_connect"`, exact host, and explicit port.
+- Completed: Developer added `ToolExecutionRequest.network_approval_id`, API/runtime plumbing, parent-side approval claiming before subprocess launch, sanitized approved endpoint handoff to the child runner, result/audit metadata, and fail-closed rejection of network ids on tool approval creation.
+- Completed: QA added focused runtime and API coverage for successful approval consumption, pending/wrong-surface/portless/reused/policy-drift rejection, tool approval mismatch preservation, result/log metadata, and API pass-through.
+- Completed: Reviewer/Security validated that network approval remains separate from tool artifact approval, is not silently ignored on tool approval creation, and is documented as host/port socket approval rather than OS-level egress isolation.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/tools/{name}/execute` accepts `network_approval_id` and passes it to generated-tool execution without folding it into tool approval records.
+- Implemented in this slice: generated-tool runtime claims approved network records only for the `generated_tool`/`socket_connect` surface/action, requires an explicit port, rejects non-origin path approvals, and preserves pending or wrong-surface records without consuming them.
+- Implemented in this slice: generated-tool subprocesses receive only sanitized policy rules plus the claimed approved host and port; `deny` still blocks, while `approval_required` can proceed only for the approved endpoint or a resolver-derived address for the same approved port.
+- Implemented in this slice: tool execution responses and audit events include the consumed `network_approval_id`.
+- Still out of scope after this slice: OS-level/non-Python egress isolation, native-extension or spawned-binary network control, HTTP path/method/header/body enforcement, full web retrieval/fetch runtime, managed KMS, first-class secret-manager adapters, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused generated-tool network runtime gate: `python -m pytest -q tests\test_tool_runtime.py -k "network" --maxfail=1 -x` passed with 17 tests and 40 deselected.
+- Focused generated-tool approval/network runtime gate: `python -m pytest -q tests\test_tool_runtime.py -k "network or approval" --maxfail=1 -x` passed with 25 tests and 33 deselected.
+- Focused generated-tool API gate: `python -m pytest -q tests\test_api.py -k "generated_tool_execute_api" --maxfail=1 -x` passed with 9 tests and 186 deselected.
+- Focused generated-tool API approval gate: `python -m pytest -q tests\test_api.py -k "generated_tool_execute_api or approval" --maxfail=1 -x` passed with 31 tests and 164 deselected.
+- Focused network approval/web retrieval gate: `python -m pytest -q tests\test_network_policy.py -k "network_approval or web_retrieval" --maxfail=1 -x` passed with 8 tests and 4 deselected.
+- Affected network/tool/API gate: `python -m pytest -q tests\test_tool_runtime.py tests\test_network_policy.py tests\test_api.py -k "network or generated_tool_execute_api or approval" --maxfail=1 -x` passed with 69 tests and 195 deselected.
+- Focused auth approval gate: `python -m pytest -q tests\test_auth.py -k "network or tool or approval" --maxfail=1 -x` passed with 42 tests and 77 deselected.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_tool_runtime.py tests\test_network_policy.py tests\test_api.py tests\test_auth.py --maxfail=1 -x` with 384 tests.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,182 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009al Managed Plugin Trust Records
 
 Status: completed for the scoped managed plugin trust record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/plugin-trust policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

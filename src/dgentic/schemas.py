@@ -664,6 +664,7 @@ class ToolExecutionRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     approved: bool = False
     approval_id: str | None = None
+    network_approval_id: str | None = None
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     requested_by: str | None = None
     agent_id: str | None = None

@@ -2246,6 +2246,7 @@ def execute_local_tool(
             payload.payload,
             approved=payload.approved,
             approval_id=payload.approval_id,
+            network_approval_id=payload.network_approval_id,
             timeout_seconds=payload.timeout_seconds,
             requested_by=_approval_requester(request, payload.requested_by),
             agent_id=payload.agent_id,

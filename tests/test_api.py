@@ -1,5 +1,6 @@
 import base64
 import json
+import socket
 import time
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -7456,6 +7457,101 @@ def test_generated_tool_execute_api_enforces_network_domain_policy(
     assert body["stdout"] == ""
     assert body["parsed_output"] is None
     assert "blocked by DGentic network policy" in body["stderr"]
+    get_settings.cache_clear()
+
+
+def test_generated_tool_execute_api_consumes_network_approval(
+    isolated_tool_api_state,
+    monkeypatch,
+) -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "deny",
+                "rules": [
+                    {
+                        "domain": host,
+                        "mode": "approval_required",
+                    }
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    generate_response = client.post(
+        "/tools/generate",
+        json={
+            "name": "api-network-approved-tool",
+            "description": "Consumes a generated-tool network approval.",
+            "trigger_source": "main_agent",
+            "permission_mode": "autopilot_safe",
+            "source_code": (
+                "import socket\n\n"
+                "def run(payload):\n"
+                f"    with socket.create_connection(({host!r}, {port}), timeout=2):\n"
+                "        return {'ok': True}\n"
+            ),
+        },
+    )
+    approval_response = client.post(
+        "/network/approvals",
+        json={
+            "url": f"https://{host}:{port}",
+            "surface": "generated_tool",
+            "action": "socket_connect",
+            "requested_by": "operator",
+        },
+    )
+    approval_id = approval_response.json()["id"]
+    approve_response = client.post(
+        f"/network/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    try:
+        execute_response = client.post(
+            "/tools/api-network-approved-tool/execute",
+            json={
+                "payload": {},
+                "network_approval_id": approval_id,
+                "timeout_seconds": 5,
+                "requested_by": "operator",
+            },
+        )
+    finally:
+        listener.close()
+    executed_response = client.get("/network/approvals?status=executed")
+    logs_response = client.get("/logs?event_type=tool")
+    reused_response = client.post(
+        "/tools/api-network-approved-tool/execute",
+        json={
+            "payload": {},
+            "network_approval_id": approval_id,
+            "timeout_seconds": 5,
+            "requested_by": "operator",
+        },
+    )
+
+    assert generate_response.status_code == 201
+    assert approval_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert execute_response.json()["exit_code"] == 0
+    assert execute_response.json()["network_approval_id"] == approval_id
+    assert any(item["id"] == approval_id for item in executed_response.json())
+    assert any(
+        event["message"] == "Executed generated tool."
+        and event["metadata"]["network_approval_id"] == approval_id
+        for event in logs_response.json()
+    )
+    assert reused_response.status_code == 403
+    assert "not executable" in reused_response.text
     get_settings.cache_clear()
 
 

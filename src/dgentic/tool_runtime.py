@@ -20,7 +20,14 @@ from dgentic.database import get_db_session
 from dgentic.events import event_log
 from dgentic.memory.models import ToolManifest as RegistryToolManifest
 from dgentic.memory.schemas import ToolUsageRequest
-from dgentic.network_policy import NetworkDomainPolicyError, network_domain_policy
+from dgentic.network_policy import (
+    NetworkApproval,
+    NetworkApprovalRequiredError,
+    NetworkDomainPolicyError,
+    claim_network_approval,
+    get_network_approval,
+    network_domain_policy,
+)
 from dgentic.orchestration import authorize_tool_action
 from dgentic.redaction import redact_metadata, redact_sensitive_values
 from dgentic.schemas import (
@@ -50,6 +57,8 @@ TOOL_APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
 REDACTED_LEGACY_DIGEST_MARKER = "[LEGACY_DIGEST_REDACTED]"
 _TOOL_APPROVAL_DIGEST_KEY_FILE = "tool-approval-digest.key"
 _TOOL_APPROVAL_DIGEST_LOCK = Lock()
+GENERATED_TOOL_NETWORK_APPROVAL_SURFACE = "generated_tool"
+GENERATED_TOOL_NETWORK_APPROVAL_ACTION = "socket_connect"
 STANDARD_TOOL_DEPENDENCY_DIRS = ("vendor", ".dgentic-deps", ".dgentic/deps", "site-packages")
 SUBPROCESS_ENV_KEYS = frozenset(
     {
@@ -143,6 +152,33 @@ def _install_network_guards():
         rules.append((normalize_domain(rule.get("domain")), normalize_mode(rule.get("mode"))))
     rules = tuple(rules)
 
+    def normalize_approved_port(value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise RuntimeError("DGentic tool approved network endpoint port is invalid.")
+        if value < 1 or value > 65535:
+            raise RuntimeError("DGentic tool approved network endpoint port is invalid.")
+        return value
+
+    raw_approved_endpoints = payload.get("approved_endpoints", [])
+    if not isinstance(raw_approved_endpoints, list):
+        raise RuntimeError("DGentic tool approved network endpoints must be a list.")
+    approved_endpoints = {}
+    for endpoint in raw_approved_endpoints:
+        if not isinstance(endpoint, dict):
+            raise RuntimeError("DGentic tool approved network endpoints must be objects.")
+        raw_host = endpoint.get("host")
+        if not isinstance(raw_host, (str, bytes)):
+            raise RuntimeError("DGentic tool approved network endpoint host is invalid.")
+        host = normalize_host(raw_host)
+        if not host:
+            raise RuntimeError("DGentic tool approved network endpoint host is invalid.")
+        approved_endpoints.setdefault(host, set()).add(
+            normalize_approved_port(endpoint.get("port"))
+        )
+    approved_endpoints = {
+        host: frozenset(ports) for host, ports in approved_endpoints.items()
+    }
+
     resolved_allowlist = set()
     original_connect = socket.socket.connect
     original_connect_ex = socket.socket.connect_ex
@@ -165,27 +201,62 @@ def _install_network_guards():
             return address[0]
         return address
 
+    def normalize_address_port(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            port = value.strip()
+            if not port:
+                return None
+            if port.isdigit():
+                return int(port)
+            try:
+                return socket.getservbyname(port)
+            except OSError:
+                return port.lower()
+        return value
+
     def address_key(address):
         if isinstance(address, tuple) and address:
             host = normalize_host(address[0])
-            port = address[1] if len(address) > 1 else None
+            port = normalize_address_port(address[1]) if len(address) > 1 else None
             return (host, port)
         return (normalize_host(address), None)
 
+    def approved_ports_for_host(host, port=None):
+        ports = approved_endpoints.get(normalize_host(host), frozenset())
+        if port is None:
+            return tuple(ports)
+        normalized_port = normalize_address_port(port)
+        if normalized_port in ports:
+            return (normalized_port,)
+        return ()
+
+    def endpoint_is_approved(host, port):
+        return bool(approved_ports_for_host(host, port))
+
+    def host_has_approved_endpoint(host):
+        return bool(approved_ports_for_host(host))
+
     def is_resolved_allowlisted(host, port=None):
         normalized_host = normalize_host(host)
+        normalized_port = normalize_address_port(port)
         return (
-            (normalized_host, port) in resolved_allowlist
+            (normalized_host, normalized_port) in resolved_allowlist
             or (normalized_host, None) in resolved_allowlist
         )
 
-    def authorize_host(host):
+    def authorize_host(host, port=None):
         mode = policy_mode_for_host(host)
         if mode == "deny":
             raise PermissionError(
                 f"Tool network access to {host} is blocked by DGentic network policy."
             )
         if mode == "approval_required":
+            if port is None and host_has_approved_endpoint(host):
+                return "approved"
+            if port is not None and endpoint_is_approved(host, port):
+                return "approved"
             raise PermissionError(
                 f"Tool network access to {host} requires DGentic network approval."
             )
@@ -195,26 +266,40 @@ def _install_network_guards():
         key = address_key(address)
         if key in resolved_allowlist or (key[0], None) in resolved_allowlist:
             return "allow"
-        return authorize_host(address_host(address))
+        return authorize_host(address_host(address), key[1])
 
     def authorize_resolver_host(host, port=None):
         if is_resolved_allowlisted(host, port):
             return "allow"
-        return authorize_host(host)
+        return authorize_host(host, port)
 
     def remember_resolved_host(host, port=None):
-        resolved_allowlist.add((normalize_host(host), port))
+        resolved_allowlist.add((normalize_host(host), normalize_address_port(port)))
+
+    def remember_approved_resolution(source_host, resolved_host, port=None):
+        for approved_port in approved_ports_for_host(source_host, port):
+            remember_resolved_host(resolved_host, approved_port)
 
     def remember_getaddrinfo_results(results):
         for result in results:
             if len(result) >= 5:
                 resolved_allowlist.add(address_key(result[4]))
 
+    def remember_approved_getaddrinfo_results(source_host, source_port, results):
+        for result in results:
+            if len(result) >= 5:
+                sockaddr = result[4]
+                if isinstance(sockaddr, tuple) and sockaddr:
+                    remember_approved_resolution(source_host, sockaddr[0], source_port)
+
     def guarded_getaddrinfo(host, port, *args, **kwargs):
         mode = authorize_resolver_host(host, port)
         results = original_getaddrinfo(host, port, *args, **kwargs)
         if mode in {"allow", "audit"}:
             remember_getaddrinfo_results(results)
+        elif mode == "approved":
+            remember_getaddrinfo_results(results)
+            remember_approved_getaddrinfo_results(host, port, results)
         return results
 
     def guarded_gethostbyaddr(host):
@@ -226,6 +311,8 @@ def _install_network_guards():
         address = original_gethostbyname(host)
         if mode in {"allow", "audit"}:
             remember_resolved_host(address)
+        elif mode == "approved":
+            remember_approved_resolution(host, address)
         return address
 
     def guarded_gethostbyname_ex(host):
@@ -234,6 +321,9 @@ def _install_network_guards():
         if mode in {"allow", "audit"} and len(result) >= 3:
             for address in result[2]:
                 remember_resolved_host(address)
+        elif mode == "approved" and len(result) >= 3:
+            for address in result[2]:
+                remember_approved_resolution(host, address)
         return result
 
     def guarded_getnameinfo(sockaddr, flags):
@@ -401,6 +491,7 @@ _tool_approval_lock = Lock()
 class ToolExecutionResult(BaseModel):
     tool_name: str
     approval_id: str | None = None
+    network_approval_id: str | None = None
     entrypoint: Path
     cwd: Path
     dependency_paths: list[Path] = Field(default_factory=list)
@@ -421,6 +512,7 @@ def execute_tool(
     *,
     approved: bool = False,
     approval_id: str | None = None,
+    network_approval_id: str | None = None,
     timeout_seconds: int = DEFAULT_TOOL_TIMEOUT_SECONDS,
     requested_by: str | None = None,
     agent_id: str | None = None,
@@ -456,6 +548,13 @@ def execute_tool(
     _validate_manifest_entrypoint(manifest, root_dir, tool_dir)
     entrypoint = _resolve_entrypoint(tool_dir)
     dependency_paths = _tool_dependency_paths(manifest, tool_dir)
+    claimed_network_approval = _claim_tool_network_approval(
+        network_approval_id,
+        requested_by=requested_by,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
 
     started_at = perf_counter()
     exit_code, stdout, stderr = _run_tool_subprocess(
@@ -464,6 +563,7 @@ def execute_tool(
         payload=payload or {},
         timeout_seconds=timeout_seconds,
         dependency_paths=dependency_paths,
+        network_approval=claimed_network_approval,
     )
 
     duration_ms = round((perf_counter() - started_at) * 1000)
@@ -485,6 +585,7 @@ def execute_tool(
         stderr=stderr,
         reliability_policy=reliability_policy,
         dependency_paths=dependency_paths,
+        network_approval_id=claimed_network_approval.id if claimed_network_approval else None,
         requested_by=requested_by,
         agent_id=agent_id,
         agent_role=agent_role,
@@ -495,6 +596,7 @@ def execute_tool(
     return ToolExecutionResult(
         tool_name=manifest.name,
         approval_id=bound_approval_id,
+        network_approval_id=claimed_network_approval.id if claimed_network_approval else None,
         entrypoint=entrypoint,
         cwd=tool_dir,
         dependency_paths=dependency_paths,
@@ -516,6 +618,11 @@ def create_tool_approval(
 ) -> ToolApproval:
     if request.timeout_seconds < 1:
         raise ValueError("timeout_seconds must be at least 1.")
+    if request.network_approval_id is not None:
+        raise ValueError(
+            "network_approval_id is only valid when executing a generated tool; "
+            "tool approvals do not include network approval binding."
+        )
     manifest = get_tool(name)
     if manifest is None:
         raise LookupError(f"Tool not found: {name}")
@@ -900,6 +1007,49 @@ def _get_tool_approval_or_raise(approval_id: str) -> ToolApproval:
     return approval
 
 
+def _claim_tool_network_approval(
+    network_approval_id: str | None,
+    *,
+    requested_by: str | None,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> NetworkApproval | None:
+    if network_approval_id is None:
+        return None
+    try:
+        approval = get_network_approval(network_approval_id)
+    except KeyError as exc:
+        raise NetworkApprovalRequiredError(str(exc)) from exc
+    if (
+        approval.surface != GENERATED_TOOL_NETWORK_APPROVAL_SURFACE
+        or approval.action != GENERATED_TOOL_NETWORK_APPROVAL_ACTION
+    ):
+        raise NetworkApprovalRequiredError(
+            "Generated-tool network execution requires a network approval bound to "
+            f"{GENERATED_TOOL_NETWORK_APPROVAL_SURFACE}/"
+            f"{GENERATED_TOOL_NETWORK_APPROVAL_ACTION}."
+        )
+    if approval.port is None:
+        raise NetworkApprovalRequiredError(
+            "Generated-tool network approval must include an explicit port."
+        )
+    if approval.path not in {"", "/"}:
+        raise NetworkApprovalRequiredError(
+            "Generated-tool socket approvals must not include a URL path."
+        )
+    return claim_network_approval(
+        network_approval_id,
+        url=approval.url,
+        surface=GENERATED_TOOL_NETWORK_APPROVAL_SURFACE,
+        action=GENERATED_TOOL_NETWORK_APPROVAL_ACTION,
+        requested_by=requested_by,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
+
+
 def _redact_optional_sensitive_text(text: str | None) -> str | None:
     if text is None:
         return None
@@ -1201,6 +1351,7 @@ def _run_tool_subprocess(
     payload: dict[str, Any],
     timeout_seconds: int,
     dependency_paths: list[Path],
+    network_approval: NetworkApproval | None = None,
 ) -> tuple[int, str, str]:
     process = subprocess.Popen(
         _tool_subprocess_args(entrypoint, dependency_paths),
@@ -1211,7 +1362,7 @@ def _run_tool_subprocess(
         text=True,
         encoding="utf-8",
         errors="replace",
-        env=_subprocess_env(),
+        env=_subprocess_env(network_approval=network_approval),
         **_tool_popen_isolation_kwargs(),
     )
     try:
@@ -1309,19 +1460,19 @@ def _path_has_symlink_between(root: Path, candidate: Path) -> bool:
     return any(path.exists() and path.is_symlink() for path in paths_to_check)
 
 
-def _subprocess_env() -> dict[str, str]:
+def _subprocess_env(*, network_approval: NetworkApproval | None = None) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key.upper() in SUBPROCESS_ENV_KEYS}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["DGENTIC_TOOL_DEPENDENCY_MODE"] = "local-only"
-    sanitized_network_policy = _tool_runner_network_policy()
+    sanitized_network_policy = _tool_runner_network_policy(network_approval=network_approval)
     if sanitized_network_policy:
         env["DGENTIC_TOOL_NETWORK_DOMAIN_POLICY"] = sanitized_network_policy
     return env
 
 
-def _tool_runner_network_policy() -> str:
-    if not get_settings().network_domain_policy.strip():
+def _tool_runner_network_policy(*, network_approval: NetworkApproval | None = None) -> str:
+    if network_approval is None and not get_settings().network_domain_policy.strip():
         return ""
     try:
         policy = network_domain_policy()
@@ -1336,6 +1487,16 @@ def _tool_runner_network_policy() -> str:
             }
             for rule in policy.rules
         ],
+        "approved_endpoints": (
+            [
+                {
+                    "host": network_approval.host,
+                    "port": network_approval.port,
+                }
+            ]
+            if network_approval is not None
+            else []
+        ),
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -1518,6 +1679,7 @@ def _record_execution_event(
     manifest: ToolManifest,
     *,
     approval_id: str | None,
+    network_approval_id: str | None,
     exit_code: int,
     duration_ms: int,
     stdout: str,
@@ -1538,6 +1700,7 @@ def _record_execution_event(
         metadata={
             "tool_name": manifest.name,
             "approval_id": approval_id,
+            "network_approval_id": network_approval_id,
             "permission_mode": manifest.permission_mode,
             "status": manifest.status,
             "exit_code": exit_code,
@@ -1574,6 +1737,8 @@ def _coerce_timeout_output(output: bytes | str | None) -> str:
 
 __all__ = [
     "DEFAULT_TOOL_TIMEOUT_SECONDS",
+    "GENERATED_TOOL_NETWORK_APPROVAL_ACTION",
+    "GENERATED_TOOL_NETWORK_APPROVAL_SURFACE",
     "TIMEOUT_EXIT_CODE",
     "ToolApproval",
     "ToolApprovalReview",

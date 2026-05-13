@@ -26,6 +26,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "external_openai_compatible_credential_ref",
         "external_openai_compatible_models",
         "lm_studio_base_url",
+        "managed_policy_locks",
         "max_filesystem_bytes",
         "network_domain_policy",
         "ollama_base_url",
@@ -44,9 +45,19 @@ _MANAGED_SETTINGS_MAX_BYTES = 256 * 1024
 _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
+        "managed_policy_locks",
         "network_domain_policy",
         "provider_pricing_catalog",
         "provider_role_routing",
+    }
+)
+MANAGED_POLICY_LOCK_SURFACES = frozenset(
+    {
+        "cli_policy",
+        "command_recipes",
+        "hook_policy",
+        "plugin_command_recipes",
+        "plugin_trust",
     }
 )
 _SECRET_SETTINGS_FIELDS = frozenset(
@@ -78,6 +89,7 @@ class Settings(BaseSettings):
     auth_tokens: str = ""
     approval_digest_key: str = ""
     managed_settings_file: str = ""
+    managed_policy_locks: str = ""
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
     lm_studio_base_url: str = "http://127.0.0.1:1234"
@@ -197,6 +209,19 @@ def get_effective_settings_view() -> EffectiveSettingsView:
     )
 
 
+def managed_policy_locks() -> frozenset[str]:
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_policy_locks") != "managed":
+        return frozenset()
+    return _parse_managed_policy_locks(get_settings().managed_policy_locks)
+
+
+def require_managed_policy_surface_mutable(surface: str) -> None:
+    normalized = _normalize_managed_policy_lock_surface(surface)
+    if normalized in managed_policy_locks():
+        raise PermissionError(f"Policy surface '{normalized}' is locked by managed settings.")
+
+
 def _apply_managed_settings(settings: Settings) -> tuple[Settings, SettingsSourceMetadata]:
     sources = _settings_source_map()
     managed_path = _managed_settings_path(settings)
@@ -288,6 +313,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
         raise ManagedSettingsError("Managed settings cannot disable already-effective auth.")
 
     for key, value in values.items():
+        if key == "managed_policy_locks":
+            _parse_managed_policy_locks(value)
         if _managed_value_contains_secret_shape(key, value):
             raise ManagedSettingsError(f"Managed settings field contains secret-shaped text: {key}")
 
@@ -315,6 +342,33 @@ def _coerce_managed_settings_value(key: str, value: Any) -> Any:
     if key in _JSON_STRING_SETTINGS_FIELDS and isinstance(value, dict | list):
         return json.dumps(value, separators=(",", ":"), sort_keys=True)
     return value
+
+
+def _parse_managed_policy_locks(raw_value: str) -> frozenset[str]:
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return frozenset()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        parsed = [item.strip() for item in raw_text.split(",") if item.strip()]
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_policy_locks must be a list of policy surfaces.")
+
+    locks: list[str] = []
+    for item in parsed:
+        if not isinstance(item, str):
+            raise ManagedSettingsError("managed_policy_locks entries must be strings.")
+        surface = _normalize_managed_policy_lock_surface(item)
+        if surface not in MANAGED_POLICY_LOCK_SURFACES:
+            raise ManagedSettingsError(f"Unknown managed policy lock surface: {surface}")
+        if surface not in locks:
+            locks.append(surface)
+    return frozenset(locks)
+
+
+def _normalize_managed_policy_lock_surface(value: str) -> str:
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def _settings_source_map() -> dict[str, SettingsSource]:

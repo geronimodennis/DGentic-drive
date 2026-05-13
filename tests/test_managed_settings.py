@@ -7,7 +7,13 @@ from fastapi.testclient import TestClient
 from dgentic.auth import AuthConfigurationError
 from dgentic.main import create_app
 from dgentic.network_policy import evaluate_network_domain_policy
-from dgentic.settings import ManagedSettingsError, get_effective_settings_view, get_settings
+from dgentic.settings import (
+    ManagedSettingsError,
+    get_effective_settings_view,
+    get_settings,
+    managed_policy_locks,
+    require_managed_policy_surface_mutable,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +89,26 @@ def test_managed_settings_fall_back_to_environment_and_defaults(tmp_path, monkey
     assert fields["network_domain_policy"].source == "default"
 
 
+def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("DGENTIC_MANAGED_POLICY_LOCKS", '["cli_policy"]')
+
+    assert managed_policy_locks() == frozenset()
+    require_managed_policy_surface_mutable("cli_policy")
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_policy_locks": ["cli-policy", "hook policy"]}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    assert managed_policy_locks() == frozenset({"cli_policy", "hook_policy"})
+    with pytest.raises(PermissionError, match="cli_policy"):
+        require_managed_policy_surface_mutable("cli_policy")
+    require_managed_policy_surface_mutable("command_recipes")
+
+
 @pytest.mark.parametrize(
     ("payload", "error_match"),
     [
@@ -92,6 +118,10 @@ def test_managed_settings_fall_back_to_environment_and_defaults(tmp_path, monkey
         ({"settings": {"unknown_setting": True}}, "Unknown managed settings field"),
         ({"settings": {"managed_settings_file": "nested.json"}}, "reserved"),
         ({"settings": {"app_name": "TOKEN=raw-secret"}}, "secret-shaped"),
+        (
+            {"settings": {"managed_policy_locks": ["unknown-surface"]}},
+            "Unknown managed policy lock surface",
+        ),
     ],
 )
 def test_malformed_managed_settings_fail_closed(

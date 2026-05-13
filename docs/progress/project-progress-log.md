@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ab Managed Policy Surface Locks
+
+Status: completed for the scoped managed policy surface lock foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded git/PR execution automation beyond checkpoints.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected managed policy surface locks as the next bounded Sprint 15 slice after BL-009aa because deployment-owned policy surfaces need a coarse fail-closed mutation gate before richer per-record policy-source precedence exists.
+- Completed: Architect/Security scoped the slice to API mutation locks only, preserving read, preview, evaluation, discovery, and git checkpoint access.
+- Completed: Developer added `managed_policy_locks` to the managed settings allowlist, managed-only lock parsing, fail-closed unknown-surface validation, and mutation enforcement for CLI policy rules, command recipes, hook policy rules, plugin trust decisions, and plugin command recipe install/disable.
+- Completed: QA added focused managed-settings and API coverage proving ordinary environment values do not enforce locks, managed values do enforce locks, unknown lock surfaces fail closed, representative mutation routes return `403`, and read routes remain available.
+- Completed: Reviewer/Security validated that locks are effective only from `DGENTIC_MANAGED_SETTINGS_FILE`, do not expose secrets, and do not accidentally block policy inspection workflows.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `managed_policy_locks` accepts managed surfaces `cli_policy`, `command_recipes`, `hook_policy`, `plugin_trust`, and `plugin_command_recipes`.
+- Implemented in this slice: lock values may be provided as a managed JSON list; unknown or non-string entries fail closed during settings load.
+- Implemented in this slice: normal environment-provided `DGENTIC_MANAGED_POLICY_LOCKS` is reported as an environment setting but does not enforce mutation locks.
+- Implemented in this slice: locked surfaces reject mutation routes with `403`, while read/preview/evaluation routes remain available for operator and UI inspection.
+- Still out of scope after this slice: per-record policy source precedence, signed managed policy bundles, deployment-managed policy distribution, policy hot reload, and richer conflict resolution between managed and local policy records.
+
+Validation:
+- Focused managed policy lock gate: `python -m pytest tests\test_managed_settings.py tests\test_api.py::test_managed_policy_locks_block_mutable_policy_surfaces -q --maxfail=1 -x` passed with 14 tests.
+- Touched lint/format gates: `python -m ruff check src\dgentic\settings.py src\dgentic\api\routes.py tests\test_managed_settings.py tests\test_api.py` and `python -m ruff format --check src\dgentic\settings.py src\dgentic\api\routes.py tests\test_managed_settings.py tests\test_api.py` passed.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1091 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with guarded git/PR execution automation, per-record managed policy-source precedence, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, or plugin hook/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009aa Git Workflow Safety Checkpoints
 
 Status: completed for the scoped read-only git workflow checkpoint foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR execution automation beyond checkpoints.

@@ -55,6 +55,24 @@ In local development, API authentication is off by default. In `staging` and `pr
 
 Set `DGENTIC_MANAGED_SETTINGS_FILE` to load deployment-owned runtime policy settings from a JSON file. The managed file must contain a top-level `settings` object; supported managed fields override `.env` and process environment values, unsupported bootstrap or secret-bearing fields fail closed, and `GET /settings/effective` returns redacted values with source labels plus the managed-file digest for audit.
 
+Managed settings can also lock selected mutable policy surfaces so deployment-owned policy stays read-only through the API while operators can still list, preview, or evaluate current policy state:
+
+```json
+{
+  "settings": {
+    "managed_policy_locks": [
+      "cli_policy",
+      "command_recipes",
+      "hook_policy",
+      "plugin_trust",
+      "plugin_command_recipes"
+    ]
+  }
+}
+```
+
+`managed_policy_locks` only takes effect from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value from a normal environment variable is ignored for locking. Locked surfaces reject mutation routes with `403`, including CLI policy create/update, command recipe create/update, hook policy create/update, plugin trust changes, and plugin command recipe install/disable. Read routes, recipe previews, plugin discovery, command-policy evaluation, and git checkpoints remain available.
+
 Example protected request in production mode:
 
 ```powershell
@@ -693,7 +711,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, and shell-free external-process sources, provider-call network/domain guardrails, bound filesystem approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, and shell-free external-process sources, provider-call network/domain guardrails, bound filesystem approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, managed policy surface locks, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, per-record policy-source precedence, and OS-level egress isolation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential reference or env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while vault key rotation, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters remain future work.

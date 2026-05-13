@@ -2036,6 +2036,98 @@ def test_hook_policy_routes_require_hooks_capability_in_production(tmp_path, mon
     get_settings.cache_clear()
 
 
+def test_managed_policy_locks_block_mutable_policy_surfaces(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_policy_locks": [
+                        "cli_policy",
+                        "command_recipes",
+                        "hook_policy",
+                        "plugin_trust",
+                        "plugin_command_recipes",
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "locked-plugin",
+        {"plugin_id": "locked-plugin", "name": "Locked plugin", "version": "1.0.0"},
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    cli_policy_create = client.post(
+        "/cli/policy/rules",
+        json={
+            "name": "Allow status",
+            "match_type": "contains",
+            "pattern": "status",
+            "permission_mode": "autopilot_safe",
+            "reason": "Managed deployment owns CLI policy.",
+        },
+    )
+    recipe_create = client.post(
+        "/cli/recipes",
+        json={
+            "id": "managed.status",
+            "name": "Managed status",
+            "command_template": "git status --short",
+            "parameters": [],
+        },
+    )
+    hook_create = client.post(
+        "/guardrails/hooks/rules",
+        json={
+            "name": "Audit deploy",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "deploy",
+            "effect": "audit",
+            "reason": "Managed deployment owns hook policy.",
+        },
+    )
+    plugin_trust = client.patch(
+        "/plugins/locked-plugin/trust",
+        json={"status": "trusted", "reason": "Managed deployment owns plugin trust."},
+    )
+    plugin_recipe_install = client.post("/plugins/locked-plugin/command-recipes/install")
+    cli_policy_list = client.get("/cli/policy/rules")
+    hook_list = client.get("/guardrails/hooks/rules")
+    recipe_list = client.get("/cli/recipes")
+    plugin_list = client.get("/plugins")
+
+    assert cli_policy_create.status_code == 403
+    assert "cli_policy" in cli_policy_create.text
+    assert recipe_create.status_code == 403
+    assert "command_recipes" in recipe_create.text
+    assert hook_create.status_code == 403
+    assert "hook_policy" in hook_create.text
+    assert plugin_trust.status_code == 403
+    assert "plugin_trust" in plugin_trust.text
+    assert plugin_recipe_install.status_code == 403
+    assert "plugin_command_recipes" in plugin_recipe_install.text
+    assert cli_policy_list.status_code == 200
+    assert hook_list.status_code == 200
+    assert recipe_list.status_code == 200
+    assert plugin_list.status_code == 200
+    get_settings.cache_clear()
+
+
 def test_network_approval_api_lifecycle_redacts_safe_metadata(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     monkeypatch.setenv(

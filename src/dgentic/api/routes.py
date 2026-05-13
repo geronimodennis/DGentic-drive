@@ -244,7 +244,12 @@ from dgentic.schemas import (
     ToolManifest,
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
-from dgentic.settings import EffectiveSettingsView, get_effective_settings_view, get_settings
+from dgentic.settings import (
+    EffectiveSettingsView,
+    get_effective_settings_view,
+    get_settings,
+    require_managed_policy_surface_mutable,
+)
 from dgentic.tool_runtime import (
     ToolApproval,
     ToolApprovalReview,
@@ -1156,7 +1161,11 @@ def create_cli_policy_rule(
     payload: CommandPolicyRuleRequest,
     request: Request,
 ) -> CommandPolicyRule:
-    return create_command_policy_rule(payload, actor=_principal_actor(request))
+    try:
+        require_managed_policy_surface_mutable("cli_policy")
+        return create_command_policy_rule(payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.get("/cli/policy/rules", response_model=list[CommandPolicyRule])
@@ -1170,7 +1179,11 @@ def patch_cli_policy_rule(
     update: CommandPolicyRuleUpdate,
     request: Request,
 ) -> CommandPolicyRule:
-    rule = update_command_policy_rule(rule_id, update, actor=_principal_actor(request))
+    try:
+        require_managed_policy_surface_mutable("cli_policy")
+        rule = update_command_policy_rule(rule_id, update, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
     return rule
@@ -1182,7 +1195,10 @@ def create_cli_command_recipe(
     request: Request,
 ) -> CommandRecipe:
     try:
+        require_managed_policy_surface_mutable("command_recipes")
         return create_command_recipe(payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1207,6 +1223,7 @@ def patch_cli_command_recipe(
     request: Request,
 ) -> CommandRecipe:
     try:
+        require_managed_policy_surface_mutable("command_recipes")
         return update_command_recipe(recipe_id, payload, actor=_principal_actor(request))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -1335,7 +1352,10 @@ def create_hook_policy(
     request: Request,
 ) -> HookPolicyRule:
     try:
+        require_managed_policy_surface_mutable("hook_policy")
         return create_hook_policy_rule(payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1352,7 +1372,10 @@ def patch_hook_policy(
     request: Request,
 ) -> HookPolicyRule:
     try:
+        require_managed_policy_surface_mutable("hook_policy")
         rule = update_hook_policy_rule(rule_id, update, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if rule is None:
@@ -1380,7 +1403,10 @@ def patch_local_plugin_trust(
     request: Request,
 ) -> PluginDiscoveryView:
     try:
+        require_managed_policy_surface_mutable("plugin_trust")
         return update_plugin_trust(plugin_id, payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1414,6 +1440,7 @@ def install_local_plugin_command_recipes(
 ) -> PluginCommandRecipeActivationResponse:
     _require_authenticated_capability(request, CAPABILITY_CLI)
     try:
+        require_managed_policy_surface_mutable("plugin_command_recipes")
         return install_plugin_command_recipes(plugin_id, actor=_principal_actor(request))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1433,7 +1460,10 @@ def disable_local_plugin_command_recipes(
 ) -> PluginCommandRecipeActivationResponse:
     _require_authenticated_capability(request, CAPABILITY_CLI)
     try:
+        require_managed_policy_surface_mutable("plugin_command_recipes")
         return disable_plugin_command_recipe_activation(plugin_id, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

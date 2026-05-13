@@ -12,6 +12,7 @@ from dgentic.settings import (
     get_effective_settings_view,
     get_settings,
     managed_cli_policy_rules,
+    managed_command_recipes,
     managed_hook_policy_rules,
     managed_plugin_trust_records,
     managed_policy_locks,
@@ -302,6 +303,162 @@ def test_managed_cli_policy_rules_apply_only_from_managed_settings(
     assert rules[0].source == "managed"
     assert rules[0].agent_roles == ["developer", "qa"]
     assert rules[0].priority == 15
+
+
+def test_managed_command_recipes_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_COMMAND_RECIPES",
+        json.dumps(
+            [
+                {
+                    "id": "env.recipe",
+                    "name": "Environment recipe",
+                    "command_template": "cmd /c echo env",
+                }
+            ]
+        ),
+    )
+
+    assert managed_command_recipes() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_command_recipes": [
+                    {
+                        "id": "managed.echo",
+                        "name": "Managed echo",
+                        "description": "Deployment-owned command recipe.",
+                        "command_template": "cmd /c echo {{message}}",
+                        "parameters": [
+                            {
+                                "name": "message",
+                                "description": "Message to print",
+                                "default": "hello",
+                            }
+                        ],
+                        "tags": ["managed", "smoke"],
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    recipes = managed_command_recipes()
+
+    assert json.loads(settings.managed_command_recipes)[0]["id"] == "managed.echo"
+    assert fields["managed_command_recipes"].source == "managed"
+    assert view.managed_fields == ["managed_command_recipes"]
+    assert len(recipes) == 1
+    assert recipes[0].id == "managed.echo"
+    assert recipes[0].source == "managed"
+    assert recipes[0].parameters[0].default == "hello"
+    assert recipes[0].tags == ["managed", "smoke"]
+
+
+@pytest.mark.parametrize(
+    ("recipes_payload", "error_match"),
+    [
+        ({"id": "not-a-list"}, "must be a list"),
+        ([{"id": "bad.unknown", "unknown": True}], "Unknown managed command recipe field"),
+        (
+            [
+                {
+                    "name": "Missing id",
+                    "command_template": "cmd /c echo missing-id",
+                }
+            ],
+            "id is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "duplicate.recipe",
+                    "name": "First duplicate",
+                    "command_template": "cmd /c echo one",
+                },
+                {
+                    "id": "duplicate.recipe",
+                    "name": "Second duplicate",
+                    "command_template": "cmd /c echo two",
+                },
+            ],
+            "Duplicate managed command recipe id",
+        ),
+        (
+            [
+                {
+                    "id": "duplicate.normalized",
+                    "name": "First normalized duplicate",
+                    "command_template": "cmd /c echo one",
+                },
+                {
+                    "id": " duplicate.normalized ",
+                    "name": "Second normalized duplicate",
+                    "command_template": "cmd /c echo two",
+                },
+            ],
+            "Duplicate managed command recipe id",
+        ),
+        (
+            [
+                {
+                    "id": "duplicate.field",
+                    "DGENTIC_ID": "duplicate.field.shadow",
+                    "name": "Duplicate normalized field",
+                    "command_template": "cmd /c echo duplicate",
+                }
+            ],
+            "Duplicate managed command recipe field",
+        ),
+        (
+            [
+                {
+                    "id": "secret.recipe",
+                    "name": "Secret-shaped recipe",
+                    "command_template": "cmd /c echo TOKEN=raw-secret",
+                }
+            ],
+            "secret-shaped",
+        ),
+        (
+            [
+                {
+                    "id": "bad.template",
+                    "name": "Bad template",
+                    "command_template": "cmd /c echo {{missing}}",
+                    "parameters": [{"name": "declared"}],
+                }
+            ],
+            "Managed command recipe is invalid",
+        ),
+    ],
+)
+def test_managed_command_recipes_fail_closed(
+    tmp_path,
+    monkeypatch,
+    recipes_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_command_recipes": recipes_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
 
 
 @pytest.mark.parametrize(

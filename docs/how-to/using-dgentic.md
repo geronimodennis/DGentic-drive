@@ -119,6 +119,29 @@ The same managed-source pattern is available for hook policies through `managed_
 }
 ```
 
+Deployment-owned command recipes can be published through `managed_command_recipes`. Managed recipes are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, validated fail-closed for duplicate normalized fields, duplicate normalized ids, unsafe templates, unused or undeclared parameters, and secret-shaped text, listed with `source: "managed"` by `GET /cli/recipes`, and returned by `GET /cli/recipes/{recipe_id}`. They use the existing recipe preview, execute, approval, and run routes, but they are never written to `command-recipes.json`; local or plugin recipe mutation routes cannot create, patch, or shadow a managed recipe id:
+
+```json
+{
+  "settings": {
+    "managed_command_recipes": [
+      {
+        "id": "managed.git-status",
+        "name": "Managed git status",
+        "command_template": "git status --short {{path}}",
+        "parameters": [
+          {
+            "name": "path",
+            "default": "."
+          }
+        ],
+        "tags": ["managed", "git"]
+      }
+    ]
+  }
+}
+```
+
 Managed settings can also pin plugin trust to exact manifest digests through `managed_plugin_trust_records`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, reported with `trust_source: "managed"` by `GET /plugins`, override local `plugin-trust.json` records for the same plugin id, reject local trust mutation as read-only, and become `stale` when the manifest bytes change:
 
 ```json
@@ -504,6 +527,8 @@ curl -X POST http://127.0.0.1:8000/cli/recipes/git.status/runs `
 ```
 
 Recipe templates and parameter defaults cannot contain secret-shaped text. Parameter values are intentionally constrained to safe identifier/path-like text, and unknown parameters fail closed before command policy evaluation.
+
+Deployment-managed recipes declared as `managed_command_recipes` in `DGENTIC_MANAGED_SETTINGS_FILE` appear from the same list/detail routes and use the same preview, execute, approval, and run endpoints. They are read-only API records with `source: "managed"`, cannot be shadowed by local or plugin recipe writes, and record usage through CLI audit events without mutating local `command-recipes.json`.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/filesystem/write `

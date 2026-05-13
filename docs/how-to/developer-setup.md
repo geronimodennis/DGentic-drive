@@ -131,6 +131,8 @@ Use `GET /settings/effective` with an admin-capable token to inspect effective v
 
 The same managed file can publish deployment-owned plugin trust records with `managed_plugin_trust_records`. Each record pins one plugin id to an exact manifest digest and `trusted` or `blocked` status. Managed plugin trust is reported as `trust_source: "managed"`, overrides local `plugin-trust.json` for that plugin id, and rejects local trust mutation until the managed record is removed or changed.
 
+Managed files can also publish deployment-owned command recipes with `managed_command_recipes`. These records use the normal command recipe schema, appear from `GET /cli/recipes` and `GET /cli/recipes/{recipe_id}` with `source: "managed"`, and execute, preview, request approvals, and start runs through the existing CLI runtime and approval contracts. They are only honored from `DGENTIC_MANAGED_SETTINGS_FILE`, are validated fail-closed for duplicate normalized fields, duplicate normalized ids, unsafe templates, and secret-shaped text, are never written to `command-recipes.json`, and cannot be created, patched, or shadowed by local or plugin recipe mutation routes.
+
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
 ```powershell

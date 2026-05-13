@@ -4208,6 +4208,180 @@ def test_plugin_reference_component_preview_blocks_drift_and_duplicate_reference
     get_settings.cache_clear()
 
 
+def test_managed_command_recipes_api_exposes_runtime_paths_without_local_persistence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_command_recipes": [
+                        {
+                            "id": "managed.echo",
+                            "name": "Managed echo",
+                            "description": "Deployment-owned echo recipe.",
+                            "command_template": "cmd /c echo {{message}}",
+                            "cwd": str(root_dir),
+                            "parameters": [{"name": "message", "default": "hello"}],
+                            "tags": ["managed", "smoke"],
+                        },
+                        {
+                            "id": "managed.python-version",
+                            "name": "Managed Python version",
+                            "command_template": "python --version",
+                            "cwd": str(root_dir),
+                            "timeout_seconds": 10,
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    list_response = client.get("/cli/recipes")
+    detail_response = client.get("/cli/recipes/managed.echo")
+    preview_response = client.post(
+        "/cli/recipes/managed.echo/preview",
+        json={"parameters": {"message": "hello"}},
+    )
+    execute_response = client.post(
+        "/cli/recipes/managed.echo/execute",
+        json={"parameters": {"message": "hello"}},
+    )
+    run_response = client.post(
+        "/cli/recipes/managed.echo/runs",
+        json={"parameters": {"message": "hello"}},
+    )
+    approval_response = client.post(
+        "/cli/recipes/managed.python-version/approvals",
+        json={"requested_by": "tester"},
+    )
+    approval_id = approval_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "Reviewed managed recipe."},
+    )
+
+    assert list_response.status_code == 200
+    recipes_by_id = {item["id"]: item for item in list_response.json()}
+    assert recipes_by_id["managed.echo"]["source"] == "managed"
+    assert recipes_by_id["managed.python-version"]["source"] == "managed"
+    assert detail_response.status_code == 200
+    assert detail_response.json()["source"] == "managed"
+    assert detail_response.json()["command_template"] == "cmd /c echo {{message}}"
+    assert preview_response.status_code == 200
+    assert preview_response.json()["command"] == "cmd /c echo hello"
+    assert preview_response.json()["recipe_id"] == "managed.echo"
+    assert execute_response.status_code == 200
+    assert execute_response.json()["command"] == "cmd /c echo hello"
+    assert execute_response.json()["exit_code"] == 0
+    assert "hello" in execute_response.json()["stdout"]
+    assert run_response.status_code == 202
+    assert run_response.json()["command"] == "cmd /c echo hello"
+    assert approval_response.status_code == 201
+    assert approval_response.json()["review_command"] == "python --version"
+    assert approve_response.status_code == 200
+    assert not (data_dir / "command-recipes.json").exists()
+    get_settings.cache_clear()
+
+
+def test_managed_command_recipe_ids_block_local_and_plugin_mutations(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_command_recipes": [
+                        {
+                            "id": "managed.echo",
+                            "name": "Managed echo",
+                            "command_template": "cmd /c echo managed",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_plugin_component(
+        root_dir,
+        "conflict-recipe-plugin",
+        "recipes/echo.json",
+        {
+            "id": "managed.echo",
+            "name": "Plugin echo",
+            "command_template": "cmd /c echo plugin",
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "conflict-recipe-plugin",
+        {
+            "plugin_id": "conflict-recipe-plugin",
+            "name": "Conflict recipe plugin",
+            "version": "1.0.0",
+            "command_recipes": [{"path": "recipes/echo.json"}],
+        },
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    local_create_response = client.post(
+        "/cli/recipes",
+        json={
+            "id": "managed.echo",
+            "name": "Local echo",
+            "command_template": "cmd /c echo local",
+        },
+    )
+    local_patch_response = client.patch(
+        "/cli/recipes/managed.echo",
+        json={"description": "Attempt local mutation."},
+    )
+    trust_response = client.patch(
+        "/plugins/conflict-recipe-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed recipe component."},
+    )
+    plugin_preview_response = client.post("/plugins/conflict-recipe-plugin/command-recipes/preview")
+    plugin_install_response = client.post("/plugins/conflict-recipe-plugin/command-recipes/install")
+    detail_response = client.get("/cli/recipes/managed.echo")
+
+    assert local_create_response.status_code == 409
+    assert "already exists" in local_create_response.text
+    assert local_patch_response.status_code == 403
+    assert "Managed command recipes cannot be modified" in local_patch_response.text
+    assert trust_response.status_code == 200
+    assert plugin_preview_response.status_code == 200
+    assert plugin_preview_response.json()["command_recipes"][0]["recipe_id"] == "managed.echo"
+    assert plugin_install_response.status_code == 400
+    assert "already in use" in plugin_install_response.text
+    assert detail_response.status_code == 200
+    assert detail_response.json()["source"] == "managed"
+    assert detail_response.json()["name"] == "Managed echo"
+    assert not (data_dir / "command-recipes.json").exists()
+    get_settings.cache_clear()
+
+
 def test_plugin_command_recipe_install_requires_trust_and_blocks_component_drift(
     tmp_path,
     monkeypatch,

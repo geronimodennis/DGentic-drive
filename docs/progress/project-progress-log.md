@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009an Managed Command Recipes
+
+Status: completed for the scoped managed command recipe slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust policy records and coarse surface locks, managed plugin component records if needed before executable plugin loading, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected managed command recipes after BL-009am because deployment-owned command recipes were the next bounded managed policy-source control and could reuse the existing command recipe runtime.
+- Completed: Architect/Security scoped the contract to read-only recipes loaded only from `DGENTIC_MANAGED_SETTINGS_FILE`, no local JSON persistence, managed-over-local visibility, and existing CLI preview/execute/approval/run paths.
+- Completed: Developer added `managed_command_recipes` settings parsing, fail-closed schema validation, managed source attribution, managed/local merge behavior, managed ID collision protection for local and plugin recipe writes, managed usage audit events without local mutation, and local spoof filtering for persisted rows that claim `source: "managed"`.
+- Completed: QA added managed-settings, command recipe, and API coverage for env-only ignore behavior, list/detail exposure, preview/execute/approval/run support, local/plugin mutation rejection, no local `command-recipes.json` writes, audit metadata, duplicate normalized fields and ids, and local managed-source spoof rows.
+- Completed: Reviewer/Security validated runtime path reuse, read-only managed IDs, no managed persistence, circular import safety, and returned two hardening findings that were fixed in the same run.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_command_recipes` using the normal command recipe schema fields.
+- Implemented in this slice: `GET /cli/recipes` and `GET /cli/recipes/{recipe_id}` include source-attributed managed recipes, with managed records taking precedence over same-id local records.
+- Implemented in this slice: managed recipes use existing recipe preview, synchronous execute, approval creation, and asynchronous run paths; usage produces CLI audit events without incrementing or persisting local usage state.
+- Implemented in this slice: local recipe create/patch and plugin command recipe install cannot shadow managed recipe ids, and manually persisted local rows with `source: "managed"` are filtered or rejected rather than treated as deployment-owned records.
+- Still out of scope after this slice: managed plugin component records, plugin hook-code/tool/agent/skill loading governance, managed KMS, first-class secret-manager adapters, full web retrieval/fetch runtime, OS-level/non-Python egress isolation, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused managed command recipe settings gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_command_recipes" --maxfail=1 -x` passed with 9 tests and 33 deselected.
+- Focused command recipe gate: `python -m pytest -q tests\test_command_recipes.py --maxfail=1 -x` passed with 10 tests.
+- Focused managed command recipe API gate: `python -m pytest -q tests\test_api.py -k "managed_command_recipe" --maxfail=1 -x` passed with 2 tests and 195 deselected.
+- Combined focused managed/plugin recipe gate: `python -m pytest -q tests\test_managed_settings.py tests\test_command_recipes.py tests\test_api.py -k "managed_command_recipe or managed_policy_locks or plugin_command_recipe" --maxfail=1 -x` passed with 16 tests and 233 deselected.
+- Affected suite gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_command_recipes.py tests\test_api.py --maxfail=1 -x` with 249 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,197 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009am Generated-Tool Network Approval Consumption
 
 Status: completed for the scoped generated-tool network approval consumption slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/plugin-trust policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

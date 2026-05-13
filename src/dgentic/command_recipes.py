@@ -16,6 +16,7 @@ from dgentic.schemas import (
     CommandPolicyRequest,
     LogEventType,
 )
+from dgentic.settings import managed_command_recipes
 from dgentic.storage import JsonCollection
 
 _RECIPE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
@@ -167,7 +168,7 @@ class CommandRecipe(BaseModel):
     tags: list[str] = Field(default_factory=list)
     enabled: bool = True
     usage_count: int = 0
-    source: Literal["local", "plugin"] = "local"
+    source: Literal["local", "plugin", "managed"] = "local"
     source_plugin_id: str | None = Field(default=None, max_length=80)
     source_plugin_manifest_digest: str | None = Field(default=None, min_length=64, max_length=64)
     source_plugin_component_path: str | None = Field(default=None, max_length=300)
@@ -180,7 +181,7 @@ class CommandRecipe(BaseModel):
     def recipe_must_still_be_valid(self) -> "CommandRecipe":
         _normalize_recipe_id(self.id)
         _validate_template_parameters(self.command_template, self.parameters)
-        if self.source == "local":
+        if self.source in {"local", "managed"}:
             if any(
                 (
                     self.source_plugin_id,
@@ -190,7 +191,9 @@ class CommandRecipe(BaseModel):
                     self.source_plugin_status,
                 )
             ):
-                raise ValueError("Local command recipes must not include plugin provenance.")
+                raise ValueError(
+                    "Local and managed command recipes must not include plugin provenance."
+                )
             return self
         if not all(
             (
@@ -272,6 +275,8 @@ def create_command_recipe(
     )
 
     def create(items: list[CommandRecipe]) -> tuple[list[CommandRecipe], CommandRecipe]:
+        if _managed_command_recipe(recipe.id) is not None:
+            raise ValueError(f"Command recipe already exists: {recipe.id}")
         if any(item.id == recipe.id for item in items):
             raise ValueError(f"Command recipe already exists: {recipe.id}")
         return [*items, recipe], recipe
@@ -282,11 +287,12 @@ def create_command_recipe(
 
 
 def list_command_recipes() -> list[CommandRecipe]:
-    return sorted(_command_recipes.list(), key=lambda item: item.id)
+    return _combined_command_recipes()
 
 
 def get_command_recipe(recipe_id: str) -> CommandRecipe:
-    recipe = _command_recipes.get(_normalize_recipe_id(recipe_id))
+    normalized_id = _normalize_recipe_id(recipe_id)
+    recipe = _managed_command_recipe(normalized_id) or _stored_command_recipe(normalized_id)
     if recipe is None:
         raise KeyError(f"Command recipe not found: {recipe_id}")
     return recipe
@@ -299,10 +305,16 @@ def update_command_recipe(
     actor: str | None = None,
 ) -> CommandRecipe:
     now = datetime.now(UTC)
+    normalized_id = _normalize_recipe_id(recipe_id)
+    if _managed_command_recipe(normalized_id) is not None:
+        raise PermissionError("Managed command recipes cannot be modified through the API.")
 
     def apply_update(recipe: CommandRecipe) -> CommandRecipe:
-        if recipe.source == "plugin":
-            raise PermissionError("Plugin-owned command recipes must be managed through plugins.")
+        if recipe.source != "local":
+            raise PermissionError(
+                f"{recipe.source.capitalize()} command recipes cannot be modified "
+                "through the local recipe API."
+            )
         payload = recipe.model_dump()
         for field_name in update.model_fields_set:
             payload[field_name] = getattr(update, field_name)
@@ -312,7 +324,7 @@ def update_command_recipe(
         return candidate
 
     try:
-        saved = _command_recipes.update(_normalize_recipe_id(recipe_id), apply_update)
+        saved = _command_recipes.update(normalized_id, apply_update)
     except KeyError as exc:
         raise KeyError(f"Command recipe not found: {recipe_id}") from exc
     _record_recipe_event("Updated command recipe.", saved, actor=actor)
@@ -346,6 +358,8 @@ def install_plugin_command_recipe(
     )
 
     def upsert(items: list[CommandRecipe]) -> tuple[list[CommandRecipe], CommandRecipe]:
+        if _managed_command_recipe(recipe.id) is not None:
+            raise ValueError(f"Command recipe id is already in use: {recipe.id}")
         updated_items: list[CommandRecipe] = []
         replaced = False
         created_at = now
@@ -462,9 +476,21 @@ def record_command_recipe_usage(
     action: str,
     actor: str | None = None,
 ) -> CommandRecipe:
+    managed_recipe = _managed_command_recipe(_normalize_recipe_id(recipe_id))
+    if managed_recipe is not None:
+        _record_recipe_event(
+            "Used command recipe.",
+            managed_recipe,
+            actor=actor,
+            extra_metadata={"action": action},
+        )
+        return managed_recipe
+
     now = datetime.now(UTC)
 
     def update_usage(recipe: CommandRecipe) -> CommandRecipe:
+        if recipe.source == "managed":
+            raise PermissionError("Managed command recipes must come from managed settings.")
         return recipe.model_copy(update={"usage_count": recipe.usage_count + 1, "updated_at": now})
 
     saved = _command_recipes.update(_normalize_recipe_id(recipe_id), update_usage)
@@ -475,6 +501,35 @@ def record_command_recipe_usage(
         extra_metadata={"action": action},
     )
     return saved
+
+
+def _combined_command_recipes() -> list[CommandRecipe]:
+    managed_recipes = list(managed_command_recipes())
+    managed_ids = {recipe.id for recipe in managed_recipes}
+    local_recipes = [
+        recipe
+        for recipe in _command_recipes.list()
+        if recipe.id not in managed_ids and recipe.source != "managed"
+    ]
+    return sorted(
+        [*managed_recipes, *local_recipes],
+        key=lambda recipe: (_recipe_source_rank(recipe), recipe.id, recipe.created_at),
+    )
+
+
+def _stored_command_recipe(recipe_id: str) -> CommandRecipe | None:
+    recipe = _command_recipes.get(recipe_id)
+    if recipe is not None and recipe.source == "managed":
+        return None
+    return recipe
+
+
+def _managed_command_recipe(recipe_id: str) -> CommandRecipe | None:
+    return next((recipe for recipe in managed_command_recipes() if recipe.id == recipe_id), None)
+
+
+def _recipe_source_rank(recipe: CommandRecipe) -> int:
+    return 0 if recipe.source == "managed" else 1
 
 
 def _validate_recipe_activation(recipe: CommandRecipe) -> None:

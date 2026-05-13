@@ -29,6 +29,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "external_openai_compatible_models",
         "lm_studio_base_url",
         "managed_cli_policy_rules",
+        "managed_command_recipes",
         "managed_hook_policy_rules",
         "managed_policy_locks",
         "managed_plugin_trust_records",
@@ -51,6 +52,7 @@ _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
         "managed_cli_policy_rules",
+        "managed_command_recipes",
         "managed_hook_policy_rules",
         "managed_policy_locks",
         "managed_plugin_trust_records",
@@ -72,6 +74,20 @@ _MANAGED_CLI_POLICY_RULE_ALLOWED_FIELDS = frozenset(
         "agent_roles",
         "enabled",
         "priority",
+    }
+)
+_MANAGED_COMMAND_RECIPE_MAX_COUNT = 100
+_MANAGED_COMMAND_RECIPE_ALLOWED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "description",
+        "command_template",
+        "cwd",
+        "timeout_seconds",
+        "parameters",
+        "tags",
+        "enabled",
     }
 )
 _MANAGED_HOOK_POLICY_RULE_MAX_COUNT = 100
@@ -145,6 +161,7 @@ class Settings(BaseSettings):
     approval_digest_key: str = ""
     managed_settings_file: str = ""
     managed_cli_policy_rules: str = ""
+    managed_command_recipes: str = ""
     managed_hook_policy_rules: str = ""
     managed_policy_locks: str = ""
     managed_plugin_trust_records: str = ""
@@ -290,6 +307,13 @@ def managed_cli_policy_rules():
     return _parse_managed_cli_policy_rules(get_settings().managed_cli_policy_rules)
 
 
+def managed_command_recipes():
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_command_recipes") != "managed":
+        return tuple()
+    return _parse_managed_command_recipes(get_settings().managed_command_recipes)
+
+
 def managed_hook_policy_rules():
     metadata = get_settings_source_metadata()
     if metadata.sources.get("managed_hook_policy_rules") != "managed":
@@ -403,6 +427,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
     for key, value in values.items():
         if key == "managed_cli_policy_rules":
             _parse_managed_cli_policy_rules(value)
+        if key == "managed_command_recipes":
+            _parse_managed_command_recipes(value)
         if key == "managed_hook_policy_rules":
             _parse_managed_hook_policy_rules(value)
         if key == "managed_plugin_trust_records":
@@ -522,6 +548,71 @@ def _parse_managed_cli_policy_rules(raw_value: str):
 
 def _normalize_managed_cli_policy_agent_roles(agent_roles: list[str]) -> list[str]:
     return sorted({role.strip().lower() for role in agent_roles if role.strip()})
+
+
+def _parse_managed_command_recipes(raw_value: str):
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_command_recipes must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_command_recipes must be a list.")
+    if len(parsed) > _MANAGED_COMMAND_RECIPE_MAX_COUNT:
+        raise ManagedSettingsError("managed_command_recipes declares too many recipes.")
+
+    from dgentic.command_recipes import CommandRecipe, CommandRecipeRequest
+
+    recipes: list[CommandRecipe] = []
+    seen_ids: set[str] = set()
+    for raw_recipe in parsed:
+        if not isinstance(raw_recipe, dict):
+            raise ManagedSettingsError("managed_command_recipes entries must be objects.")
+        normalized_recipe: dict[str, Any] = {}
+        for raw_key, value in raw_recipe.items():
+            key = _normalize_managed_settings_key(str(raw_key))
+            if key in normalized_recipe:
+                raise ManagedSettingsError(f"Duplicate managed command recipe field: {key}")
+            normalized_recipe[key] = value
+        unknown_fields = sorted(set(normalized_recipe) - _MANAGED_COMMAND_RECIPE_ALLOWED_FIELDS)
+        if unknown_fields:
+            raise ManagedSettingsError(f"Unknown managed command recipe field: {unknown_fields[0]}")
+        if redact_metadata(normalized_recipe) != normalized_recipe:
+            raise ManagedSettingsError("Managed command recipe contains secret-shaped text.")
+        raw_recipe_id = normalized_recipe.get("id")
+        if not isinstance(raw_recipe_id, str):
+            raise ManagedSettingsError("Managed command recipe id is invalid.")
+        if redact_sensitive_values(raw_recipe_id) != raw_recipe_id:
+            raise ManagedSettingsError("Managed command recipe id is invalid.")
+        try:
+            request = CommandRecipeRequest.model_validate(normalized_recipe)
+        except ValueError as exc:
+            raise ManagedSettingsError("Managed command recipe is invalid.") from exc
+        if request.id is None:
+            raise ManagedSettingsError("Managed command recipe id is required.")
+        if request.id in seen_ids:
+            raise ManagedSettingsError(f"Duplicate managed command recipe id: {request.id}")
+        seen_ids.add(request.id)
+        recipes.append(
+            CommandRecipe(
+                id=request.id,
+                name=redact_sensitive_values(request.name),
+                description=redact_sensitive_values(request.description),
+                command_template=request.command_template,
+                cwd=request.cwd,
+                timeout_seconds=request.timeout_seconds,
+                parameters=request.parameters,
+                tags=request.tags,
+                enabled=request.enabled,
+                usage_count=0,
+                source="managed",
+                created_at=_MANAGED_RULE_TIMESTAMP,
+                updated_at=_MANAGED_RULE_TIMESTAMP,
+            )
+        )
+    return tuple(recipes)
 
 
 def _parse_managed_hook_policy_rules(raw_value: str):

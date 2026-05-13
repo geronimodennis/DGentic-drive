@@ -624,9 +624,18 @@ New-Item -ItemType Directory -Force plugins\example-plugin | Out-Null
     "command_recipes": ["status-check"],
     "agent_blueprints": ["reviewer"],
     "tools": ["scanner"]
-  }
+  },
+  "agent_blueprints": [{"path": "agents/reviewer.json", "name": "Reviewer"}],
+  "skills": [{"path": "skills/triage.json", "name": "Triage"}],
+  "tools": [{"path": "tools/scanner.json", "name": "Scanner"}],
+  "docs": [{"path": "docs/runbook.md", "name": "Runbook"}]
 }
 '@ | Set-Content -Encoding utf8 plugins\example-plugin\dgentic-plugin.json
+New-Item -ItemType Directory -Force plugins\example-plugin\agents,plugins\example-plugin\skills,plugins\example-plugin\tools,plugins\example-plugin\docs | Out-Null
+'{"name":"Reviewer"}' | Set-Content -Encoding utf8 plugins\example-plugin\agents\reviewer.json
+'{"name":"Triage"}' | Set-Content -Encoding utf8 plugins\example-plugin\skills\triage.json
+'{"name":"Scanner"}' | Set-Content -Encoding utf8 plugins\example-plugin\tools\scanner.json
+'{"name":"Runbook"}' | Set-Content -Encoding utf8 plugins\example-plugin\docs\runbook.md
 ```
 
 List manifests, inspect one plugin, and record an explicit trust decision:
@@ -641,9 +650,13 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/plugins/example-plugin/trust `
   -ContentType "application/json" `
   -Body '{"status":"trusted","reason":"Reviewed manifest metadata only."}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/plugins/example-plugin/components/preview
 ```
 
-Discovery reads only the exact manifest bytes, computes a SHA-256 digest, returns redacted safe metadata, and stores trust records in `plugin-trust.json`. Trust becomes `stale` when the manifest bytes change. Symlinked plugin directories, symlinked manifests, out-of-root manifests, manifests over 64 KiB, malformed JSON, or manifests whose `plugin_id` does not match the containing directory are rejected with safe errors. In staging or production, these routes require a bearer token with the `tools` capability.
+Discovery reads only the exact manifest bytes, computes a SHA-256 digest, returns redacted safe metadata, and stores trust records in `plugin-trust.json`. Trust becomes `stale` when the manifest bytes change. Trusted current manifests can preview inert agent blueprint, skill, tool, and docs component references with root-bound bounded reads, component SHA-256 digests, and component sizes; preview does not parse, import, index, install, load, or execute referenced content. Symlinked plugin directories, symlinked manifests, out-of-root manifests, manifests over 64 KiB, malformed JSON, or manifests whose `plugin_id` does not match the containing directory are rejected with safe errors. In staging or production, these routes require a bearer token with the `tools` capability.
 
 ## Generate A Local Tool
 

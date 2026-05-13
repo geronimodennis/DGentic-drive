@@ -34,6 +34,7 @@ PLUGIN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
 PluginTrustDecision = Literal["trusted", "blocked"]
 PluginTrustStatus = Literal["trusted", "blocked", "untrusted", "stale"]
 PluginActivationStatus = Literal["ready", "installed", "disabled"]
+PluginReferenceComponentType = Literal["agent_blueprints", "skills", "tools", "docs"]
 
 
 class PluginCommandRecipeComponent(BaseModel):
@@ -56,6 +57,23 @@ class PluginHookPolicyComponent(BaseModel):
     @classmethod
     def path_must_be_relative_safe_text(cls, value: str) -> str:
         return _normalize_component_path(value)
+
+
+class PluginReferenceComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=300)
+    name: str = Field(default="", max_length=120)
+
+    @field_validator("path")
+    @classmethod
+    def path_must_be_relative_safe_text(cls, value: str) -> str:
+        return _normalize_component_path(value)
+
+    @field_validator("name")
+    @classmethod
+    def name_must_be_safe_text(cls, value: str) -> str:
+        return redact_sensitive_values(value.strip())[:120]
 
 
 class PluginComponentSummary(BaseModel):
@@ -92,6 +110,10 @@ class PluginManifest(BaseModel):
     components: PluginComponentSummary = Field(default_factory=PluginComponentSummary)
     command_recipes: list[PluginCommandRecipeComponent] = Field(default_factory=list, max_length=50)
     hook_policies: list[PluginHookPolicyComponent] = Field(default_factory=list, max_length=50)
+    agent_blueprints: list[PluginReferenceComponent] = Field(default_factory=list, max_length=50)
+    skills: list[PluginReferenceComponent] = Field(default_factory=list, max_length=50)
+    tools: list[PluginReferenceComponent] = Field(default_factory=list, max_length=50)
+    docs: list[PluginReferenceComponent] = Field(default_factory=list, max_length=50)
 
     @field_validator("plugin_id", "name", "version", "description", "source")
     @classmethod
@@ -140,6 +162,10 @@ class PluginDiscoveryView(BaseModel):
     components: PluginComponentSummary
     command_recipes: list[PluginCommandRecipeComponent] = Field(default_factory=list)
     hook_policies: list[PluginHookPolicyComponent] = Field(default_factory=list)
+    agent_blueprints: list[PluginReferenceComponent] = Field(default_factory=list)
+    skills: list[PluginReferenceComponent] = Field(default_factory=list)
+    tools: list[PluginReferenceComponent] = Field(default_factory=list)
+    docs: list[PluginReferenceComponent] = Field(default_factory=list)
     manifest_path: str
     manifest_digest: str
     manifest_size_bytes: int = Field(ge=0)
@@ -189,6 +215,22 @@ class PluginHookPolicyActivationResponse(BaseModel):
     plugin_id: str
     manifest_digest: str = ""
     hook_policies: list[PluginHookPolicyActivationView] = Field(default_factory=list)
+
+
+class PluginReferenceComponentPreviewView(BaseModel):
+    component_type: PluginReferenceComponentType
+    name: str
+    component_path: str
+    component_digest: str
+    component_size_bytes: int = Field(ge=0)
+    manifest_digest: str
+    status: Literal["ready"] = "ready"
+
+
+class PluginReferenceComponentPreviewResponse(BaseModel):
+    plugin_id: str
+    manifest_digest: str = ""
+    components: list[PluginReferenceComponentPreviewView] = Field(default_factory=list)
 
 
 _plugin_trust = JsonCollection("plugin-trust", PluginTrustRecord, key_field="plugin_id")
@@ -483,6 +525,34 @@ def disable_plugin_hook_policy_activation(
     )
 
 
+def preview_plugin_reference_components(
+    plugin_id: str,
+) -> PluginReferenceComponentPreviewResponse:
+    plugin = _trusted_plugin_for_activation(plugin_id)
+    components = _load_plugin_reference_components(plugin)
+    return PluginReferenceComponentPreviewResponse(
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        components=[
+            PluginReferenceComponentPreviewView(
+                component_type=component_type,
+                name=name,
+                component_path=component_path,
+                component_digest=component_digest,
+                component_size_bytes=component_size_bytes,
+                manifest_digest=plugin.manifest_digest,
+            )
+            for (
+                component_type,
+                name,
+                component_path,
+                component_digest,
+                component_size_bytes,
+            ) in components
+        ],
+    )
+
+
 def validate_plugin_component_activation(
     plugin_id: str,
     manifest_digest: str,
@@ -528,6 +598,10 @@ def _plugin_view_from_manifest_path(manifest_path: Path) -> PluginDiscoveryView:
         components=manifest.components,
         command_recipes=manifest.command_recipes,
         hook_policies=manifest.hook_policies,
+        agent_blueprints=manifest.agent_blueprints,
+        skills=manifest.skills,
+        tools=manifest.tools,
+        docs=manifest.docs,
         manifest_path=_relative_plugin_path(manifest_path),
         manifest_digest=digest,
         manifest_size_bytes=len(raw_manifest),
@@ -638,6 +712,39 @@ def _load_plugin_hook_policy_components(
                 raise ValueError(f"Duplicate plugin hook policy rule id: {rule_id}")
             seen_rule_ids.add(rule_id)
             loaded.append((rule_id, rule, component.path, component_digest))
+    return loaded
+
+
+def _load_plugin_reference_components(
+    plugin: PluginDiscoveryView,
+) -> list[tuple[PluginReferenceComponentType, str, str, str, int]]:
+    loaded: list[tuple[PluginReferenceComponentType, str, str, str, int]] = []
+    seen_components: set[tuple[str, str]] = set()
+    reference_groups: tuple[
+        tuple[PluginReferenceComponentType, list[PluginReferenceComponent]],
+        ...,
+    ] = (
+        ("agent_blueprints", plugin.agent_blueprints),
+        ("skills", plugin.skills),
+        ("tools", plugin.tools),
+        ("docs", plugin.docs),
+    )
+    for component_type, components in reference_groups:
+        for component in components:
+            component_key = (component_type, component.path)
+            if component_key in seen_components:
+                raise ValueError("Duplicate plugin component reference.")
+            seen_components.add(component_key)
+            raw_component = _read_plugin_component_bytes(plugin.plugin_id, component.path)
+            loaded.append(
+                (
+                    component_type,
+                    component.name or component.path,
+                    component.path,
+                    sha256(raw_component).hexdigest(),
+                    len(raw_component),
+                )
+            )
     return loaded
 
 

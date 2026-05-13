@@ -146,6 +146,7 @@ from dgentic.plugins import (
     PluginDiscoveryResponse,
     PluginDiscoveryView,
     PluginHookPolicyActivationResponse,
+    PluginReferenceComponentPreviewResponse,
     PluginTrustRequest,
     disable_plugin_command_recipe_activation,
     disable_plugin_hook_policy_activation,
@@ -155,6 +156,7 @@ from dgentic.plugins import (
     install_plugin_hook_policies,
     preview_plugin_command_recipe_activation,
     preview_plugin_hook_policy_activation,
+    preview_plugin_reference_components,
     update_plugin_trust,
 )
 from dgentic.provider_pricing import ProviderPricingConfigurationError
@@ -1577,6 +1579,23 @@ def patch_local_plugin_trust(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/components/preview",
+    response_model=PluginReferenceComponentPreviewResponse,
+)
+def preview_local_plugin_reference_components(
+    plugin_id: str,
+) -> PluginReferenceComponentPreviewResponse:
+    try:
+        return preview_plugin_reference_components(plugin_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post(

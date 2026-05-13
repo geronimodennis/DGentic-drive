@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009aj Plugin Reference Component Preview Governance
+
+Status: completed for the scoped non-executing plugin reference component preview contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill install and loading governance beyond declarative command recipes, hook policies, and inert previews, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected a bounded plugin governance slice after BL-009ai because plugin agent, skill, tool, and docs references were previously manifest-summary-only while executable loading remains too risky for an autonomous increment.
+- Completed: Architect/Security scoped the contract to trusted-current-manifest-only, digest-only previews with no parsing, importing, indexing, installing, loading, or executing referenced content.
+- Completed: Developer added manifest reference component declarations for `agent_blueprints`, `skills`, `tools`, and `docs`, plus `POST /plugins/{plugin_id}/components/preview` metadata responses backed by the existing bounded component reader.
+- Completed: QA added API and auth coverage for trusted-only preview, digest/size metadata, no component-content leakage, duplicate-reference rejection, stale trust blocking, and `tools` capability mapping.
+- Completed: Reviewer/Security validated that the route is metadata-only, writes no plugin activation state, and keeps future component loading as an explicit follow-up rather than an implicit side effect.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: plugin manifests may declare top-level `agent_blueprints`, `skills`, `tools`, and `docs` reference arrays with safe relative `path` values and optional redacted `name` metadata.
+- Implemented in this slice: `POST /plugins/{plugin_id}/components/preview` requires a trusted current manifest digest, reads each referenced component with root-bound and symlink-rejected bounded reads, and returns component type, name, path, SHA-256 digest, size, manifest digest, and ready status.
+- Implemented in this slice: component preview responses do not include component content and do not create or mutate `command-recipes.json`, `hook-policy-rules.json`, generated-tool records, agent records, skill registries, memory indexes, or plugin activation state.
+- Still out of scope after this slice: plugin hook-code loading, plugin generated-tool import/install, plugin agent blueprint activation, plugin skill loading or prompt injection, component registry persistence, OS-level plugin sandboxing, managed KMS, first-class secret managers, generated-tool network approval workflows, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused plugin API gate: `python -m pytest -q tests\test_api.py -k "plugin_reference_component or plugin_routes_require_tools_capability or plugin_command_recipe_install or plugin_hook_policy_install"` passed with 7 tests.
+- Focused auth capability gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path_maps_public_and_sensitive_routes"` passed with 44 tests.
+- Broader plugin API gate: `python -m pytest -q tests\test_api.py -k "plugin"` passed with 14 tests.
+- Broader auth/plugin gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path_maps_public_and_sensitive_routes or plugin"` passed with 44 tests.
+- Source/test lint and format gates passed for touched source and tests.
+- Affected suite gate passed: `python -m pytest -q tests\test_api.py tests\test_auth.py` with 309 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,166 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with generated-tool network approval workflow design, OS-level/non-Python egress isolation, managed KMS/secret-manager hardening, richer production identity workflows, plugin component registry/install governance, managed policy-source controls beyond CLI/hook policy rules, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009ai Web Retrieval Network Guard Contract
 
 Status: completed for the scoped transport-free web retrieval network guard contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

@@ -1907,6 +1907,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/tools/approvals/approval-1/approve", "approvals"),
         ("/plugins", "tools"),
         ("/plugins/safe-plugin/trust", "tools"),
+        ("/plugins/safe-plugin/components/preview", "tools"),
         ("/plugins/safe-plugin/command-recipes/preview", "tools"),
         ("/plugins/safe-plugin/command-recipes/install", "tools"),
         ("/plugins/safe-plugin/command-recipes/disable", "tools"),

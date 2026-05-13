@@ -3924,6 +3924,170 @@ def test_plugin_routes_require_tools_capability_in_production(
     get_settings.cache_clear()
 
 
+def test_plugin_reference_component_preview_requires_trust_and_returns_digests_only(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "component-plugin",
+        "agents/reviewer.json",
+        {"name": "Reviewer", "prompt": "TOKEN=agent-secret"},
+    )
+    _write_plugin_component(
+        root_dir,
+        "component-plugin",
+        "skills/triage.json",
+        {"name": "Triage", "instructions": "Authorization: Bearer skill-secret"},
+    )
+    _write_plugin_component(
+        root_dir,
+        "component-plugin",
+        "tools/scanner.json",
+        {"name": "Scanner", "command": "scan --token tool-secret"},
+    )
+    _write_plugin_component(
+        root_dir,
+        "component-plugin",
+        "docs/runbook.md",
+        {"body": "PASSWORD=docs-secret"},
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "component-plugin",
+        {
+            "plugin_id": "component-plugin",
+            "name": "Component plugin",
+            "version": "1.0.0",
+            "components": {
+                "agent_blueprints": ["Reviewer agent"],
+                "skills": ["Triage skill"],
+                "tools": ["Scanner tool"],
+                "docs": ["Runbook"],
+            },
+            "agent_blueprints": [{"path": "agents/reviewer.json", "name": "Reviewer"}],
+            "skills": [{"path": "skills/triage.json", "name": "Triage"}],
+            "tools": [{"path": "tools/scanner.json", "name": "Scanner"}],
+            "docs": [{"path": "docs/runbook.md", "name": "Runbook"}],
+        },
+    )
+    client = TestClient(create_app())
+
+    untrusted_response = client.post("/plugins/component-plugin/components/preview")
+    trust_response = client.patch(
+        "/plugins/component-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed component references."},
+    )
+    preview_response = client.post("/plugins/component-plugin/components/preview")
+
+    assert untrusted_response.status_code == 403
+    assert trust_response.status_code == 200
+    assert preview_response.status_code == 200
+    components = preview_response.json()["components"]
+    assert [item["component_type"] for item in components] == [
+        "agent_blueprints",
+        "skills",
+        "tools",
+        "docs",
+    ]
+    assert [item["name"] for item in components] == [
+        "Reviewer",
+        "Triage",
+        "Scanner",
+        "Runbook",
+    ]
+    assert [item["component_path"] for item in components] == [
+        "agents/reviewer.json",
+        "skills/triage.json",
+        "tools/scanner.json",
+        "docs/runbook.md",
+    ]
+    assert all(item["status"] == "ready" for item in components)
+    expected_manifest_digest = trust_response.json()["manifest_digest"]
+    assert all(item["manifest_digest"] == expected_manifest_digest for item in components)
+    assert all(len(item["component_digest"]) == 64 for item in components)
+    assert all(item["component_size_bytes"] > 0 for item in components)
+    serialized = preview_response.text
+    assert "agent-secret" not in serialized
+    assert "skill-secret" not in serialized
+    assert "tool-secret" not in serialized
+    assert "docs-secret" not in serialized
+    assert not (data_dir / "command-recipes.json").exists()
+    assert not (data_dir / "hook-policy-rules.json").exists()
+    get_settings.cache_clear()
+
+
+def test_plugin_reference_component_preview_blocks_drift_and_duplicate_references(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "drifted-component-plugin",
+        "skills/triage.json",
+        {"name": "Triage"},
+    )
+    manifest = {
+        "plugin_id": "drifted-component-plugin",
+        "name": "Drifted component plugin",
+        "version": "1.0.0",
+        "skills": [{"path": "skills/triage.json", "name": "Triage"}],
+    }
+    _write_plugin_manifest(root_dir, "drifted-component-plugin", manifest)
+    _write_plugin_component(
+        root_dir,
+        "duplicate-component-plugin",
+        "docs/runbook.json",
+        {"name": "Runbook"},
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "duplicate-component-plugin",
+        {
+            "plugin_id": "duplicate-component-plugin",
+            "name": "Duplicate component plugin",
+            "version": "1.0.0",
+            "docs": [
+                {"path": "docs/runbook.json", "name": "Runbook"},
+                {"path": "docs/runbook.json", "name": "Runbook again"},
+            ],
+        },
+    )
+    client = TestClient(create_app())
+    trust_response = client.patch(
+        "/plugins/drifted-component-plugin/trust",
+        json={"status": "trusted", "reason": "Initial trust."},
+    )
+    duplicate_trust_response = client.patch(
+        "/plugins/duplicate-component-plugin/trust",
+        json={"status": "trusted", "reason": "Initial trust."},
+    )
+    manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "drifted-component-plugin", manifest)
+
+    drifted_response = client.post("/plugins/drifted-component-plugin/components/preview")
+    duplicate_response = client.post("/plugins/duplicate-component-plugin/components/preview")
+
+    assert trust_response.status_code == 200
+    assert duplicate_trust_response.status_code == 200
+    assert drifted_response.status_code == 403
+    assert "trusted at the current manifest digest" in drifted_response.text
+    assert duplicate_response.status_code == 400
+    assert "Duplicate plugin component reference" in duplicate_response.text
+    get_settings.cache_clear()
+
+
 def test_plugin_command_recipe_install_requires_trust_and_blocks_component_drift(
     tmp_path,
     monkeypatch,

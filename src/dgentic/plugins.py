@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -35,6 +36,16 @@ PluginTrustDecision = Literal["trusted", "blocked"]
 PluginTrustStatus = Literal["trusted", "blocked", "untrusted", "stale"]
 PluginActivationStatus = Literal["ready", "installed", "disabled"]
 PluginReferenceComponentType = Literal["agent_blueprints", "skills", "tools", "docs"]
+
+
+@dataclass(frozen=True)
+class _LoadedPluginReferenceComponent:
+    component_id: str
+    component_type: PluginReferenceComponentType
+    name: str
+    component_path: str
+    component_digest: str
+    component_size_bytes: int
 
 
 class PluginCommandRecipeComponent(BaseModel):
@@ -218,6 +229,7 @@ class PluginHookPolicyActivationResponse(BaseModel):
 
 
 class PluginReferenceComponentPreviewView(BaseModel):
+    component_id: str
     component_type: PluginReferenceComponentType
     name: str
     component_path: str
@@ -233,7 +245,61 @@ class PluginReferenceComponentPreviewResponse(BaseModel):
     components: list[PluginReferenceComponentPreviewView] = Field(default_factory=list)
 
 
+class PluginReferenceComponentRecord(BaseModel):
+    component_id: str = Field(min_length=1, max_length=140)
+    plugin_id: str = Field(min_length=1, max_length=80, pattern=PLUGIN_ID_PATTERN)
+    component_type: PluginReferenceComponentType
+    name: str = Field(default="", max_length=120)
+    manifest_digest: str = Field(min_length=64, max_length=64)
+    component_path: str = Field(min_length=1, max_length=300)
+    component_digest: str = Field(min_length=64, max_length=64)
+    component_size_bytes: int = Field(ge=0)
+    status: Literal["installed", "disabled"] = "installed"
+    installed_by: str = Field(default="system", max_length=120)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("name", "installed_by")
+    @classmethod
+    def text_fields_must_be_redacted(cls, value: str) -> str:
+        return redact_sensitive_values(value.strip())
+
+    @field_validator("component_path")
+    @classmethod
+    def component_path_must_be_relative_safe_text(cls, value: str) -> str:
+        return _normalize_component_path(value)
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def datetimes_must_be_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+
+class PluginReferenceComponentActivationView(BaseModel):
+    component_id: str
+    component_type: PluginReferenceComponentType
+    name: str
+    component_path: str
+    component_digest: str
+    component_size_bytes: int = Field(ge=0)
+    manifest_digest: str
+    status: Literal["installed", "disabled"]
+
+
+class PluginReferenceComponentActivationResponse(BaseModel):
+    plugin_id: str
+    manifest_digest: str = ""
+    components: list[PluginReferenceComponentActivationView] = Field(default_factory=list)
+
+
 _plugin_trust = JsonCollection("plugin-trust", PluginTrustRecord, key_field="plugin_id")
+_plugin_reference_components = JsonCollection(
+    "plugin-components",
+    PluginReferenceComponentRecord,
+    key_field="component_id",
+)
 
 
 def discover_plugins() -> PluginDiscoveryResponse:
@@ -534,22 +600,158 @@ def preview_plugin_reference_components(
         plugin_id=plugin.plugin_id,
         manifest_digest=plugin.manifest_digest,
         components=[
-            PluginReferenceComponentPreviewView(
-                component_type=component_type,
-                name=name,
-                component_path=component_path,
-                component_digest=component_digest,
-                component_size_bytes=component_size_bytes,
-                manifest_digest=plugin.manifest_digest,
-            )
-            for (
-                component_type,
-                name,
-                component_path,
-                component_digest,
-                component_size_bytes,
-            ) in components
+            _preview_reference_component_view(component, plugin.manifest_digest)
+            for component in components
         ],
+    )
+
+
+def install_plugin_reference_components(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> PluginReferenceComponentActivationResponse:
+    plugin = _trusted_plugin_for_activation(plugin_id)
+    components = _load_plugin_reference_components(plugin)
+    now = datetime.now(UTC)
+    records = [
+        PluginReferenceComponentRecord(
+            component_id=component.component_id,
+            plugin_id=plugin.plugin_id,
+            component_type=component.component_type,
+            name=component.name,
+            manifest_digest=plugin.manifest_digest,
+            component_path=component.component_path,
+            component_digest=component.component_digest,
+            component_size_bytes=component.component_size_bytes,
+            status="installed",
+            installed_by=actor or "system",
+            created_at=now,
+            updated_at=now,
+        )
+        for component in components
+    ]
+
+    def upsert(
+        items: list[PluginReferenceComponentRecord],
+    ) -> tuple[list[PluginReferenceComponentRecord], list[PluginReferenceComponentRecord]]:
+        records_by_id = {record.component_id: record for record in records}
+        saved_by_id: dict[str, PluginReferenceComponentRecord] = {}
+        updated_items: list[PluginReferenceComponentRecord] = []
+        for item in items:
+            replacement = records_by_id.pop(item.component_id, None)
+            if replacement is None:
+                updated_items.append(item)
+                continue
+            saved = replacement.model_copy(update={"created_at": item.created_at})
+            updated_items.append(saved)
+            saved_by_id[saved.component_id] = saved
+        for record in records_by_id.values():
+            updated_items.append(record)
+            saved_by_id[record.component_id] = record
+        saved_records = [saved_by_id[record.component_id] for record in records]
+        return updated_items, saved_records
+
+    installed = _plugin_reference_components.transact(upsert)
+    views = [_plugin_reference_record_view(record) for record in installed]
+    _record_plugin_reference_component_event(
+        "Installed plugin reference components.",
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        actor=actor,
+        components=views,
+    )
+    return PluginReferenceComponentActivationResponse(
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        components=views,
+    )
+
+
+def disable_plugin_reference_components(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> PluginReferenceComponentActivationResponse:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    now = datetime.now(UTC)
+    disabled: list[PluginReferenceComponentRecord] = []
+
+    def disable(
+        items: list[PluginReferenceComponentRecord],
+    ) -> tuple[list[PluginReferenceComponentRecord], list[PluginReferenceComponentRecord]]:
+        updated_items: list[PluginReferenceComponentRecord] = []
+        for item in items:
+            if item.plugin_id == normalized_plugin_id:
+                updated = item.model_copy(
+                    update={
+                        "status": "disabled",
+                        "installed_by": actor or item.installed_by,
+                        "updated_at": now,
+                    }
+                )
+                updated_items.append(updated)
+                disabled.append(updated)
+            else:
+                updated_items.append(item)
+        return updated_items, disabled
+
+    disabled_records = _plugin_reference_components.transact(disable)
+    views = [_plugin_reference_record_view(record) for record in disabled_records]
+    _record_plugin_reference_component_event(
+        "Disabled plugin reference components.",
+        plugin_id=normalized_plugin_id,
+        manifest_digest="",
+        actor=actor,
+        components=views,
+    )
+    return PluginReferenceComponentActivationResponse(
+        plugin_id=normalized_plugin_id,
+        components=views,
+    )
+
+
+def list_plugin_reference_components(plugin_id: str) -> PluginReferenceComponentActivationResponse:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    records = [
+        record
+        for record in _plugin_reference_components.list()
+        if record.plugin_id == normalized_plugin_id
+    ]
+    return PluginReferenceComponentActivationResponse(
+        plugin_id=normalized_plugin_id,
+        manifest_digest="",
+        components=[_plugin_reference_record_view(record) for record in records],
+    )
+
+
+def _plugin_reference_record_view(
+    record: PluginReferenceComponentRecord,
+) -> PluginReferenceComponentActivationView:
+    return PluginReferenceComponentActivationView(
+        component_id=record.component_id,
+        component_type=record.component_type,
+        name=record.name,
+        component_path=record.component_path,
+        component_digest=record.component_digest,
+        component_size_bytes=record.component_size_bytes,
+        manifest_digest=record.manifest_digest,
+        status=record.status,
+    )
+
+
+def _preview_reference_component_view(
+    component: _LoadedPluginReferenceComponent,
+    manifest_digest: str,
+) -> PluginReferenceComponentPreviewView:
+    return PluginReferenceComponentPreviewView(
+        component_id=component.component_id,
+        component_type=component.component_type,
+        name=component.name,
+        component_path=component.component_path,
+        component_digest=component.component_digest,
+        component_size_bytes=component.component_size_bytes,
+        manifest_digest=manifest_digest,
     )
 
 
@@ -717,8 +919,8 @@ def _load_plugin_hook_policy_components(
 
 def _load_plugin_reference_components(
     plugin: PluginDiscoveryView,
-) -> list[tuple[PluginReferenceComponentType, str, str, str, int]]:
-    loaded: list[tuple[PluginReferenceComponentType, str, str, str, int]] = []
+) -> list[_LoadedPluginReferenceComponent]:
+    loaded: list[_LoadedPluginReferenceComponent] = []
     seen_components: set[tuple[str, str]] = set()
     reference_groups: tuple[
         tuple[PluginReferenceComponentType, list[PluginReferenceComponent]],
@@ -737,12 +939,17 @@ def _load_plugin_reference_components(
             seen_components.add(component_key)
             raw_component = _read_plugin_component_bytes(plugin.plugin_id, component.path)
             loaded.append(
-                (
-                    component_type,
-                    component.name or component.path,
-                    component.path,
-                    sha256(raw_component).hexdigest(),
-                    len(raw_component),
+                _LoadedPluginReferenceComponent(
+                    component_id=_plugin_reference_component_id(
+                        plugin.plugin_id,
+                        component_type,
+                        component.path,
+                    ),
+                    component_type=component_type,
+                    name=component.name or component.path,
+                    component_path=component.path,
+                    component_digest=sha256(raw_component).hexdigest(),
+                    component_size_bytes=len(raw_component),
                 )
             )
     return loaded
@@ -751,6 +958,15 @@ def _load_plugin_reference_components(
 def _plugin_hook_policy_rule_id(plugin_id: str, component_path: str, index: int) -> str:
     seed = f"{plugin_id}\0{component_path}\0{index}".encode()
     return f"{plugin_id}.hook-{sha256(seed).hexdigest()[:16]}"
+
+
+def _plugin_reference_component_id(
+    plugin_id: str,
+    component_type: PluginReferenceComponentType,
+    component_path: str,
+) -> str:
+    seed = f"{plugin_id}\0{component_type}\0{component_path}".encode()
+    return f"{plugin_id}.component-{sha256(seed).hexdigest()[:16]}"
 
 
 def _read_plugin_component_bytes(plugin_id: str, component_path: str) -> bytes:
@@ -975,5 +1191,32 @@ def _record_plugin_hook_policy_activation_event(
             ],
             "component_digests": [rule.component_digest for rule in hook_policies],
             "statuses": [rule.status for rule in hook_policies],
+        },
+    )
+
+
+def _record_plugin_reference_component_event(
+    message: str,
+    *,
+    plugin_id: str,
+    manifest_digest: str,
+    actor: str | None,
+    components: list[PluginReferenceComponentActivationView],
+) -> None:
+    event_log.record(
+        LogEventType.tool,
+        message,
+        actor=actor or "system",
+        subject_id=plugin_id,
+        metadata={
+            "plugin_id": plugin_id,
+            "manifest_digest": manifest_digest,
+            "component_ids": [component.component_id for component in components],
+            "component_types": [component.component_type for component in components],
+            "component_paths": [
+                redact_sensitive_values(component.component_path) for component in components
+            ],
+            "component_digests": [component.component_digest for component in components],
+            "statuses": [component.status for component in components],
         },
     )

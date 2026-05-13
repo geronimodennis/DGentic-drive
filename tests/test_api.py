@@ -2132,6 +2132,7 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
                         "command_recipes",
                         "hook_policy",
                         "plugin_trust",
+                        "plugin_components",
                         "plugin_command_recipes",
                         "plugin_hook_policies",
                     ]
@@ -2186,6 +2187,10 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
         "/plugins/locked-plugin/trust",
         json={"status": "trusted", "reason": "Managed deployment owns plugin trust."},
     )
+    plugin_component_preview = client.post("/plugins/locked-plugin/components/preview")
+    plugin_component_install = client.post("/plugins/locked-plugin/components/install")
+    plugin_component_disable = client.post("/plugins/locked-plugin/components/disable")
+    plugin_component_list = client.get("/plugins/locked-plugin/components")
     plugin_recipe_install = client.post("/plugins/locked-plugin/command-recipes/install")
     plugin_hook_install = client.post("/plugins/locked-plugin/hook-policies/install")
     plugin_hook_disable = client.post("/plugins/locked-plugin/hook-policies/disable")
@@ -2202,6 +2207,13 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
     assert "hook_policy" in hook_create.text
     assert plugin_trust.status_code == 403
     assert "plugin_trust" in plugin_trust.text
+    assert plugin_component_preview.status_code == 403
+    assert "trusted" in plugin_component_preview.text
+    assert plugin_component_install.status_code == 403
+    assert "plugin_components" in plugin_component_install.text
+    assert plugin_component_disable.status_code == 403
+    assert "plugin_components" in plugin_component_disable.text
+    assert plugin_component_list.status_code == 200
     assert plugin_recipe_install.status_code == 403
     assert "plugin_command_recipes" in plugin_recipe_install.text
     assert plugin_hook_install.status_code == 403
@@ -3924,7 +3936,7 @@ def test_plugin_routes_require_tools_capability_in_production(
     get_settings.cache_clear()
 
 
-def test_plugin_reference_component_preview_requires_trust_and_returns_digests_only(
+def test_plugin_reference_component_registry_requires_trust_and_stores_metadata_only(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -3980,13 +3992,19 @@ def test_plugin_reference_component_preview_requires_trust_and_returns_digests_o
     client = TestClient(create_app())
 
     untrusted_response = client.post("/plugins/component-plugin/components/preview")
+    untrusted_install_response = client.post("/plugins/component-plugin/components/install")
     trust_response = client.patch(
         "/plugins/component-plugin/trust",
         json={"status": "trusted", "reason": "Reviewed component references."},
     )
     preview_response = client.post("/plugins/component-plugin/components/preview")
+    install_response = client.post("/plugins/component-plugin/components/install")
+    list_response = client.get("/plugins/component-plugin/components")
+    disable_response = client.post("/plugins/component-plugin/components/disable")
+    reinstall_response = client.post("/plugins/component-plugin/components/install")
 
     assert untrusted_response.status_code == 403
+    assert untrusted_install_response.status_code == 403
     assert trust_response.status_code == 200
     assert preview_response.status_code == 200
     components = preview_response.json()["components"]
@@ -4012,8 +4030,37 @@ def test_plugin_reference_component_preview_requires_trust_and_returns_digests_o
     expected_manifest_digest = trust_response.json()["manifest_digest"]
     assert all(item["manifest_digest"] == expected_manifest_digest for item in components)
     assert all(len(item["component_digest"]) == 64 for item in components)
+    expected_component_prefix = "component-plugin.component-"
+    assert all(item["component_id"].startswith(expected_component_prefix) for item in components)
     assert all(item["component_size_bytes"] > 0 for item in components)
-    serialized = preview_response.text
+    assert install_response.status_code == 200
+    installed = install_response.json()["components"]
+    assert [item["component_id"] for item in installed] == [
+        item["component_id"] for item in components
+    ]
+    assert all(item["status"] == "installed" for item in installed)
+    assert list_response.status_code == 200
+    assert list_response.json()["components"] == installed
+    assert disable_response.status_code == 200
+    assert all(item["status"] == "disabled" for item in disable_response.json()["components"])
+    assert reinstall_response.status_code == 200
+    assert all(item["status"] == "installed" for item in reinstall_response.json()["components"])
+    persisted = json.loads((data_dir / "plugin-components.json").read_text(encoding="utf-8"))
+    assert len(persisted) == 4
+    assert {item["status"] for item in persisted} == {"installed"}
+    assert {item["component_type"] for item in persisted} == {
+        "agent_blueprints",
+        "skills",
+        "tools",
+        "docs",
+    }
+    serialized = (
+        preview_response.text
+        + install_response.text
+        + list_response.text
+        + disable_response.text
+        + json.dumps(persisted)
+    )
     assert "agent-secret" not in serialized
     assert "skill-secret" not in serialized
     assert "tool-secret" not in serialized

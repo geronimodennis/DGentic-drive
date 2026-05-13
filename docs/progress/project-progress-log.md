@@ -4,6 +4,41 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ak Inert Plugin Reference Component Registry Governance
+
+Status: completed for the scoped metadata-only plugin reference component registry contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected metadata-only install/list/disable governance for plugin reference components after BL-009aj because future plugin loading should start from persisted provenance rather than raw manifest summaries.
+- Completed: Architect/Security scoped the contract to inert records in `plugin-components.json` with no parsing, importing, indexing, loading, or executing referenced content.
+- Completed: Developer added stable component ids, install/list/disable routes, persisted reference component records, activation events, and the managed `plugin_components` mutation lock surface.
+- Completed: QA added API, managed-settings, and auth coverage for trusted-only install, list/disable/reinstall workflows, persisted metadata-only records, no component-content leakage, managed lock behavior, and route capability mapping.
+- Completed: Reviewer/Security validated that install persists only provenance metadata and does not create generated tools, agents, skills, memory records, hook rules, command recipes, or runtime loaders.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /plugins/{plugin_id}/components/install` persists trusted current `agent_blueprints`, `skills`, `tools`, and `docs` references as inert `plugin-components.json` records with stable component ids, component paths, SHA-256 component digests, component sizes, manifest digests, status, actor, and timestamps.
+- Implemented in this slice: `GET /plugins/{plugin_id}/components` lists installed or disabled inert reference component records, and `POST /plugins/{plugin_id}/components/disable` marks them disabled without deleting provenance.
+- Implemented in this slice: `managed_policy_locks` accepts `plugin_components`, causing component install/disable mutation routes to fail closed while preserving plugin discovery, component preview, and component list access.
+- Still out of scope after this slice: plugin hook-code loading, generated-tool import/install from plugins, agent blueprint activation, skill loading or prompt injection, component content exposure, OS-level plugin sandboxing, managed KMS, first-class secret managers, generated-tool network approval workflows, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused plugin component and managed-lock API gate: `python -m pytest -q tests\test_api.py -k "plugin_reference_component or managed_policy_locks"` passed with 3 tests.
+- Focused managed-settings lock gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_policy_locks"` passed with 1 test.
+- Focused auth capability gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path_maps_public_and_sensitive_routes"` passed with 47 tests.
+- Broader plugin API gate: `python -m pytest -q tests\test_api.py -k "plugin"` passed with 14 tests.
+- Managed-settings file gate: `python -m pytest -q tests\test_managed_settings.py` passed with 27 tests.
+- Source/test lint and format gates passed for touched source and tests.
+- Affected suite gate passed: `python -m pytest -q tests\test_api.py tests\test_auth.py tests\test_managed_settings.py` with 339 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,169 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with generated-tool network approval workflow design, OS-level/non-Python egress isolation, managed KMS/secret-manager hardening, richer production identity workflows, plugin component loading governance from inert records, managed policy-source controls beyond CLI/hook policy rules, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009aj Plugin Reference Component Preview Governance
 
 Status: completed for the scoped non-executing plugin reference component preview contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill install and loading governance beyond declarative command recipes, hook policies, and inert previews, managed policy-source controls beyond CLI/hook policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

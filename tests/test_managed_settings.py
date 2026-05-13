@@ -105,6 +105,7 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
                 "managed_policy_locks": [
                     "cli-policy",
                     "hook policy",
+                    "plugin components",
                     "plugin hook policies",
                 ]
             }
@@ -114,12 +115,14 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
     get_settings.cache_clear()
 
     assert managed_policy_locks() == frozenset(
-        {"cli_policy", "hook_policy", "plugin_hook_policies"}
+        {"cli_policy", "hook_policy", "plugin_components", "plugin_hook_policies"}
     )
     with pytest.raises(PermissionError, match="cli_policy"):
         require_managed_policy_surface_mutable("cli_policy")
     with pytest.raises(PermissionError, match="plugin_hook_policies"):
         require_managed_policy_surface_mutable("plugin_hook_policies")
+    with pytest.raises(PermissionError, match="plugin_components"):
+        require_managed_policy_surface_mutable("plugin_components")
     require_managed_policy_surface_mutable("command_recipes")
 
 

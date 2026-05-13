@@ -65,6 +65,7 @@ Managed settings can also lock selected mutable policy surfaces so deployment-ow
       "command_recipes",
       "hook_policy",
       "plugin_trust",
+      "plugin_components",
       "plugin_command_recipes",
       "plugin_hook_policies"
     ]
@@ -72,7 +73,7 @@ Managed settings can also lock selected mutable policy surfaces so deployment-ow
 }
 ```
 
-`managed_policy_locks` only takes effect from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value from a normal environment variable is ignored for locking. Locked surfaces reject mutation routes with `403`, including CLI policy create/update, command recipe create/update, hook policy create/update, plugin trust changes, plugin command recipe install/disable, and plugin hook-policy install/disable. Read routes, recipe previews, plugin discovery, plugin activation previews, command-policy evaluation, and git checkpoints remain available.
+`managed_policy_locks` only takes effect from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value from a normal environment variable is ignored for locking. Locked surfaces reject mutation routes with `403`, including CLI policy create/update, command recipe create/update, hook policy create/update, plugin trust changes, plugin reference component install/disable, plugin command recipe install/disable, and plugin hook-policy install/disable. Read routes, recipe previews, plugin discovery, plugin component previews/lists, plugin activation previews, command-policy evaluation, and git checkpoints remain available.
 
 Managed settings can also publish read-only CLI policy rules. `managed_cli_policy_rules` is honored only when it comes from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value in a normal environment variable is ignored for managed-rule loading. Managed CLI policy rules are validated fail-closed, listed with `source: "managed"` by `GET /cli/policy/rules`, evaluated before local mutable rules, and cannot be patched through `/cli/policy/rules/{rule_id}`. Local CLI policy rules can still be created and updated unless `managed_policy_locks` includes `cli_policy`:
 
@@ -155,7 +156,7 @@ SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROO
 
 Local vault credential references can be re-encrypted after a Fernet key change through `POST /credentials/references/local-vault/rotate-key` with a principal that has the `credentials` capability. The request supplies `current_vault_key` and `new_vault_key`; the response returns only `rotated_count`, `skipped_count`, and `rotated_at`. The operation rotates every persisted `local_vault` record in one transaction, skips environment and external-process references, fails without partial writes on wrong keys or malformed ciphertext, and does not expose keys, plaintext, or ciphertext in API responses or audit metadata.
 
-Plugin manifests can be discovered through `GET /plugins`, inspected through `GET /plugins/{plugin_id}`, and explicitly trusted or blocked through `PATCH /plugins/{plugin_id}/trust`. DGentic reads only direct manifests at `DGENTIC_ROOT_DIR/plugins/[plugin_id]/dgentic-plugin.json`, computes a SHA-256 digest over the raw manifest bytes, returns redacted safe metadata, persists trust records in `plugin-trust.json`, and marks trust `stale` when the manifest changes. Discovery rejects symlinked, out-of-root, oversized, malformed, or id-mismatched manifests. Trusted current manifests can preview inert `agent_blueprints`, `skills`, `tools`, and `docs` component references through `POST /plugins/{plugin_id}/components/preview`; this returns type/name/path/digest/size metadata only and does not parse, import, index, install, load, or execute referenced content. Trusted current manifests can also activate declarative command recipe and hook-policy JSON components, but activation only reads bounded JSON files, records manifest/component digest provenance, and still executes through the normal CLI or hook-policy contracts; DGentic does not import plugin code, run plugin scripts, or load plugin hooks/tools/agents/skills in this slice.
+Plugin manifests can be discovered through `GET /plugins`, inspected through `GET /plugins/{plugin_id}`, and explicitly trusted or blocked through `PATCH /plugins/{plugin_id}/trust`. DGentic reads only direct manifests at `DGENTIC_ROOT_DIR/plugins/[plugin_id]/dgentic-plugin.json`, computes a SHA-256 digest over the raw manifest bytes, returns redacted safe metadata, persists trust records in `plugin-trust.json`, and marks trust `stale` when the manifest changes. Discovery rejects symlinked, out-of-root, oversized, malformed, or id-mismatched manifests. Trusted current manifests can preview inert `agent_blueprints`, `skills`, `tools`, and `docs` component references through `POST /plugins/{plugin_id}/components/preview`; this returns type/name/path/digest/size metadata only and does not parse, import, index, install, load, or execute referenced content. `POST /plugins/{plugin_id}/components/install` persists the same inert provenance metadata to `plugin-components.json`, `GET /plugins/{plugin_id}/components` lists installed or disabled records, and `POST /plugins/{plugin_id}/components/disable` disables them without deleting history. Trusted current manifests can also activate declarative command recipe and hook-policy JSON components, but activation only reads bounded JSON files, records manifest/component digest provenance, and still executes through the normal CLI or hook-policy contracts; DGentic does not import plugin code, run plugin scripts, or load plugin hooks/tools/agents/skills in this slice.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `
@@ -649,6 +650,12 @@ Preview trusted non-executing plugin component references:
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/plugins/example-plugin/components/preview
+
+curl -X POST http://127.0.0.1:8000/plugins/example-plugin/components/install
+
+curl http://127.0.0.1:8000/plugins/example-plugin/components
+
+curl -X POST http://127.0.0.1:8000/plugins/example-plugin/components/disable
 ```
 
 For a plugin that declares command recipe components such as `"command_recipes":[{"path":"recipes/git-status.json"}]`, preview and install those recipes after the manifest is trusted. When auth is enabled, these routes require a principal with both `tools` and `cli`, or `admin`:

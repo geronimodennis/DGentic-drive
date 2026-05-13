@@ -449,6 +449,282 @@ def test_git_commit_approval_api_uses_cli_capability_and_authenticated_principal
     get_settings.cache_clear()
 
 
+def test_git_commit_run_api_commits_locally_without_creating_approval(git_workspace) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nDirect runner.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace, evidence=["python -m pytest -q"])
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add direct commit runner",
+            "test_evidence": ["python -m pytest -q"],
+            "requested_by": "qa-agent",
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    staged_paths = _git(git_workspace, "diff", "--cached", "--name-only").stdout.splitlines()
+    approvals = client.get("/cli/approvals").json()
+    serialized_logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)]
+    )
+
+    assert response.status_code == 201
+    assert response.json()["action"] == "commit"
+    assert response.json()["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert response.json()["commit_message_digest"].startswith("sha256:")
+    assert response.json()["head_before"] == head_before
+    assert response.json()["head_after"] == head_after
+    assert response.json()["requested_by"] == "qa-agent"
+    assert head_after != head_before
+    assert staged_paths == []
+    assert approvals == []
+    assert "Add direct commit runner" not in serialized_logs
+
+
+def test_git_commit_run_rejects_mismatched_checkpoint_digest_without_commit(
+    git_workspace,
+) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nFirst direct runner body.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nDifferent direct runner body.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Reject stale direct commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+
+    assert response.status_code == 400
+    assert "fresh matching checkpoint digest" in response.json()["detail"]
+    assert head_after == head_before
+
+
+def test_git_commit_run_rejects_non_ready_checkpoint_without_commit(git_workspace) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Reject clean direct commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+
+    assert checkpoint.ready is False
+    assert response.status_code == 400
+    assert "ready commit checkpoint" in response.json()["detail"]
+    assert head_after == head_before
+
+
+def test_git_commit_run_blocks_protected_and_secret_staged_additions(
+    git_workspace,
+) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    git_workspace.joinpath(".env").write_text("API_KEY=direct-runner-secret\n", encoding="utf-8")
+    _git(git_workspace, "add", ".env")
+    protected_checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+
+    protected_response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": protected_checkpoint.checkpoint_digest,
+            "commit_message": "Reject protected direct commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    _git(git_workspace, "reset", "--", ".env")
+    git_workspace.joinpath(".env").unlink()
+    raw_secret = "direct-runner-token-secret"
+    git_workspace.joinpath("notes.txt").write_text(
+        f"ACCESS_TOKEN={raw_secret}\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "notes.txt")
+    secret_checkpoint = _checkpoint("commit", git_workspace)
+    secret_response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": secret_checkpoint.checkpoint_digest,
+            "commit_message": "Reject secret direct commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    serialized_logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)]
+    )
+
+    assert protected_response.status_code == 400
+    assert secret_response.status_code == 400
+    assert "ready commit checkpoint" in protected_response.json()["detail"]
+    assert "ready commit checkpoint" in secret_response.json()["detail"]
+    assert head_after == head_before
+    assert raw_secret not in secret_response.text
+    assert raw_secret not in serialized_logs
+
+
+def test_git_commit_run_rejects_secret_and_multiline_commit_messages_without_commit(
+    git_workspace,
+) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nInvalid direct runner message.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+    raw_secret = "direct-message-secret"
+
+    secret_response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": f"API_KEY={raw_secret}",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    multiline_response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Reject direct commit\nwith body",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    serialized_logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)]
+    )
+
+    assert secret_response.status_code == 400
+    assert "secret-shaped text" in secret_response.json()["detail"]
+    assert multiline_response.status_code == 400
+    assert "single printable line" in multiline_response.json()["detail"]
+    assert head_after == head_before
+    assert raw_secret not in secret_response.text
+    assert raw_secret not in serialized_logs
+
+
+def test_git_commit_run_uses_empty_hooks_path(git_workspace) -> None:
+    hook_marker = git_workspace / "hook-ran.txt"
+    hook_path = git_workspace / ".git" / "hooks" / "pre-commit"
+    hook_path.write_text(
+        f"#!/bin/sh\necho hook-ran > {hook_marker.as_posix()!r}\nexit 1\n",
+        encoding="utf-8",
+    )
+    hook_path.chmod(0o755)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nHook bypassed.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-runs",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add hook isolated commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert not hook_marker.exists()
+
+
+def test_git_commit_run_api_uses_cli_capability_and_authenticated_principal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable is not available")
+
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    _git(root_dir, "init")
+    _git(root_dir, "config", "user.email", "qa@example.test")
+    _git(root_dir, "config", "user.name", "QA Agent")
+    root_dir.joinpath("README.md").write_text("# Direct commit auth\n", encoding="utf-8")
+    _git(root_dir, "add", "README.md")
+    _git(root_dir, "commit", "-m", "Initial commit")
+    root_dir.joinpath("README.md").write_text(
+        "# Direct commit auth\n\nAuthenticated.\n",
+        encoding="utf-8",
+    )
+    _git(root_dir, "add", "README.md")
+
+    cli_token = "git-commit-run-cli-token"
+    expected_actor = sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{cli_token}=cli;task-token=tasks")
+    get_settings.cache_clear()
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="commit",
+            cwd=root_dir,
+            test_evidence=["pytest -q"],
+            requested_by="spoofed-checkpoint-actor",
+        )
+    )
+    client = TestClient(create_app())
+
+    wrong_capability = client.post(
+        "/cli/git/commit-runs",
+        headers={"Authorization": "Bearer task-token"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add authenticated direct commit",
+            "test_evidence": ["pytest -q"],
+        },
+    )
+    allowed = client.post(
+        "/cli/git/commit-runs",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add authenticated direct commit",
+            "test_evidence": ["pytest -q"],
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+
+    assert wrong_capability.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["requested_by"] == expected_actor
+    get_settings.cache_clear()
+
+
 def test_git_push_approval_api_creates_pending_approval_without_pushing(
     git_workspace,
 ) -> None:

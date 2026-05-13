@@ -83,6 +83,8 @@ from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.git_workflows import (
     GitCommitApprovalRequest,
+    GitCommitRunRequest,
+    GitCommitRunResult,
     GitPrApprovalRequest,
     GitPushApprovalRequest,
     GitWorkflowCheckpoint,
@@ -91,6 +93,7 @@ from dgentic.git_workflows import (
     build_git_pr_approval_request,
     build_git_push_approval_request,
     create_git_workflow_checkpoint,
+    run_git_commit_workflow,
 )
 from dgentic.guardrails import (
     FileApproval,
@@ -1510,6 +1513,26 @@ def create_cli_git_commit_approval(
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/git/commit-runs", response_model=GitCommitRunResult, status_code=201)
+def run_cli_git_commit(
+    payload: GitCommitRunRequest,
+    request: Request,
+) -> GitCommitRunResult:
+    try:
+        return run_git_commit_workflow(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

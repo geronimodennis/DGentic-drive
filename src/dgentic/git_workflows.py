@@ -3,9 +3,11 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
+from time import monotonic
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -114,6 +116,25 @@ class GitPrApprovalRequest(BaseModel):
         return _normalize_test_evidence(value)
 
 
+class GitCommitRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    commit_message: str = Field(min_length=1, max_length=MAX_COMMIT_MESSAGE_CHARS)
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
 class GitDiffStat(BaseModel):
     files_changed: int = 0
     insertions: int = 0
@@ -147,6 +168,24 @@ class GitWorkflowCheckpoint(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class GitCommitRunResult(BaseModel):
+    action: Literal["commit"] = "commit"
+    repo_root: Path
+    cwd: Path
+    branch: str
+    head_before: str
+    head_after: str
+    checkpoint_digest: str
+    commit_message_digest: str
+    exit_code: int
+    duration_ms: int
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class _GitStatus(BaseModel):
@@ -293,6 +332,106 @@ def build_git_commit_approval_request(
             test_evidence_count=len(request.test_evidence),
         ),
     )
+
+
+def run_git_commit_workflow(
+    request: GitCommitRunRequest,
+    *,
+    actor: str | None = None,
+) -> GitCommitRunResult:
+    commit_message = _validate_commit_message(request.commit_message)
+    commit_message_digest = _commit_message_digest(commit_message)
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="commit",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git commit runner requires a ready commit checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git commit runner requires a fresh matching checkpoint digest.")
+    git_executable = _resolve_git_executable()
+    started = monotonic()
+    try:
+        with tempfile.TemporaryDirectory(prefix="dgentic-git-hooks-") as hooks_path:
+            completed = subprocess.run(
+                [
+                    git_executable,
+                    "--no-optional-locks",
+                    "-c",
+                    f"core.hooksPath={hooks_path}",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    commit_message,
+                ],
+                cwd=checkpoint.repo_root,
+                env=_git_environment(),
+                capture_output=True,
+                text=True,
+                timeout=request.timeout_seconds,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        _record_commit_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=None,
+            duration_ms=int((monotonic() - started) * 1000),
+            status="timed_out",
+            commit_message_digest=commit_message_digest,
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise TimeoutError("Git commit runner timed out.") from exc
+
+    duration_ms = int((monotonic() - started) * 1000)
+    if completed.returncode != 0:
+        _record_commit_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            status="failed",
+            commit_message_digest=commit_message_digest,
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise ValueError("Git commit runner failed.")
+
+    head_after = _git_optional_output(git_executable, checkpoint.repo_root, ["rev-parse", "HEAD"])
+    result = GitCommitRunResult(
+        repo_root=checkpoint.repo_root,
+        cwd=checkpoint.cwd,
+        branch=checkpoint.branch,
+        head_before=checkpoint.head_sha,
+        head_after=head_after,
+        checkpoint_digest=checkpoint.checkpoint_digest,
+        commit_message_digest=commit_message_digest,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    _record_commit_run_event(
+        checkpoint=checkpoint,
+        actor=actor or request.requested_by,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        status="completed",
+        commit_message_digest=commit_message_digest,
+        test_evidence_count=len(request.test_evidence),
+        head_after=head_after,
+    )
+    return result
 
 
 def build_git_push_approval_request(
@@ -615,6 +754,10 @@ def _validate_pr_branch(value: str, *, field_name: str) -> str:
 
 def _git_commit_command(commit_message: str) -> str:
     return f'git commit -m "{commit_message}"'
+
+
+def _commit_message_digest(commit_message: str) -> str:
+    return f"sha256:{sha256(commit_message.encode('utf-8')).hexdigest()}"
 
 
 def _gh_pr_create_command(
@@ -985,6 +1128,44 @@ def _record_checkpoint_event(
             "blocker_count": len(checkpoint.blockers),
             "warning_count": len(checkpoint.warnings),
             "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence_count": test_evidence_count,
+            "requested_by": checkpoint.requested_by,
+            "agent_id": checkpoint.agent_id,
+            "agent_role": checkpoint.agent_role,
+            "task_id": checkpoint.task_id,
+        },
+    )
+
+
+def _record_commit_run_event(
+    *,
+    checkpoint: GitWorkflowCheckpoint,
+    actor: str | None,
+    exit_code: int | None,
+    duration_ms: int,
+    status: str,
+    commit_message_digest: str,
+    test_evidence_count: int,
+    head_after: str = "",
+) -> None:
+    event_log.record(
+        LogEventType.cli,
+        "Ran direct git commit workflow.",
+        actor=actor or "system",
+        subject_id=checkpoint.checkpoint_digest,
+        metadata={
+            "action": "commit",
+            "status": status,
+            "repo_root": str(checkpoint.repo_root),
+            "branch": checkpoint.branch,
+            "head_before": checkpoint.head_sha,
+            "head_after": head_after,
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message_digest": commit_message_digest,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "staged_count": checkpoint.staged_count,
+            "diff_stat": checkpoint.diff_stat.model_dump(),
             "test_evidence_count": test_evidence_count,
             "requested_by": checkpoint.requested_by,
             "agent_id": checkpoint.agent_id,

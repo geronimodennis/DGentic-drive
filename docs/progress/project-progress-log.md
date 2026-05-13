@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ar Direct Git Commit Runner
+
+Status: completed for the scoped direct local git commit runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct push/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected a direct local commit runner as the next bounded Sprint 15 git workflow automation slice after BL-009aq because the checkpoint/approval foundation already provided a safe readiness contract and local commit execution is lower risk than direct push or PR operations.
+- Completed: Architect/Security scoped the runner to `commit` only, requiring a fresh ready checkpoint digest, a bounded single-line non-secret commit message, shell-free `git commit -m ...`, repository hook isolation, GPG-signing disablement, no push/PR execution, no approval creation, and safe audit metadata without raw commit messages or command output.
+- Completed: Developer added `GitCommitRunRequest`, `GitCommitRunResult`, `run_git_commit_workflow`, and `POST /cli/git/commit-runs` under the existing `cli` capability mapping.
+- Completed: QA added direct commit runner coverage for success, stale digest rejection, non-ready checkpoint rejection, protected-file and secret-shaped staged-addition blocking, secret-shaped and multiline commit-message rejection, hook isolation, no raw commit-message audit exposure, and authenticated principal binding.
+- Completed: Reviewer scout found no blocking issues; Dev removed unused response output fields and QA added endpoint-specific commit-message rejection coverage for the two P3 follow-ups.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/commit-runs` re-runs a commit checkpoint and only commits when the supplied `checkpoint_digest` still matches a fresh ready commit checkpoint.
+- Implemented in this slice: direct commit execution uses an argv `git commit -m ...` invocation with optional locks/prompts disabled, an empty temporary hooks path, and `commit.gpgsign=false`.
+- Implemented in this slice: successful responses include action, repo/cwd, branch, head-before/head-after, checkpoint digest, commit-message digest, duration, requester/context metadata, and no raw stdout/stderr payload.
+- Implemented in this slice: CLI audit metadata records safe commit-run facts and commit-message digests without storing the raw commit message or command output, and the runner does not create a CLI approval record.
+- Still out of scope after this slice: direct `git push`, direct `gh pr create`, remote ref freshness checks that require network I/O, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused direct commit runner gate: `python -m pytest tests\test_git_workflows.py -q -k "commit_run" --maxfail=1 -x` passed with 7 tests and 26 deselected.
+- Focused auth capability mapping gate: `python -m pytest tests\test_auth.py -q -k "capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 66 tests and 58 deselected.
+- Combined git/auth gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py -q -k "git or capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 99 tests and 58 deselected.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_git_workflows.py tests\test_auth.py tests\test_api.py --maxfail=1 -x` with 367 tests.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,246 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009aq Managed Credential Reference Records
 
 Status: completed for the scoped managed credential reference record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

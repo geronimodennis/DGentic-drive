@@ -50,7 +50,15 @@ def validate_provider_base_url(
     active_settings = settings if settings is not None else get_settings()
     normalized = normalize_provider_base_url(base_url)
     try:
-        network_decision = evaluate_network_domain_policy(normalized, settings=active_settings)
+        network_decision = evaluate_network_domain_policy(
+            normalized,
+            settings=active_settings,
+            actor=requested_by,
+            action=network_action,
+            agent_id=agent_id,
+            agent_role=agent_role,
+            task_id=task_id,
+        )
     except NetworkDomainPolicyError as exc:
         raise ProviderEgressPolicyError("Network domain policy is invalid.") from exc
     if network_decision.mode == "deny":

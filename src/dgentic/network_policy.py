@@ -14,12 +14,13 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from dgentic.events import event_log
+from dgentic.hook_policy import evaluate_hook_policy
 from dgentic.orchestration import (
     OrchestrationContextAuthorizationError,
     authorize_network_action,
 )
 from dgentic.redaction import redact_sensitive_values
-from dgentic.schemas import LogEventType, PermissionMode
+from dgentic.schemas import HookPolicyDecision, HookPolicySurface, LogEventType, PermissionMode
 from dgentic.settings import get_settings
 from dgentic.storage import JsonCollection
 
@@ -59,6 +60,7 @@ class NetworkDomainPolicyDecision:
     mode: NetworkPolicyMode
     matched_domain: str | None = None
     reason: str = ""
+    hook_policy: HookPolicyDecision | None = None
 
     @property
     def allowed(self) -> bool:
@@ -174,6 +176,11 @@ def evaluate_network_domain_policy(
     url: str,
     *,
     settings: Any | None = None,
+    actor: str | None = None,
+    action: str = "request",
+    agent_id: str | None = None,
+    agent_role: str | None = None,
+    task_id: str | None = None,
 ) -> NetworkDomainPolicyDecision:
     active_settings = settings if settings is not None else get_settings()
     host = _host_for_url(url)
@@ -181,20 +188,86 @@ def evaluate_network_domain_policy(
 
     for rule in policy.rules:
         if _domain_matches(host, rule.domain):
-            return NetworkDomainPolicyDecision(
-                url=url,
-                host=host,
-                mode=rule.mode,
-                matched_domain=rule.domain,
-                reason=rule.reason or f"Matched network domain policy rule for {rule.domain}.",
+            return _apply_hook_policy_to_network_decision(
+                NetworkDomainPolicyDecision(
+                    url=url,
+                    host=host,
+                    mode=rule.mode,
+                    matched_domain=rule.domain,
+                    reason=rule.reason or f"Matched network domain policy rule for {rule.domain}.",
+                ),
+                actor=actor,
+                action=action,
+                agent_id=agent_id,
+                agent_role=agent_role,
+                task_id=task_id,
             )
 
-    return NetworkDomainPolicyDecision(
-        url=url,
-        host=host,
-        mode=policy.default_mode,
-        reason=f"Used default network domain policy mode: {policy.default_mode}.",
+    return _apply_hook_policy_to_network_decision(
+        NetworkDomainPolicyDecision(
+            url=url,
+            host=host,
+            mode=policy.default_mode,
+            reason=f"Used default network domain policy mode: {policy.default_mode}.",
+        ),
+        actor=actor,
+        action=action,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
     )
+
+
+def _apply_hook_policy_to_network_decision(
+    decision: NetworkDomainPolicyDecision,
+    *,
+    actor: str | None,
+    action: str,
+    agent_id: str | None,
+    agent_role: str | None,
+    task_id: str | None,
+) -> NetworkDomainPolicyDecision:
+    current_permission_mode = _permission_mode_for_network_mode(decision.mode)
+    hook_decision = evaluate_hook_policy(
+        surface=HookPolicySurface.network,
+        action=action,
+        subject=decision.url,
+        current_permission_mode=current_permission_mode,
+        agent_role=agent_role,
+        agent_id=agent_id,
+        task_id=task_id,
+        actor=actor,
+    )
+    if hook_decision is None:
+        return decision
+    mode = decision.mode
+    reason = decision.reason
+    if decision.mode != "deny":
+        if hook_decision.permission_mode == PermissionMode.blocked:
+            mode = "deny"
+            reason = hook_decision.reason
+        elif (
+            hook_decision.permission_mode == PermissionMode.approval_required
+            and decision.mode in {"allow", "audit"}
+        ):
+            mode = "approval_required"
+            reason = hook_decision.reason
+    return NetworkDomainPolicyDecision(
+        url=decision.url,
+        host=decision.host,
+        mode=mode,
+        matched_domain=decision.matched_domain,
+        reason=reason,
+        hook_policy=hook_decision,
+    )
+
+
+def _permission_mode_for_network_mode(mode: NetworkPolicyMode) -> PermissionMode:
+    if mode == "deny":
+        return PermissionMode.blocked
+    if mode == "approval_required":
+        return PermissionMode.approval_required
+    return PermissionMode.autopilot_safe
 
 
 def network_domain_policy(settings: Any | None = None) -> NetworkDomainPolicy:
@@ -235,7 +308,15 @@ def create_network_approval(
         agent_role=agent_role,
         task_id=task_id,
     )
-    decision = evaluate_network_domain_policy(url, settings=active_settings)
+    decision = evaluate_network_domain_policy(
+        url,
+        settings=active_settings,
+        actor=requested_by,
+        action=action,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
     if decision.mode != "approval_required":
         raise ValueError("Only approval-required network requests can be queued.")
 
@@ -551,6 +632,11 @@ def network_policy_decision_digest(
                 "mode": decision.mode,
                 "matched_domain": decision.matched_domain,
                 "reason": decision.reason,
+                "hook_policy": (
+                    decision.hook_policy.model_dump(mode="json")
+                    if decision.hook_policy is not None
+                    else None
+                ),
             }
         )
     )
@@ -670,7 +756,15 @@ def _validate_bound_network_approval(
         )
 
     active_settings = settings if settings is not None else get_settings()
-    decision = evaluate_network_domain_policy(url, settings=active_settings)
+    decision = evaluate_network_domain_policy(
+        url,
+        settings=active_settings,
+        actor=requested_by,
+        action=action,
+        agent_id=agent_id,
+        agent_role=agent_role,
+        task_id=task_id,
+    )
     if decision.mode != "approval_required":
         raise NetworkApprovalRequiredError(
             f"Network approval {approval.id} is not required by the current network policy."

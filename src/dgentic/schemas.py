@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -67,6 +67,7 @@ class OrchestrationExecutionStatus(StrEnum):
 class LogEventType(StrEnum):
     auth = "auth"
     credential = "credential"
+    hook = "hook"
     task = "task"
     agent = "agent"
     provider = "provider"
@@ -89,6 +90,105 @@ class CommandPolicyMatchType(StrEnum):
     exact = "exact"
     contains = "contains"
     argument_contains = "argument_contains"
+
+
+class HookPolicySurface(StrEnum):
+    command = "command"
+    filesystem = "filesystem"
+    network = "network"
+
+
+class HookPolicyMatchType(StrEnum):
+    any = "any"
+    exact = "exact"
+    contains = "contains"
+    prefix = "prefix"
+
+
+class HookPolicyEffect(StrEnum):
+    audit = "audit"
+    approval_required = "approval_required"
+    blocked = "blocked"
+
+
+class HookPolicyRuleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    surface: HookPolicySurface
+    action: str = Field(default="*", min_length=1, max_length=80)
+    match_type: HookPolicyMatchType = HookPolicyMatchType.contains
+    pattern: str = Field(default="", max_length=300)
+    effect: HookPolicyEffect = HookPolicyEffect.audit
+    reason: str = Field(min_length=1, max_length=500)
+    agent_roles: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    priority: int = Field(default=100, ge=0, le=10_000)
+
+    @field_validator("name", "action", "reason")
+    @classmethod
+    def required_hook_policy_text_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Hook policy text fields must not be blank.")
+        return stripped
+
+    @field_validator("pattern")
+    @classmethod
+    def hook_policy_pattern_must_be_trimmed(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def pattern_required_for_matching_rules(self) -> "HookPolicyRuleRequest":
+        if self.match_type != HookPolicyMatchType.any and not self.pattern:
+            raise ValueError("Hook policy pattern is required unless match_type is any.")
+        return self
+
+
+class HookPolicyRule(HookPolicyRuleRequest):
+    id: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class HookPolicyRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    surface: HookPolicySurface | None = None
+    action: str | None = Field(default=None, min_length=1, max_length=80)
+    match_type: HookPolicyMatchType | None = None
+    pattern: str | None = Field(default=None, max_length=300)
+    effect: HookPolicyEffect | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=500)
+    agent_roles: list[str] | None = None
+    enabled: bool | None = None
+    priority: int | None = Field(default=None, ge=0, le=10_000)
+
+    @field_validator("name", "action", "reason")
+    @classmethod
+    def optional_hook_policy_text_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Hook policy text fields must not be blank.")
+        return stripped
+
+    @field_validator("pattern")
+    @classmethod
+    def optional_hook_policy_pattern_must_be_trimmed(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return value.strip()
+
+
+class HookPolicyDecision(BaseModel):
+    surface: HookPolicySurface
+    action: str
+    subject: str = ""
+    effect: HookPolicyEffect
+    permission_mode: PermissionMode
+    allowed: bool
+    reason: str
+    matched_rule_id: str | None = None
+    matched_rule_name: str | None = None
 
 
 class MemoryKind(StrEnum):
@@ -572,6 +672,7 @@ class FileAccessDecision(BaseModel):
     permission_mode: PermissionMode
     reason: str
     orchestration: OrchestrationActionDecision | None = None
+    hook_policy: HookPolicyDecision | None = None
 
 
 class NetworkPolicyRequest(BaseModel):
@@ -592,6 +693,7 @@ class NetworkPolicyDecision(BaseModel):
     mode: Literal["allow", "deny", "approval_required", "audit"]
     matched_domain: str | None = None
     reason: str
+    hook_policy: HookPolicyDecision | None = None
 
 
 class FileReadRequest(AgentActionContext):
@@ -788,6 +890,7 @@ class CommandPolicyDecision(BaseModel):
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
     orchestration: OrchestrationActionDecision | None = None
+    hook_policy: HookPolicyDecision | None = None
 
 
 class CommandExecutionRequest(BaseModel):

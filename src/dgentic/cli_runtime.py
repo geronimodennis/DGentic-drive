@@ -31,6 +31,7 @@ from dgentic.schemas import (
     CommandExecutionResult,
     CommandPolicyDecision,
     CommandPolicyRequest,
+    HookPolicyDecision,
     LogEventType,
     PermissionMode,
 )
@@ -143,6 +144,7 @@ class CommandApproval(BaseModel):
     environment_keys: list[str] = Field(default_factory=list)
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
+    hook_policy: HookPolicyDecision | None = None
     decided_by: str | None = None
     decision_reason: str | None = None
     denial_reason: str | None = None
@@ -180,6 +182,7 @@ class CommandApprovalReview(BaseModel):
     environment_keys: list[str] = Field(default_factory=list)
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
+    hook_policy: HookPolicyDecision | None = None
     command_digest: str = ""
     environment_digest: str = ""
     requires_bound_execution_request: bool = False
@@ -539,6 +542,7 @@ def _approval_binding_payload(
     permission_mode: PermissionMode,
     matched_rule_id: str | None,
     matched_rule_name: str | None,
+    hook_policy: HookPolicyDecision | None = None,
 ) -> dict[str, object]:
     return {
         "agent_id": agent_id,
@@ -549,6 +553,7 @@ def _approval_binding_payload(
         "environment_keys": sorted(environment_keys),
         "matched_rule_id": matched_rule_id,
         "matched_rule_name": matched_rule_name,
+        "hook_policy": _hook_policy_binding_payload(hook_policy),
         "permission_mode": permission_mode,
         "requested_by": requested_by,
         "task_id": task_id,
@@ -570,6 +575,7 @@ def command_approval_digest(
     permission_mode: PermissionMode,
     matched_rule_id: str | None,
     matched_rule_name: str | None,
+    hook_policy: HookPolicyDecision | None = None,
 ) -> str:
     payload = _approval_binding_payload(
         command=command,
@@ -584,9 +590,18 @@ def command_approval_digest(
         permission_mode=permission_mode,
         matched_rule_id=matched_rule_id,
         matched_rule_name=matched_rule_name,
+        hook_policy=hook_policy,
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return _approval_hmac_digest(encoded)
+
+
+def _hook_policy_binding_payload(
+    hook_policy: HookPolicyDecision | None,
+) -> dict[str, object] | None:
+    if hook_policy is None:
+        return None
+    return hook_policy.model_dump(mode="json")
 
 
 def _terminate_process_tree(process: subprocess.Popen) -> None:
@@ -764,6 +779,7 @@ class CliRuntimeService:
             permission_mode=decision.permission_mode,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
+            hook_policy=decision.hook_policy,
         )
         review_command = redact_sensitive_values(decision.command)
 
@@ -784,6 +800,7 @@ class CliRuntimeService:
             environment_keys=environment_keys,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
+            hook_policy=decision.hook_policy,
         )
         self._approvals.upsert(approval)
         event_log.record(
@@ -804,6 +821,11 @@ class CliRuntimeService:
                 "environment_digest": approval.environment_digest,
                 "matched_rule_id": approval.matched_rule_id,
                 "matched_rule_name": approval.matched_rule_name,
+                "hook_policy": (
+                    approval.hook_policy.model_dump(mode="json")
+                    if approval.hook_policy is not None
+                    else None
+                ),
                 "command_digest": approval.command_digest,
                 "expires_at": approval.expires_at.isoformat(),
             },
@@ -919,6 +941,7 @@ class CliRuntimeService:
             environment_keys=approval.environment_keys,
             matched_rule_id=approval.matched_rule_id,
             matched_rule_name=approval.matched_rule_name,
+            hook_policy=approval.hook_policy,
             command_digest=approval.command_digest,
             environment_digest=approval.environment_digest,
             requires_bound_execution_request=requires_bound_execution_request,
@@ -959,6 +982,7 @@ class CliRuntimeService:
             permission_mode=approval.permission_mode,
             matched_rule_id=approval.matched_rule_id,
             matched_rule_name=approval.matched_rule_name,
+            hook_policy=approval.hook_policy,
         )
         return approval.command_digest == expected_command_digest
 
@@ -1920,6 +1944,7 @@ class CliRuntimeService:
             permission_mode=decision.permission_mode,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
+            hook_policy=decision.hook_policy,
         )
         review_command = redact_sensitive_values(decision.command)
         checks = [
@@ -1936,6 +1961,7 @@ class CliRuntimeService:
             approval.permission_mode == decision.permission_mode,
             approval.matched_rule_id == decision.matched_rule_id,
             approval.matched_rule_name == decision.matched_rule_name,
+            approval.hook_policy == decision.hook_policy,
             approval.command_digest == expected_digest,
         ]
         if not all(checks):

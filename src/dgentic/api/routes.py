@@ -78,6 +78,11 @@ from dgentic.guardrails import (
     write_guarded_binary_file,
     write_guarded_text_file,
 )
+from dgentic.hook_policy import (
+    create_hook_policy_rule,
+    list_hook_policy_rules,
+    update_hook_policy_rule,
+)
 from dgentic.memory import add_memory, search_memory
 from dgentic.network_policy import (
     NetworkApproval,
@@ -168,6 +173,9 @@ from dgentic.schemas import (
     FileWriteRequest,
     FileWriteResponse,
     HealthResponse,
+    HookPolicyRule,
+    HookPolicyRuleRequest,
+    HookPolicyRuleUpdate,
     LogEvent,
     LogEventType,
     MemoryQuery,
@@ -920,9 +928,15 @@ def check_command_policy(payload: CommandPolicyRequest, request: Request) -> Com
 
 
 @router.post("/guardrails/network", response_model=NetworkPolicyDecision)
-def check_network_policy(request: NetworkPolicyRequest) -> NetworkPolicyDecision:
+def check_network_policy(
+    request: NetworkPolicyRequest,
+    http_request: Request,
+) -> NetworkPolicyDecision:
     try:
-        decision = evaluate_network_domain_policy(request.url)
+        decision = evaluate_network_domain_policy(
+            request.url,
+            actor=_principal_actor(http_request),
+        )
     except NetworkDomainPolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return NetworkPolicyDecision(
@@ -932,6 +946,7 @@ def check_network_policy(request: NetworkPolicyRequest) -> NetworkPolicyDecision
         mode=decision.mode,
         matched_domain=decision.matched_domain,
         reason=decision.reason,
+        hook_policy=decision.hook_policy,
     )
 
 
@@ -1031,6 +1046,37 @@ def patch_cli_policy_rule(
     rule = update_command_policy_rule(rule_id, update, actor=_principal_actor(request))
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Command policy rule not found: {rule_id}")
+    return rule
+
+
+@router.post("/guardrails/hooks/rules", response_model=HookPolicyRule, status_code=201)
+def create_hook_policy(
+    payload: HookPolicyRuleRequest,
+    request: Request,
+) -> HookPolicyRule:
+    try:
+        return create_hook_policy_rule(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/guardrails/hooks/rules", response_model=list[HookPolicyRule])
+def get_hook_policies() -> list[HookPolicyRule]:
+    return list_hook_policy_rules()
+
+
+@router.patch("/guardrails/hooks/rules/{rule_id}", response_model=HookPolicyRule)
+def patch_hook_policy(
+    rule_id: str,
+    update: HookPolicyRuleUpdate,
+    request: Request,
+) -> HookPolicyRule:
+    try:
+        rule = update_hook_policy_rule(rule_id, update, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Hook policy rule not found.")
     return rule
 
 

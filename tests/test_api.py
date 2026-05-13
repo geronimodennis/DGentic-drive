@@ -1826,7 +1826,206 @@ def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
         "mode": "deny",
         "matched_domain": "blocked.example.test",
         "reason": "Blocked by QA policy.",
+        "hook_policy": None,
     }
+    get_settings.cache_clear()
+
+
+def test_hook_policy_rule_api_controls_command_decisions(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/guardrails/hooks/rules",
+        json={
+            "name": "Block version probe",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "python --version",
+            "effect": "blocked",
+            "reason": "Hook blocked command.",
+        },
+    )
+    rule_id = create_response.json()["id"]
+    blocked_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python --version"},
+    )
+    list_response = client.get("/guardrails/hooks/rules")
+    patch_response = client.patch(
+        f"/guardrails/hooks/rules/{rule_id}",
+        json={"enabled": False},
+    )
+    allowed_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python --version"},
+    )
+
+    assert create_response.status_code == 201
+    assert blocked_response.status_code == 200
+    assert blocked_response.json()["permission_mode"] == "blocked"
+    assert blocked_response.json()["hook_policy"]["matched_rule_id"] == rule_id
+    assert blocked_response.json()["reason"] == "Hook blocked command."
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == rule_id
+    assert patch_response.status_code == 200
+    assert patch_response.json()["enabled"] is False
+    assert allowed_response.status_code == 200
+    assert allowed_response.json()["hook_policy"] is None
+    get_settings.cache_clear()
+
+
+def test_hook_policy_rule_api_reports_filesystem_approval_and_blocks_writes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/guardrails/hooks/rules",
+        json={
+            "name": "Review protected writes",
+            "surface": "filesystem",
+            "action": "write",
+            "match_type": "prefix",
+            "pattern": "protected/",
+            "effect": "approval_required",
+            "reason": "Review protected path.",
+        },
+    )
+    rule_id = create_response.json()["id"]
+    approval_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": "protected/note.txt", "action": "write"},
+    )
+    patch_response = client.patch(
+        f"/guardrails/hooks/rules/{rule_id}",
+        json={"effect": "blocked", "reason": "Blocked protected path."},
+    )
+    blocked_policy_response = client.post(
+        "/guardrails/filesystem",
+        json={"path": "protected/note.txt", "action": "write"},
+    )
+    write_response = client.post(
+        "/filesystem/write",
+        json={"path": "protected/note.txt", "content": "blocked"},
+    )
+
+    assert create_response.status_code == 201
+    assert approval_response.status_code == 200
+    assert approval_response.json()["allowed"] is True
+    assert approval_response.json()["permission_mode"] == "autopilot_safe"
+    assert approval_response.json()["hook_policy"]["effect"] == "approval_required"
+    assert patch_response.status_code == 200
+    assert blocked_policy_response.status_code == 200
+    assert blocked_policy_response.json()["allowed"] is False
+    assert blocked_policy_response.json()["permission_mode"] == "blocked"
+    assert blocked_policy_response.json()["reason"] == "Blocked protected path."
+    assert write_response.status_code == 403
+    assert "Blocked protected path." in write_response.json()["detail"]
+    get_settings.cache_clear()
+
+
+def test_hook_policy_rule_api_controls_network_decisions_and_redacts(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/guardrails/hooks/rules",
+        json={
+            "name": "TOKEN=network-secret",
+            "surface": "network",
+            "action": "request",
+            "match_type": "contains",
+            "pattern": "https://api.example.test/private",
+            "effect": "blocked",
+            "reason": "Review TOKEN=network-secret",
+        },
+    )
+    response = client.post(
+        "/guardrails/network",
+        json={"url": "https://api.example.test/private?token=query-secret"},
+    )
+    logs_response = client.get("/logs?event_type=hook")
+    persisted = (tmp_path / "state" / "hook-policy-rules.json").read_text(encoding="utf-8")
+
+    assert create_response.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["allowed"] is False
+    assert response.json()["mode"] == "deny"
+    assert response.json()["hook_policy"]["matched_rule_id"] == create_response.json()["id"]
+    assert response.json()["hook_policy"]["subject"] == "https://api.example.test/private"
+    assert "network-secret" not in create_response.text + response.text + logs_response.text
+    assert "query-secret" not in logs_response.text
+    assert "query-secret" not in response.json()["hook_policy"]["subject"]
+    assert "TOKEN=[REDACTED]" in persisted
+    get_settings.cache_clear()
+
+
+def test_hook_policy_routes_require_hooks_capability_in_production(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "hooks-token=hooks;cli-token=cli;admin-token=admin",
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "name": "Audit hooks",
+        "surface": "command",
+        "action": "execute",
+        "match_type": "any",
+        "effect": "audit",
+        "reason": "Audit command.",
+    }
+
+    no_token_response = client.post("/guardrails/hooks/rules", json=payload)
+    cli_response = client.post(
+        "/guardrails/hooks/rules",
+        headers={"Authorization": "Bearer cli-token"},
+        json=payload,
+    )
+    hooks_response = client.post(
+        "/guardrails/hooks/rules",
+        headers={"Authorization": "Bearer hooks-token"},
+        json=payload,
+    )
+    rule_id = hooks_response.json()["id"]
+    list_response = client.get(
+        "/guardrails/hooks/rules",
+        headers={"Authorization": "Bearer hooks-token"},
+    )
+    admin_patch_response = client.patch(
+        f"/guardrails/hooks/rules/{rule_id}",
+        headers={"Authorization": "Bearer admin-token"},
+        json={"enabled": False},
+    )
+
+    assert no_token_response.status_code == 401
+    assert cli_response.status_code == 403
+    assert hooks_response.status_code == 201
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == rule_id
+    assert admin_patch_response.status_code == 200
+    assert admin_patch_response.json()["enabled"] is False
     get_settings.cache_clear()
 
 
@@ -3977,6 +4176,62 @@ def test_cli_execute_api_requires_bound_approval_id_in_production(tmp_path, monk
     assert execute_response.json()["permission_mode"] == "approval_required"
     assert second_execute_response.status_code == 403
     assert "not executable" in second_execute_response.json()["detail"]
+    get_settings.cache_clear()
+
+
+def test_cli_approval_binding_includes_hook_policy_decision(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    rule_response = client.post(
+        "/guardrails/hooks/rules",
+        json={
+            "name": "Review version command",
+            "surface": "command",
+            "action": "execute",
+            "match_type": "contains",
+            "pattern": "python --version",
+            "effect": "approval_required",
+            "reason": "Hook approval v1.",
+        },
+    )
+    rule_id = rule_response.json()["id"]
+    create_response = client.post(
+        "/cli/approvals?requested_by=tester",
+        json={"command": "python --version", "timeout_seconds": 10},
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer"},
+    )
+    patch_response = client.patch(
+        f"/guardrails/hooks/rules/{rule_id}",
+        json={"reason": "Hook approval v2."},
+    )
+    execute_response = client.post(
+        "/cli/execute",
+        json={
+            "command": "python --version",
+            "timeout_seconds": 10,
+            "approval_id": approval_id,
+            "requested_by": "tester",
+        },
+    )
+
+    assert rule_response.status_code == 201
+    assert create_response.status_code == 201
+    assert create_response.json()["hook_policy"]["matched_rule_id"] == rule_id
+    assert approve_response.status_code == 200
+    assert patch_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "not bound to this command request" in execute_response.json()["detail"]
     get_settings.cache_clear()
 
 

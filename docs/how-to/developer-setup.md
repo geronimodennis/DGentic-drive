@@ -101,7 +101,7 @@ Invoke-RestMethod `
   -Body '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
@@ -390,6 +390,20 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
   -ContentType "application/json" `
   -Body '{"enabled":false}'
+```
+
+Configure backend hook policy rules when you need an audited pre-action layer across command, filesystem, or network guardrail decisions. Hook rules are persisted in `hook-policy-rules.json`, evaluated by priority, can match `any`, `exact`, `contains`, or `prefix`, and support `audit`, `approval_required`, or `blocked` effects. Command and network approval-required hook decisions are bound into their existing approval digests and rechecked before execution or network approval claim. Filesystem hook `blocked` decisions enforce immediately; filesystem hook `approval_required` is currently report-only until a bound filesystem approval-record flow exists.
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/guardrails/hooks/rules `
+  -ContentType "application/json" `
+  -Body '{"name":"Block private network path","surface":"network","action":"request","match_type":"contains","pattern":"https://api.example.test/private","effect":"blocked","reason":"Private endpoint requires a managed workflow.","priority":5}'
+```
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/guardrails/hooks/rules
 ```
 
 ## Check Local Providers

@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from uuid import uuid4
 
 from dgentic.events import event_log
+from dgentic.hook_policy import evaluate_hook_policy
 from dgentic.orchestration import authorize_cli_action
 from dgentic.schemas import (
     CommandPolicyDecision,
@@ -19,6 +20,7 @@ from dgentic.schemas import (
     CommandPolicyRuleRequest,
     CommandPolicyRuleUpdate,
     CommandRisk,
+    HookPolicySurface,
     LogEventType,
     PermissionMode,
 )
@@ -337,6 +339,7 @@ def evaluate_command_policy(
 
     def finish(decision: CommandPolicyDecision) -> CommandPolicyDecision:
         decision = decision.model_copy(update={"orchestration": orchestration_decision})
+        decision = _apply_hook_policy_to_decision(decision, request, actor=actor)
         _record_decision(decision, actor=actor)
         return decision
 
@@ -2937,6 +2940,48 @@ def _risk_for_permission(permission_mode: PermissionMode) -> CommandRisk:
     if permission_mode == PermissionMode.approval_required:
         return CommandRisk.approval_required
     return CommandRisk.safe
+
+
+def _apply_hook_policy_to_decision(
+    decision: CommandPolicyDecision,
+    request: CommandPolicyRequest,
+    *,
+    actor: str | None,
+) -> CommandPolicyDecision:
+    hook_decision = evaluate_hook_policy(
+        surface=HookPolicySurface.command,
+        action="execute",
+        subject=decision.command,
+        current_permission_mode=decision.permission_mode,
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
+        actor=actor,
+    )
+    if hook_decision is None:
+        return decision
+    updates = {"hook_policy": hook_decision}
+    if decision.permission_mode != PermissionMode.blocked:
+        if hook_decision.permission_mode == PermissionMode.blocked:
+            updates.update(
+                {
+                    "permission_mode": PermissionMode.blocked,
+                    "risk": CommandRisk.blocked,
+                    "reason": hook_decision.reason,
+                }
+            )
+        elif (
+            hook_decision.permission_mode == PermissionMode.approval_required
+            and decision.permission_mode == PermissionMode.autopilot_safe
+        ):
+            updates.update(
+                {
+                    "permission_mode": PermissionMode.approval_required,
+                    "risk": CommandRisk.approval_required,
+                    "reason": hook_decision.reason,
+                }
+            )
+    return decision.model_copy(update=updates)
 
 
 def _normalize_agent_roles(agent_roles: list[str]) -> list[str]:

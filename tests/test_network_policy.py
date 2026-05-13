@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from dgentic.hook_policy import create_hook_policy_rule, update_hook_policy_rule
 from dgentic.network_policy import (
     NetworkApprovalRequiredError,
     NetworkApprovalStatus,
@@ -17,7 +18,15 @@ from dgentic.network_policy import (
     network_domain_policy,
 )
 from dgentic.orchestration import OrchestrationService
-from dgentic.schemas import OrchestrationCreateRequest, OrchestrationTaskSpec
+from dgentic.schemas import (
+    HookPolicyEffect,
+    HookPolicyMatchType,
+    HookPolicyRuleRequest,
+    HookPolicyRuleUpdate,
+    HookPolicySurface,
+    OrchestrationCreateRequest,
+    OrchestrationTaskSpec,
+)
 from dgentic.settings import Settings, get_settings
 
 
@@ -308,5 +317,36 @@ def test_bound_network_approval_rejects_drift_denied_and_expired(
             url="https://provider.example.test/v1",
             surface="provider",
             action="request",
+            requested_by="operator",
+        )
+
+
+def test_bound_network_approval_rejects_hook_policy_drift(network_approval_state) -> None:
+    hook_rule = create_hook_policy_rule(
+        HookPolicyRuleRequest(
+            name="Audit provider hook",
+            surface=HookPolicySurface.network,
+            action="generate",
+            match_type=HookPolicyMatchType.contains,
+            pattern="https://provider.example.test/v1",
+            effect=HookPolicyEffect.audit,
+            reason="Hook audit v1.",
+        )
+    )
+    approval = create_network_approval(
+        "https://provider.example.test/v1",
+        surface="provider",
+        action="generate",
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    update_hook_policy_rule(hook_rule.id, HookPolicyRuleUpdate(reason="Hook audit v2."))
+
+    with pytest.raises(NetworkApprovalRequiredError, match="not bound"):
+        claim_network_approval(
+            approval.id,
+            url="https://provider.example.test/v1",
+            surface="provider",
+            action="generate",
             requested_by="operator",
         )

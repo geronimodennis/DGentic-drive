@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dgentic.command_policy import evaluate_command_policy as evaluate_configured_command_policy
 from dgentic.events import event_log
+from dgentic.hook_policy import evaluate_hook_policy
 from dgentic.orchestration import authorize_filesystem_action
 from dgentic.schemas import (
     CommandExecutionRequest,
@@ -34,6 +35,7 @@ from dgentic.schemas import (
     FileRenameResponse,
     FileWriteRequest,
     FileWriteResponse,
+    HookPolicySurface,
     LogEventType,
     PermissionMode,
 )
@@ -136,6 +138,7 @@ def evaluate_file_access(
             decision = _allowed_file_decision(request, resolved, None)
 
     decision = _apply_orchestration_filesystem_binding(request, decision, root_dir)
+    decision = _apply_hook_policy_to_file_decision(request, decision, actor=actor)
     event_log.record(
         LogEventType.filesystem,
         "Evaluated filesystem access policy.",
@@ -143,6 +146,44 @@ def evaluate_file_access(
         metadata=decision.model_dump(mode="json"),
     )
     return decision
+
+
+def _apply_hook_policy_to_file_decision(
+    request: FileAccessRequest,
+    decision: FileAccessDecision,
+    *,
+    actor: str | None,
+) -> FileAccessDecision:
+    hook_decision = evaluate_hook_policy(
+        surface=HookPolicySurface.filesystem,
+        action=request.action,
+        subject=_filesystem_hook_subject(request),
+        current_permission_mode=decision.permission_mode,
+        agent_role=request.agent_role,
+        agent_id=request.agent_id,
+        task_id=request.task_id,
+        actor=actor,
+    )
+    if hook_decision is None:
+        return decision
+    updates = {"hook_policy": hook_decision}
+    if decision.permission_mode != PermissionMode.blocked:
+        if hook_decision.permission_mode == PermissionMode.blocked:
+            updates.update(
+                {
+                    "allowed": False,
+                    "permission_mode": PermissionMode.blocked,
+                    "reason": hook_decision.reason,
+                }
+            )
+    return decision.model_copy(update=updates)
+
+
+def _filesystem_hook_subject(request: FileAccessRequest) -> str:
+    path = request.path.as_posix()
+    if request.target_path is None:
+        return path
+    return f"{path} -> {request.target_path.as_posix()}"
 
 
 def _apply_orchestration_filesystem_binding(

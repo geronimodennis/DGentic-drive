@@ -22,6 +22,7 @@ CAPABILITY_APPROVALS = "approvals"
 CAPABILITY_CLI = "cli"
 CAPABILITY_CREDENTIALS = "credentials"
 CAPABILITY_FILESYSTEM = "filesystem"
+CAPABILITY_HOOKS = "hooks"
 CAPABILITY_LOGS = "logs"
 CAPABILITY_MEMORY = "memory"
 CAPABILITY_NETWORK = "network"
@@ -40,6 +41,7 @@ KNOWN_CAPABILITIES = frozenset(
         CAPABILITY_CLI,
         CAPABILITY_CREDENTIALS,
         CAPABILITY_FILESYSTEM,
+        CAPABILITY_HOOKS,
         CAPABILITY_LOGS,
         CAPABILITY_MEMORY,
         CAPABILITY_NETWORK,
@@ -67,6 +69,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/auth", CAPABILITY_AUTH),
     ("/credentials", CAPABILITY_CREDENTIALS),
     ("/network/approvals", CAPABILITY_APPROVALS),
+    ("/guardrails/hooks/rules", CAPABILITY_HOOKS),
     ("/guardrails/network", CAPABILITY_NETWORK),
     ("/guardrails/filesystem", CAPABILITY_FILESYSTEM),
     ("/filesystem", CAPABILITY_FILESYSTEM),

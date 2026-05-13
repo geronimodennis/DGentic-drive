@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-12
 
+### Sprint 15 BL-009v Hook Policy Foundation
+
+Status: completed for the scoped backend-only hook policy foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, managed settings precedence, bound filesystem approval records, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected hook policy as the next bounded security slice after BL-009u, limited to persisted backend policy records and guardrail decision escalation.
+- Completed: Architect/Security scoped no plugin hook loading or execution, escalation-only semantics, command/network approval binding, and report-only filesystem approval-required hook decisions until bound filesystem approvals exist.
+- Completed: Developer added `src/dgentic/hook_policy.py`, hook policy schemas, `/guardrails/hooks/rules` route wiring, `hooks` capability mapping, command/filesystem/network decision integration, and CLI/network approval digest binding for hook decisions.
+- Completed: QA added focused service, API, auth, CLI approval-binding, and network approval-binding regressions.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: hook rules persist in `hook-policy-rules.json`, evaluate by priority, can match command/filesystem/network decisions by `any`, `exact`, `contains`, or `prefix`, and can be scoped to agent roles.
+- Implemented in this slice: `audit`, `approval_required`, and `blocked` effects attach redacted hook decisions to policy responses and hook audit events without storing secret-shaped match patterns.
+- Implemented in this slice: hook-forced CLI approval-required decisions are included in CLI approval binding digests and stale approvals fail execution after hook policy drift.
+- Implemented in this slice: hook-forced network approval-required decisions are included in network policy decision digests and stale network approvals fail claim after hook policy drift.
+- Implemented in this slice: filesystem hook `blocked` decisions enforce immediately, while filesystem hook `approval_required` decisions remain visible/report-only until a bound filesystem approval-record model exists.
+- Still out of scope after this slice: loading or executing plugin-provided hook code, generated-tool-specific hook surfaces, bound filesystem approval records, managed policy-source precedence, hook policy UI, and organization-managed settings distribution.
+
+Validation:
+- Focused hook service gate: `python -m pytest -q tests\test_hook_policy.py` passed with 3 tests.
+- Focused API/auth/network hook gate: `python -m pytest -q tests\test_api.py -k "hook_policy or guardrails_network_returns_policy_decision or cli_approval_binding_includes_hook_policy_decision"`, `python -m pytest -q tests\test_network_policy.py -k "hook_policy or hook or network_approval"`, and `python -m pytest -q tests\test_auth.py -k "capability_for_path"` passed.
+- Affected broad regression gate: `python -m pytest -q tests\test_api.py tests\test_auth.py tests\test_hook_policy.py tests\test_network_policy.py tests\test_cli_runtime.py tests\test_command_policy.py` passed with 671 tests and 2 skipped.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1035 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with managed settings precedence, command recipe contracts, or a bounded filesystem approval-record slice depending on remaining risk.
+
 ### Sprint 15 BL-009u Plugin Trust Foundation
 
 Status: completed for the scoped backend-only plugin manifest discovery and trust foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, hook policy enforcement, managed settings precedence, and guarded git/PR workflow automation.

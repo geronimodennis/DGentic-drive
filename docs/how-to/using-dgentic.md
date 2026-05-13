@@ -51,7 +51,7 @@ Current useful API checks:
 curl http://127.0.0.1:8000/health
 ```
 
-In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles, operator groups, and generated tokens through the auth APIs. Operator records live in `operators.json`, operator group records live in `operator-groups.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's current effective capabilities from direct assignments plus active group-inherited capabilities. Operator display/role metadata, operator group display/description metadata, generated-token labels, credential-reference labels, and plugin trust reasons are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. Plugin discovery and trust routes require `tools`. CLI approval creation and approved-command execution require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
+In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles, operator groups, and generated tokens through the auth APIs. Operator records live in `operators.json`, operator group records live in `operator-groups.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's current effective capabilities from direct assignments plus active group-inherited capabilities. Operator display/role metadata, operator group display/description metadata, generated-token labels, credential-reference labels, plugin trust reasons, and hook policy reasons are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. Plugin discovery and trust routes require `tools`. Hook policy rule routes require `hooks`. CLI approval creation and approved-command execution require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
 
 Example protected request in production mode:
 
@@ -252,6 +252,20 @@ curl -X PATCH http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
   -H "Content-Type: application/json" `
   -d '{"enabled":false}'
 ```
+
+Create a backend hook policy rule when a cross-surface pre-action policy should attach an audited hook decision to command, filesystem, or network guardrail evaluations:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/guardrails/hooks/rules `
+  -H "Content-Type: application/json" `
+  -d '{"name":"Review deploy command","surface":"command","action":"execute","match_type":"contains","pattern":"deploy","effect":"approval_required","reason":"Deployment commands require hook review.","priority":5}'
+```
+
+```powershell
+curl http://127.0.0.1:8000/guardrails/hooks/rules
+```
+
+Hook rules are persisted in `hook-policy-rules.json`, evaluated by priority, and support `audit`, `approval_required`, and `blocked` effects. They do not load plugin hook code. Hook-forced command and network approval decisions are included in the existing approval binding digests, so a later hook-rule change invalidates stale approvals. Filesystem hook `blocked` decisions enforce immediately; filesystem hook `approval_required` decisions are visible in policy responses but remain report-only until DGentic has bound filesystem approval records.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/execute `

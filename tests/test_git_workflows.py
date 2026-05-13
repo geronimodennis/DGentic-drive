@@ -659,3 +659,323 @@ def test_git_push_approval_api_uses_cli_capability_and_authenticated_principal(
     assert allowed.status_code == 201
     assert allowed.json()["requested_by"] == expected_actor
     get_settings.cache_clear()
+
+
+def test_git_pr_approval_api_creates_pending_approval_without_creating_pr(
+    git_workspace,
+) -> None:
+    base_branch = _git(git_workspace, "branch", "--show-current").stdout.strip()
+    _push_ready_workspace(git_workspace, ahead=False)
+    raw_remote_secret = "remote-url-pr-secret-token"
+    _git(
+        git_workspace,
+        "remote",
+        "set-url",
+        "origin",
+        f"https://user:{raw_remote_secret}@example.test/org/repo.git",
+    )
+    checkpoint = _checkpoint("pr", git_workspace, evidence=["python -m pytest -q"])
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open guarded PR",
+            "body": "Focused Sprint 15 PR approval.",
+            "base_branch": base_branch,
+            "draft": True,
+            "test_evidence": ["python -m pytest -q"],
+            "requested_by": "qa-agent",
+        },
+    )
+    runs = client.get("/cli/runs").json()
+    logs = json.dumps([event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)])
+    approval = response.json()
+
+    assert checkpoint.ready is True
+    assert checkpoint.ahead == 0
+    assert checkpoint.behind == 0
+    assert checkpoint.remote_url_digest.startswith("sha256:")
+    assert response.status_code == 201
+    assert approval["status"] == "pending"
+    assert approval["permission_mode"] == "approval_required"
+    assert approval["command"] == (
+        'gh pr create --title "Open guarded PR" '
+        '--body "Focused Sprint 15 PR approval." '
+        '--head "feature/push-approval" '
+        f'--base "{base_branch}" --draft'
+    )
+    assert approval["run_id"] is None
+    assert approval["workflow_binding"]["action"] == "pr"
+    assert approval["workflow_binding"]["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert approval["workflow_binding"]["remote_url_digest"] == checkpoint.remote_url_digest
+    assert approval["workflow_binding"]["pr_intent"]["title_digest"].startswith("sha256:")
+    assert approval["workflow_binding"]["pr_intent"]["body_digest"].startswith("sha256:")
+    assert approval["workflow_binding"]["pr_intent"]["base_branch"] == base_branch
+    assert approval["workflow_binding"]["pr_intent"]["head_branch"] == "feature/push-approval"
+    assert approval["workflow_binding"]["pr_intent"]["draft"] is True
+    assert "Open guarded PR" not in json.dumps(approval["workflow_binding"]["pr_intent"])
+    assert "Focused Sprint 15 PR approval." not in json.dumps(
+        approval["workflow_binding"]["pr_intent"]
+    )
+    assert Path(approval["cwd"]) == git_workspace.resolve()
+    assert approval["requested_by"] == "qa-agent"
+    assert runs == []
+    assert raw_remote_secret not in response.text
+    assert raw_remote_secret not in logs
+
+
+def test_git_pr_approval_rejects_stale_checkpoint_digest(git_workspace) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nAnother PR commit.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    _git(git_workspace, "commit", "-m", "Add stale PR change")
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject stale PR digest",
+            "body": "State changed after checkpoint.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert response.status_code == 400
+    assert "fresh matching checkpoint digest" in response.json()["detail"]
+    assert approvals == []
+
+
+def test_git_pr_approval_rejects_unpushed_or_missing_upstream_branch(git_workspace) -> None:
+    _git(git_workspace, "checkout", "-b", "feature/pr-no-upstream")
+    no_upstream = _checkpoint("pr", git_workspace)
+    client = TestClient(create_app())
+
+    missing_upstream_response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": no_upstream.checkpoint_digest,
+            "title": "Reject missing upstream",
+            "body": "No upstream branch is configured.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    _git(git_workspace, "checkout", "-")
+    _push_ready_workspace(git_workspace, ahead=True)
+    unpushed = _checkpoint("pr", git_workspace)
+    unpushed_response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": unpushed.checkpoint_digest,
+            "title": "Reject unpushed branch",
+            "body": "Branch still has local commits ahead.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert no_upstream.ready is True
+    assert missing_upstream_response.status_code == 400
+    assert "configured upstream" in missing_upstream_response.json()["detail"]
+    assert unpushed.ready is True
+    assert unpushed.ahead == 1
+    assert unpushed_response.status_code == 400
+    assert "branch to be pushed" in unpushed_response.json()["detail"]
+
+
+def test_git_pr_approval_rejects_behind_upstream_branch(git_workspace) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    tree_sha = _git(git_workspace, "rev-parse", "HEAD^{tree}").stdout.strip()
+    head_sha = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    remote_only_commit = subprocess.run(
+        ["git", "commit-tree", tree_sha, "-p", head_sha, "-m", "Remote-only PR change"],
+        cwd=git_workspace,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _git(
+        git_workspace, "update-ref", "refs/remotes/origin/feature/push-approval", remote_only_commit
+    )
+    behind = _checkpoint("pr", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": behind.checkpoint_digest,
+            "title": "Reject stale upstream",
+            "body": "Remote tracking branch is ahead.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert behind.ready is True
+    assert behind.behind == 1
+    assert response.status_code == 400
+    assert "current with upstream" in response.json()["detail"]
+
+
+def test_git_pr_approval_rejects_arbitrary_command_remote_and_flags_payload(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject arbitrary payload",
+            "body": "Only structured PR fields are allowed.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+            "command": "gh pr create --web",
+            "remote": "origin",
+            "flags": ["--web"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_git_pr_approval_rejects_secret_shaped_title_and_body(git_workspace) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    raw_secret = "pr-body-secret-token"
+    client = TestClient(create_app())
+
+    title_response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": f"API_KEY={raw_secret}",
+            "body": "Rejected title secret.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    body_response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Reject PR body secret",
+            "body": f"ACCESS_TOKEN={raw_secret}",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert title_response.status_code == 400
+    assert body_response.status_code == 400
+    assert "secret-shaped text" in title_response.json()["detail"]
+    assert "secret-shaped text" in body_response.json()["detail"]
+    assert raw_secret not in title_response.text
+    assert raw_secret not in body_response.text
+    assert approvals == []
+
+
+def test_git_pr_approval_revalidates_workflow_state_before_execution(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace, ahead=False)
+    checkpoint = _checkpoint("pr", git_workspace)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/cli/git/pr-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open workflow-bound PR",
+            "body": "PR state will be revalidated.",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "PR checkpoint reviewed."},
+    )
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nChanged after PR approval.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    _git(git_workspace, "commit", "-m", "Change after PR approval")
+
+    execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "no longer matches current repository state" in execute_response.json()["detail"]
+    assert review_response.json()["status"] == "approved"
+    assert (
+        "Approval is workflow-bound and revalidates workflow state before execution."
+        in review_response.json()["review_warnings"]
+    )
+
+
+def test_git_pr_approval_api_uses_cli_capability_and_authenticated_principal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable is not available")
+
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("DGENTIC_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("DGENTIC_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("DGENTIC_AUTH_TOKENS", raising=False)
+    get_settings.cache_clear()
+    _git(root_dir, "init")
+    _git(root_dir, "config", "user.email", "qa@example.test")
+    _git(root_dir, "config", "user.name", "QA Agent")
+    root_dir.joinpath("README.md").write_text("# PR auth\n", encoding="utf-8")
+    _git(root_dir, "add", "README.md")
+    _git(root_dir, "commit", "-m", "Initial commit")
+    _push_ready_workspace(root_dir, ahead=False)
+    checkpoint = _checkpoint("pr", root_dir, evidence=["pytest -q"])
+
+    cli_token = "git-pr-approval-cli-token"
+    expected_actor = sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{cli_token}=cli;task-token=tasks")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    wrong_capability = client.post(
+        "/cli/git/pr-approvals",
+        headers={"Authorization": "Bearer task-token"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open authenticated PR",
+            "body": "Wrong capability is rejected.",
+            "test_evidence": ["pytest -q"],
+        },
+    )
+    allowed = client.post(
+        "/cli/git/pr-approvals",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "title": "Open authenticated PR",
+            "body": "Authenticated principal is bound.",
+            "test_evidence": ["pytest -q"],
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+
+    assert wrong_capability.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["requested_by"] == expected_actor
+    get_settings.cache_clear()

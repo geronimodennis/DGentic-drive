@@ -82,10 +82,12 @@ from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.git_workflows import (
     GitCommitApprovalRequest,
+    GitPrApprovalRequest,
     GitPushApprovalRequest,
     GitWorkflowCheckpoint,
     GitWorkflowCheckpointRequest,
     build_git_commit_approval_request,
+    build_git_pr_approval_request,
     build_git_push_approval_request,
     create_git_workflow_checkpoint,
 )
@@ -1379,6 +1381,28 @@ def create_cli_git_push_approval(
 ) -> CommandApproval:
     try:
         command_request = build_git_push_approval_request(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+        return cli_runtime_service.create_approval(
+            command_request,
+            requested_by=_approval_requester(request, command_request.requested_by),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/git/pr-approvals", response_model=CommandApproval, status_code=201)
+def create_cli_git_pr_approval(
+    payload: GitPrApprovalRequest,
+    request: Request,
+) -> CommandApproval:
+    try:
+        command_request = build_git_pr_approval_request(
             _bind_principal_requester(payload, request),
             actor=_principal_actor(request),
         )

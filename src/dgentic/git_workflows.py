@@ -22,6 +22,9 @@ GIT_CHECKPOINT_TIMEOUT_SECONDS = 10
 MAX_CHANGED_PATHS = 50
 MAX_CHANGED_PATH_CHARS = 240
 MAX_COMMIT_MESSAGE_CHARS = 240
+MAX_PR_TITLE_CHARS = 200
+MAX_PR_BODY_CHARS = 2_000
+MAX_PR_BRANCH_CHARS = 120
 PROTECTED_BRANCHES = frozenset({"main", "master", "production", "release"})
 PROTECTED_FILE_SUFFIXES = frozenset({".key", ".pem", ".pfx", ".p12"})
 PROTECTED_FILE_NAMES = frozenset(
@@ -75,6 +78,28 @@ class GitPushApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
+class GitPrApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=MAX_PR_TITLE_CHARS)
+    body: str = Field(default="", max_length=MAX_PR_BODY_CHARS)
+    base_branch: str | None = Field(default=None, max_length=MAX_PR_BRANCH_CHARS)
+    draft: bool = False
     cwd: Path | None = None
     test_evidence: list[str] = Field(default_factory=list, max_length=20)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
@@ -310,6 +335,74 @@ def build_git_push_approval_request(
     )
 
 
+def build_git_pr_approval_request(
+    request: GitPrApprovalRequest,
+    *,
+    actor: str | None = None,
+) -> CommandExecutionRequest:
+    title = _validate_pr_text(
+        request.title,
+        field_name="Git PR title",
+        max_chars=MAX_PR_TITLE_CHARS,
+        allow_empty=False,
+    )
+    body = _validate_pr_text(
+        request.body,
+        field_name="Git PR body",
+        max_chars=MAX_PR_BODY_CHARS,
+        allow_empty=True,
+    )
+    base_branch = _validate_optional_pr_branch(request.base_branch, field_name="Git PR base branch")
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="pr",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git PR approval requires a ready PR checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git PR approval requires a fresh matching checkpoint digest.")
+    _require_pr_checkpoint_for_approval(checkpoint)
+    head_branch = _validate_pr_branch(checkpoint.branch, field_name="Git PR head branch")
+    command = _gh_pr_create_command(
+        title=title,
+        body=body,
+        base_branch=base_branch,
+        head_branch=head_branch,
+        draft=request.draft,
+    )
+    return CommandExecutionRequest(
+        command=command,
+        cwd=checkpoint.repo_root,
+        timeout_seconds=request.timeout_seconds,
+        approved=False,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        workflow_binding=_git_workflow_binding(
+            action="pr",
+            checkpoint=checkpoint,
+            command=command,
+            test_evidence_count=len(request.test_evidence),
+            pr_intent=_git_pr_intent_binding(
+                title=title,
+                body=body,
+                base_branch=base_branch,
+                head_branch=head_branch,
+                draft=request.draft,
+            ),
+        ),
+    )
+
+
 def validate_git_workflow_approval_binding(
     binding: dict[str, object],
     *,
@@ -322,7 +415,7 @@ def validate_git_workflow_approval_binding(
     checkpoint_digest = str(binding.get("checkpoint_digest") or "")
     evidence_count = _binding_evidence_count(binding.get("test_evidence_count"))
 
-    if action not in {"commit", "push"}:
+    if action not in {"commit", "push", "pr"}:
         raise PermissionError("Git workflow approval action is not supported.")
     if command != expected_command:
         raise PermissionError("Git workflow approval command does not match the bound workflow.")
@@ -330,6 +423,8 @@ def validate_git_workflow_approval_binding(
         raise PermissionError("Git commit workflow approval command is not supported.")
     if action == "push" and expected_command != "git push":
         raise PermissionError("Git push workflow approval command is not supported.")
+    if action == "pr" and not expected_command.startswith('gh pr create --title "'):
+        raise PermissionError("Git PR workflow approval command is not supported.")
 
     checkpoint = create_git_workflow_checkpoint(
         GitWorkflowCheckpointRequest(
@@ -352,6 +447,8 @@ def validate_git_workflow_approval_binding(
             raise PermissionError("Git workflow approval metadata no longer matches.")
     if action == "push":
         _require_push_checkpoint_for_approval(checkpoint, error_type=PermissionError)
+    if action == "pr":
+        _require_pr_checkpoint_for_approval(checkpoint, error_type=PermissionError)
 
 
 def _git_workflow_binding(
@@ -360,8 +457,9 @@ def _git_workflow_binding(
     checkpoint: GitWorkflowCheckpoint,
     command: str,
     test_evidence_count: int,
+    pr_intent: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    binding: dict[str, object] = {
         "type": "git_workflow",
         "action": action,
         "checkpoint_digest": checkpoint.checkpoint_digest,
@@ -377,6 +475,26 @@ def _git_workflow_binding(
         "unstaged_count": checkpoint.unstaged_count,
         "untracked_count": checkpoint.untracked_count,
         "test_evidence_count": test_evidence_count,
+    }
+    if pr_intent is not None:
+        binding["pr_intent"] = pr_intent
+    return binding
+
+
+def _git_pr_intent_binding(
+    *,
+    title: str,
+    body: str,
+    base_branch: str | None,
+    head_branch: str,
+    draft: bool,
+) -> dict[str, object]:
+    return {
+        "title_digest": f"sha256:{sha256(title.encode('utf-8')).hexdigest()}",
+        "body_digest": f"sha256:{sha256(body.encode('utf-8')).hexdigest()}",
+        "base_branch": base_branch or "",
+        "head_branch": head_branch,
+        "draft": draft,
     }
 
 
@@ -405,6 +523,21 @@ def _require_push_checkpoint_for_approval(
         raise error_type("Git push approval requires the branch to be current with upstream.")
 
 
+def _require_pr_checkpoint_for_approval(
+    checkpoint: GitWorkflowCheckpoint,
+    *,
+    error_type: type[Exception] = ValueError,
+) -> None:
+    if not checkpoint.upstream:
+        raise error_type("Git PR approval requires a configured upstream branch.")
+    if not checkpoint.remote_name or not checkpoint.remote_url_digest:
+        raise error_type("Git PR approval requires a bound upstream remote URL.")
+    if checkpoint.ahead > 0:
+        raise error_type("Git PR approval requires the branch to be pushed before PR creation.")
+    if checkpoint.behind > 0:
+        raise error_type("Git PR approval requires the branch to be current with upstream.")
+
+
 def _normalize_test_evidence(value: list[str]) -> list[str]:
     evidence: list[str] = []
     for item in value:
@@ -429,8 +562,80 @@ def _validate_commit_message(message: str) -> str:
     return normalized
 
 
+def _validate_pr_text(
+    value: str,
+    *,
+    field_name: str,
+    max_chars: int,
+    allow_empty: bool,
+) -> str:
+    normalized = value.strip()
+    if not normalized and not allow_empty:
+        raise ValueError(f"{field_name} must not be empty.")
+    if len(normalized) > max_chars:
+        raise ValueError(f"{field_name} is too long.")
+    if redact_sensitive_values(normalized) != normalized:
+        raise ValueError(f"{field_name} contains secret-shaped text.")
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        raise ValueError(f"{field_name} must be a single printable line.")
+    if '"' in normalized:
+        raise ValueError(f"{field_name} must not contain double quotes.")
+    return normalized
+
+
+def _validate_optional_pr_branch(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return _validate_pr_branch(normalized, field_name=field_name)
+
+
+def _validate_pr_branch(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty.")
+    if len(normalized) > MAX_PR_BRANCH_CHARS:
+        raise ValueError(f"{field_name} is too long.")
+    if redact_sensitive_values(normalized) != normalized:
+        raise ValueError(f"{field_name} contains secret-shaped text.")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", normalized):
+        raise ValueError(f"{field_name} contains unsupported characters.")
+    if (
+        ".." in normalized
+        or "//" in normalized
+        or normalized.endswith("/")
+        or normalized.endswith(".")
+        or normalized.endswith(".lock")
+    ):
+        raise ValueError(f"{field_name} contains unsupported ref syntax.")
+    return normalized
+
+
 def _git_commit_command(commit_message: str) -> str:
     return f'git commit -m "{commit_message}"'
+
+
+def _gh_pr_create_command(
+    *,
+    title: str,
+    body: str,
+    base_branch: str | None,
+    head_branch: str,
+    draft: bool,
+) -> str:
+    parts = [
+        "gh pr create",
+        f'--title "{title}"',
+        f'--body "{body}"',
+        f'--head "{head_branch}"',
+    ]
+    if base_branch:
+        parts.append(f'--base "{base_branch}"')
+    if draft:
+        parts.append("--draft")
+    return " ".join(parts)
 
 
 def _resolve_checkpoint_cwd(cwd: Path | None) -> Path:

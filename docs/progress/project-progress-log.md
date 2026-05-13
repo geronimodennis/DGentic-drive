@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ae Checkpoint-Bound Guarded PR Approval Creation
+
+Status: completed for the scoped PR-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected checkpoint-bound guarded PR approval creation as the next bounded Sprint 15 slice after BL-009ad because PR creation needs the same fresh repository-state binding as commit/push while keeping network execution inside the existing CLI approval path.
+- Completed: Architect/Security scoped the slice to structured PR intent, fresh ready PR checkpoint digest matching, pending CLI approval creation, branch-already-pushed/current gates, and no direct `gh` or GitHub API execution during approval creation.
+- Completed: Developer added `GitPrApprovalRequest`, PR approval request construction, PR title/body/base validation, upstream/current-with-upstream gates, PR workflow binding intent digests, execution-time PR workflow revalidation, `POST /cli/git/pr-approvals`, and command-policy hardening so broad configured-safe `gh` rules cannot downgrade GitHub CLI commands.
+- Completed: QA added endpoint, auth, stale-digest, no-upstream, unpushed, behind-upstream, arbitrary-payload, secret-shaped PR text, workflow revalidation, and GitHub CLI command-policy regression coverage.
+- Completed: Reviewer/Security/DevOps validated that PR approval creation is structured and side-effect-free, remote URLs remain digest-only, PR title/body raw text is not stored in workflow intent metadata, `gh` execution remains approval-bound, and no new deployment or migration requirement was introduced.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/pr-approvals` re-runs a PR checkpoint, requires the supplied `checkpoint_digest` to match the fresh ready state, requires a configured upstream remote URL digest, rejects branches ahead of or behind upstream, validates bounded single-line non-secret `title`, `body`, and optional `base_branch`, and queues a normal pending CLI approval for a constrained `gh pr create` command using the current branch as `--head`.
+- Implemented hardening in this slice: PR workflow bindings include PR intent digests and branch/draft metadata, execution-time workflow validation now supports `pr`, and broad configured-safe `gh` policy rules cannot downgrade GitHub CLI commands to autopilot-safe.
+- Still out of scope after this slice: direct PR runners, `gh` execution during approval creation, GitHub API calls, fetch/network freshness checks, PR labels/reviewers/assignees/projects/templates, browser-based PR creation, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused PR gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes tests\test_auth.py::test_capability_for_request_splits_approval_review_from_execution tests\test_command_policy.py::test_configured_safe_gh_rules_do_not_downgrade_github_cli_commands -q` passed with 81 tests.
+- Broader focused gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py tests\test_cli_runtime.py tests\test_command_policy.py -q` passed with 536 tests and 2 skipped.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1119 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with per-record managed policy-source precedence, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, plugin hook/tool/agent/skill loading governance, or richer production identity workflows based on next risk.
+
 ### Sprint 15 BL-009ad Checkpoint-Bound Git Push Approval Creation
 
 Status: completed for the scoped push-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded PR execution automation beyond checkpoints and commit/push approval creation.

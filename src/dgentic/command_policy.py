@@ -42,6 +42,8 @@ BLOCKED_COMMANDS = {
 }
 WINDOWS_EXECUTABLE_EXTENSIONS = frozenset({".bat", ".cmd", ".com", ".exe"})
 APPROVAL_COMMANDS = {
+    "gh",
+    "gh.exe",
     "git",
     "git.exe",
     "pip",
@@ -92,6 +94,7 @@ COMMAND_PATH_ARGUMENT_FLAGS = {
     "uv": frozenset({"--directory", "--project"}),
     "yarn": frozenset({"--cwd"}),
 }
+GH_EXECUTABLES = frozenset({"gh", "gh.exe"})
 GIT_EXECUTABLES = frozenset({"git", "git.exe"})
 GIT_GLOBAL_FLAGS_WITH_VALUES = frozenset(
     {
@@ -447,6 +450,8 @@ def evaluate_command_policy(
             return finish(decision)
         if _git_command_requires_approval(parsed):
             return finish(default_decision)
+        if _gh_command_requires_approval(parsed):
+            return finish(default_decision)
         if decision is not None:
             return finish(decision)
 
@@ -555,6 +560,10 @@ def _strip_matching_quotes(token: str) -> str:
 
 def _git_command_requires_approval(parsed: ParsedCommand) -> bool:
     return parsed.executable in GIT_EXECUTABLES and not _git_command_is_read_only(parsed)
+
+
+def _gh_command_requires_approval(parsed: ParsedCommand) -> bool:
+    return parsed.executable in GH_EXECUTABLES
 
 
 def _git_command_is_read_only(parsed: ParsedCommand) -> bool:
@@ -903,6 +912,14 @@ def _decision_for_inner_shell_command(
                 )
                 return configured_decision
             if _git_command_requires_approval(inner):
+                if approval_decision is None:
+                    inner_decision.reason = (
+                        f"Inner shell command {inner.executable} requires approval by "
+                        "the command policy."
+                    )
+                    approval_decision = inner_decision
+                continue
+            if _gh_command_requires_approval(inner):
                 if approval_decision is None:
                     inner_decision.reason = (
                         f"Inner shell command {inner.executable} requires approval by "

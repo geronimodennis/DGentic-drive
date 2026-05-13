@@ -138,6 +138,36 @@ def test_configured_safe_git_rules_still_allow_read_only_git_inspections(policy_
     assert decision.matched_rule_id == rule.id
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'gh pr create --title "Open PR" --body "Body"',
+        'bash -c "gh pr create --title Open --body Body"',
+    ],
+)
+def test_configured_safe_gh_rules_do_not_downgrade_github_cli_commands(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow broad GitHub CLI",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="gh",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Broad gh allow-list must not bypass approval.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.approval_required
+    assert decision.matched_rule_id is None
+    assert "gh" in decision.reason.lower()
+
+
 def test_command_policy_rules_can_be_disabled(policy_state) -> None:
     _root_dir, _data_dir = policy_state
     rule = create_command_policy_rule(

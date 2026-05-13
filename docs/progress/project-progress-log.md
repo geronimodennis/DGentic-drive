@@ -4,6 +4,39 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009x Managed Settings Precedence Foundation
+
+Status: completed for the scoped backend managed-settings precedence foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected managed settings precedence as the next bounded Sprint 15 security slice after BL-009w because remaining backend policy work needs auditable deployment-owned configuration before UI and extension surfaces expose it.
+- Completed: Architect/QA mapped the existing env-only settings, auth startup, network policy, route capability, redaction, and approval-drift risks.
+- Completed: Developer added an opt-in `DGENTIC_MANAGED_SETTINGS_FILE` resolver, supported-field allowlist, malformed/unknown/unsupported/oversized/secret-shaped fail-closed validation, managed-over-environment precedence, managed auth enablement over env disable, already-effective auth downgrade rejection, redacted source-attributed effective settings, and `GET /settings/effective`.
+- Completed: QA added focused managed settings tests for precedence, fallback, malformed configs, unsupported bootstrap fields, secret-shaped rejection, auth fail-closed behavior, admin-only API access, redacted effective settings, and network policy decisions using managed values.
+- Completed: Reviewer/Security/DevOps validated scope, with residual follow-up recorded for deeper managed policy-source ceilings across persisted command, plugin, hook, recipe, and git workflow policy surfaces.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` points to a JSON file containing a top-level `settings` object.
+- Implemented in this slice: supported managed runtime settings override `.env` and process environment values; unsupported bootstrap and secret fields such as `root_dir`, `data_dir`, `database_url`, `auth_tokens`, approval digest keys, and vault keys are rejected.
+- Implemented in this slice: invalid JSON, missing `settings`, unknown fields, oversized files, duplicate normalized fields, and secret-shaped managed values fail closed during settings load.
+- Implemented in this slice: managed `auth_enabled=true` can override an environment disable and trigger startup fail-closed behavior when no usable token exists; managed `auth_enabled=false` cannot disable already-effective auth.
+- Implemented in this slice: `GET /settings/effective` returns redacted values, per-field source labels, managed field names, and the managed-file SHA-256 digest; the route is admin-only when auth is enabled.
+- Still out of scope after this slice: signed/OS-managed distribution, runtime hot reload, managing state/bootstrap paths, raw secret delivery through managed files, and strict policy-source ceiling composition across persisted command/plugin/hook/recipe/git policy records.
+
+Validation:
+- Focused managed settings gate: `python -m pytest -q tests\test_managed_settings.py` passed with 11 tests.
+- Focused auth/network gate: `python -m pytest -q tests\test_managed_settings.py tests\test_auth.py -k "managed_settings or effective_auth_enabled or capability_for_path"` passed with 41 tests, and `python -m pytest -q tests\test_network_policy.py -k "network_domain_policy"` passed with 4 tests.
+- Affected broad API/auth/network gate: `python -m pytest -q tests\test_managed_settings.py tests\test_auth.py tests\test_network_policy.py tests\test_api.py -k "managed_settings or effective_settings or capability_for_path or capability_for_request or network_domain_policy or health"` passed with 61 tests.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1057 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with command recipe execution contracts, plugin installation/loading governance, guarded git/PR workflow automation, richer managed policy-source controls, managed KMS/secret-manager hardening, web retrieval network enforcement, or generated-tool OS-level egress isolation based on next risk.
+
 ### Sprint 15 BL-009w Bound Filesystem Approval Records
 
 Status: completed for the scoped backend filesystem approval-record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, managed settings precedence, and guarded git/PR workflow automation.

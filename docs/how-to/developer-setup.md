@@ -33,6 +33,7 @@ Default settings:
 - `DGENTIC_DATA_DIR=.dgentic`
 - `DGENTIC_DATABASE_URL` unset, which means SQLAlchemy uses SQLite at `DGENTIC_ROOT_DIR/DGENTIC_DATA_DIR/dgentic.db`
 - `DGENTIC_AUTOPILOT_ENABLED=false`
+- `DGENTIC_MANAGED_SETTINGS_FILE` empty by default; set it to an organization-managed JSON file when deployment-owned settings should override `.env` and environment values
 - `DGENTIC_AUTH_ENABLED` unset, which means auth is off in development and on in staging/production
 - `DGENTIC_AUTH_TOKENS` empty by default
 - `DGENTIC_OLLAMA_BASE_URL=http://127.0.0.1:11434`
@@ -102,6 +103,31 @@ Invoke-RestMethod `
 ```
 
 Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. Filesystem approval creation and bound filesystem execution use the `filesystem` capability, while filesystem approval list, review, approve, and deny routes use the separate `approvals` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+
+## Configure Managed Settings
+
+Set `DGENTIC_MANAGED_SETTINGS_FILE` when deployment-owned runtime settings should be enforced from a JSON file instead of local `.env` edits. The file is loaded at settings initialization, must be valid JSON, must contain a top-level `settings` object, and may only include supported runtime policy fields. Managed values override `.env` and process environment values. Malformed files, unknown fields, unsupported bootstrap fields such as `root_dir`, `data_dir`, `database_url`, raw auth tokens, vault keys, or secret-shaped text fail closed.
+
+Example:
+
+```json
+{
+  "settings": {
+    "auth_enabled": true,
+    "network_domain_policy": {
+      "default_mode": "deny",
+      "rules": [
+        {
+          "domain": "provider.example.test",
+          "mode": "allow"
+        }
+      ]
+    }
+  }
+}
+```
+
+Use `GET /settings/effective` with an admin-capable token to inspect effective values, source labels, managed field names, and the managed-file SHA-256 digest. Secret-bearing settings are redacted in that view.
 
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 

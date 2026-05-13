@@ -1897,6 +1897,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/plugins/safe-plugin/trust", "tools"),
         ("/api/v1/tools/registry", "tools"),
         ("/sessions/summary", "sessions"),
+        ("/settings/effective", "admin"),
         ("/logs", "logs"),
         ("/unmapped-sensitive-route", "admin"),
     ],

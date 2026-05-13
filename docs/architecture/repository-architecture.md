@@ -102,7 +102,7 @@ Current modules:
 - `migrations.py`: SQLAlchemy schema migration ledger for the current metadata, vector embedding, tool registry baseline, and additive memory lifecycle metadata migration.
 - `database.py`: Configurable SQLAlchemy engine/session helper, migration initialization, cached database reset, SQLite path resolution, and file-backed SQLite backup/restore helpers.
 - `storage.py`: JSON collection persistence helper for MVP local state with corrupt-file quarantine/restore helpers and inter-process locked reads plus item update/collection transactions for approval claims, decisions, orchestration execution claims, and scheduler lease claims.
-- `settings.py`: Environment-based backend settings, including auth mode, bootstrap bearer token capability configuration, network domain policy configuration, external provider credential reference configuration, operator-supplied local credential vault key configuration, and bounded credential process adapter configuration.
+- `settings.py`: Environment-based backend settings plus the opt-in managed-settings precedence foundation, including auth mode, bootstrap bearer token capability configuration, network domain policy configuration, external provider credential reference configuration, operator-supplied local credential vault key configuration, bounded credential process adapter configuration, managed-file validation, and redacted effective-settings source reporting.
 
 ### `tests/`
 
@@ -163,6 +163,7 @@ Authentication:
 - Development mode is auth-off by default.
 - Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 - Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS` or persisted generated bearer tokens assigned to active operator profiles, using effective capabilities from the operator's direct assignments plus active operator groups. Capability names include `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
+- `GET /settings/effective` is protected by the default `admin` capability mapping and returns redacted source-attributed runtime settings plus managed-file digest metadata.
 - When auth is enabled, startup fails closed if there is no valid bootstrap `token=capabilities` entry and no active persisted token.
 
 Current endpoints:

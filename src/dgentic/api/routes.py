@@ -219,7 +219,7 @@ from dgentic.schemas import (
     ToolManifest,
 )
 from dgentic.sessions import create_session_summary, list_session_summaries
-from dgentic.settings import get_settings
+from dgentic.settings import EffectiveSettingsView, get_effective_settings_view, get_settings
 from dgentic.tool_runtime import (
     ToolApproval,
     ToolApprovalReview,
@@ -286,6 +286,11 @@ def health() -> HealthResponse:
         service=settings.app_name,
         environment=settings.environment,
     )
+
+
+@router.get("/settings/effective", response_model=EffectiveSettingsView)
+def get_effective_runtime_settings() -> EffectiveSettingsView:
+    return get_effective_settings_view()
 
 
 @router.post("/auth/tokens", response_model=AuthTokenCreateResponse, status_code=201)

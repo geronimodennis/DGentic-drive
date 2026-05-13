@@ -4,6 +4,34 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ac Checkpoint-Bound Git Commit Approval Creation
+
+Status: completed for the scoped commit-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded push/PR execution automation beyond checkpoints and commit approval creation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected checkpoint-bound git commit approval creation as the next bounded Sprint 15 slice after BL-009ab because guarded commit closeout is useful only when tied to a fresh ready checkpoint and the existing CLI approval lifecycle.
+- Completed: Architect/Security scoped the slice to structured commit intent, fresh checkpoint digest matching, pending approval creation, and no new git execution runner.
+- Completed: Developer added `GitCommitApprovalRequest`, commit-message validation, content-sensitive checkpoint digest inputs, generated `git commit -m ...` command request construction, and `POST /cli/git/commit-approvals`.
+- Completed: QA added endpoint and auth coverage proving pending approval creation does not execute a commit, mismatched or non-ready checkpoints are rejected, secret-shaped commit messages are rejected without leakage, authenticated principals override spoofed requesters, and the route maps to `cli`.
+- Completed: Reviewer/Security/DevOps validated that staged-content changes invalidate old checkpoint digests, raw diff content is not returned or logged, commit execution remains inside the existing CLI approval approve/execute flow, and no push/PR network behavior was introduced.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/commit-approvals` re-runs a commit checkpoint, requires the supplied `checkpoint_digest` to match the fresh ready state, validates a bounded single-line non-secret `commit_message`, and queues a normal pending CLI approval for the generated commit command.
+- Still out of scope after this slice: direct git workflow runners, push approval creation, PR creation, network PR operations, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused git/auth gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py -q` passed with 116 tests.
+- Broader focused gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py tests\test_cli_runtime.py -q` passed with 203 tests and 2 skipped.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1098 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with guarded push/PR approval creation, per-record managed policy-source precedence, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, or plugin hook/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009ab Managed Policy Surface Locks
 
 Status: completed for the scoped managed policy surface lock foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded git/PR execution automation beyond checkpoints.

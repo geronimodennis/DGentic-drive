@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from dgentic.events import event_log
 from dgentic.orchestration import authorize_cli_action
 from dgentic.redaction import redact_sensitive_values
-from dgentic.schemas import LogEventType
+from dgentic.schemas import CommandExecutionRequest, LogEventType
 from dgentic.settings import get_settings
 
 GitWorkflowAction = Literal["commit", "push", "pr"]
@@ -21,6 +21,7 @@ GitWorkflowAction = Literal["commit", "push", "pr"]
 GIT_CHECKPOINT_TIMEOUT_SECONDS = 10
 MAX_CHANGED_PATHS = 50
 MAX_CHANGED_PATH_CHARS = 240
+MAX_COMMIT_MESSAGE_CHARS = 240
 PROTECTED_BRANCHES = frozenset({"main", "master", "production", "release"})
 PROTECTED_FILE_SUFFIXES = frozenset({".key", ".pem", ".pfx", ".p12"})
 PROTECTED_FILE_NAMES = frozenset(
@@ -48,12 +49,24 @@ class GitWorkflowCheckpointRequest(BaseModel):
     @field_validator("test_evidence")
     @classmethod
     def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
-        evidence: list[str] = []
-        for item in value:
-            normalized = str(item).strip()
-            if normalized:
-                evidence.append(normalized[:500])
-        return evidence
+        return _normalize_test_evidence(value)
+
+
+class GitCommitApprovalRequest(BaseModel):
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    commit_message: str = Field(min_length=1, max_length=MAX_COMMIT_MESSAGE_CHARS)
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
 
 
 class GitDiffStat(BaseModel):
@@ -123,6 +136,8 @@ def create_git_workflow_checkpoint(
     )
     ahead, behind = _ahead_behind(git_executable, repo_root, upstream)
     diff_stat = _combined_diff_stat(git_executable, repo_root)
+    staged_diff_digest = _git_diff_digest(git_executable, repo_root, cached=True)
+    unstaged_diff_digest = _git_diff_digest(git_executable, repo_root, cached=False)
     evidence_count = len(request.test_evidence)
     blockers, warnings = _readiness_findings(
         action=request.action,
@@ -148,6 +163,8 @@ def create_git_workflow_checkpoint(
             "unstaged_paths": status.unstaged_paths,
             "untracked_paths": status.untracked_paths,
             "diff_stat": diff_stat.model_dump(),
+            "staged_diff_digest": staged_diff_digest,
+            "unstaged_diff_digest": unstaged_diff_digest,
             "blockers": blockers,
             "warnings": warnings,
             "test_evidence_count": evidence_count,
@@ -183,6 +200,68 @@ def create_git_workflow_checkpoint(
         test_evidence_count=evidence_count,
     )
     return checkpoint
+
+
+def build_git_commit_approval_request(
+    request: GitCommitApprovalRequest,
+    *,
+    actor: str | None = None,
+) -> CommandExecutionRequest:
+    commit_message = _validate_commit_message(request.commit_message)
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="commit",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git commit approval requires a ready commit checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git commit approval requires a fresh matching checkpoint digest.")
+    return CommandExecutionRequest(
+        command=_git_commit_command(commit_message),
+        cwd=checkpoint.repo_root,
+        timeout_seconds=request.timeout_seconds,
+        approved=False,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+
+
+def _normalize_test_evidence(value: list[str]) -> list[str]:
+    evidence: list[str] = []
+    for item in value:
+        normalized = str(item).strip()
+        if normalized:
+            evidence.append(normalized[:500])
+    return evidence
+
+
+def _validate_commit_message(message: str) -> str:
+    normalized = message.strip()
+    if not normalized:
+        raise ValueError("Git commit message must not be empty.")
+    if len(normalized) > MAX_COMMIT_MESSAGE_CHARS:
+        raise ValueError("Git commit message is too long.")
+    if redact_sensitive_values(normalized) != normalized:
+        raise ValueError("Git commit message contains secret-shaped text.")
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        raise ValueError("Git commit message must be a single printable line.")
+    if '"' in normalized:
+        raise ValueError("Git commit message must not contain double quotes.")
+    return normalized
+
+
+def _git_commit_command(commit_message: str) -> str:
+    return f'git commit -m "{commit_message}"'
 
 
 def _resolve_checkpoint_cwd(cwd: Path | None) -> Path:
@@ -379,6 +458,14 @@ def _combined_diff_stat(git_executable: str, repo_root: Path) -> GitDiffStat:
         parts.append(f"{stat.deletions} deletions")
     stat.summary = ", ".join(parts) if stat.files_changed else "No tracked diff changes."
     return stat
+
+
+def _git_diff_digest(git_executable: str, repo_root: Path, *, cached: bool) -> str:
+    args = ["diff", "--no-ext-diff"]
+    if cached:
+        args.append("--cached")
+    output = _git_optional_output(git_executable, repo_root, args)
+    return f"sha256:{sha256(output.encode('utf-8')).hexdigest()}"
 
 
 def _parse_shortstat(output: str) -> GitDiffStat:

@@ -217,3 +217,176 @@ def test_git_checkpoint_api_uses_cli_capability_and_authenticated_principal(
     assert allowed.json()["requested_by"] == expected_actor
     assert logs[-1].actor == expected_actor
     get_settings.cache_clear()
+
+
+def test_git_commit_approval_api_creates_pending_approval_without_executing_commit(
+    git_workspace,
+) -> None:
+    head_before = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nApproval-ready.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace, evidence=["python -m pytest -q"])
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add checkpoint approval",
+            "test_evidence": ["python -m pytest -q"],
+            "requested_by": "qa-agent",
+        },
+    )
+    head_after = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    staged_paths = _git(git_workspace, "diff", "--cached", "--name-only").stdout.splitlines()
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    assert response.json()["permission_mode"] == "approval_required"
+    assert response.json()["command"] == 'git commit -m "Add checkpoint approval"'
+    assert Path(response.json()["cwd"]) == git_workspace.resolve()
+    assert response.json()["requested_by"] == "qa-agent"
+    assert head_after == head_before
+    assert staged_paths == ["README.md"]
+
+
+def test_git_commit_approval_rejects_mismatched_checkpoint_digest(git_workspace) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nFirst staged body.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nDifferent staged body.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Reject stale digest",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert response.status_code == 400
+    assert "fresh matching checkpoint digest" in response.json()["detail"]
+    assert approvals == []
+
+
+def test_git_commit_approval_rejects_non_ready_checkpoint(git_workspace) -> None:
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Reject clean checkpoint",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert checkpoint.ready is False
+    assert response.status_code == 400
+    assert "ready commit checkpoint" in response.json()["detail"]
+    assert approvals == []
+
+
+def test_git_commit_approval_rejects_secret_shaped_commit_message(git_workspace) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nSecret message rejection.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    raw_secret = "commit-message-secret-token"
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/commit-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": f"API_KEY={raw_secret}",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert response.status_code == 400
+    assert "secret-shaped text" in response.json()["detail"]
+    assert raw_secret not in response.text
+    assert approvals == []
+
+
+def test_git_commit_approval_api_uses_cli_capability_and_authenticated_principal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable is not available")
+
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    _git(root_dir, "init")
+    _git(root_dir, "config", "user.email", "qa@example.test")
+    _git(root_dir, "config", "user.name", "QA Agent")
+    root_dir.joinpath("README.md").write_text("# Commit approval\n", encoding="utf-8")
+    _git(root_dir, "add", "README.md")
+    _git(root_dir, "commit", "-m", "Initial commit")
+    root_dir.joinpath("README.md").write_text(
+        "# Commit approval\n\nAuthenticated.\n",
+        encoding="utf-8",
+    )
+    _git(root_dir, "add", "README.md")
+
+    cli_token = "git-commit-approval-cli-token"
+    expected_actor = sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{cli_token}=cli;task-token=tasks")
+    get_settings.cache_clear()
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="commit",
+            cwd=root_dir,
+            test_evidence=["pytest -q"],
+            requested_by="spoofed-checkpoint-actor",
+        )
+    )
+    client = TestClient(create_app())
+
+    wrong_capability = client.post(
+        "/cli/git/commit-approvals",
+        headers={"Authorization": "Bearer task-token"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add authenticated approval",
+            "test_evidence": ["pytest -q"],
+        },
+    )
+    allowed = client.post(
+        "/cli/git/commit-approvals",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add authenticated approval",
+            "test_evidence": ["pytest -q"],
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+
+    assert wrong_capability.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["requested_by"] == expected_actor
+    get_settings.cache_clear()

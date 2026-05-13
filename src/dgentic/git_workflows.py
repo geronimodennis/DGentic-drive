@@ -94,6 +94,24 @@ class GitPushApprovalRequest(BaseModel):
         return _normalize_test_evidence(value)
 
 
+class GitPushRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=60, ge=1, le=300)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
 class GitPrApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -181,6 +199,29 @@ class GitCommitRunResult(BaseModel):
     commit_message_digest: str
     exit_code: int
     duration_ms: int
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class GitPushRunResult(BaseModel):
+    action: Literal["push"] = "push"
+    repo_root: Path
+    cwd: Path
+    branch: str
+    upstream: str
+    remote_name: str
+    remote_url_digest: str
+    head_sha: str
+    checkpoint_digest: str
+    exit_code: int
+    duration_ms: int
+    ahead_before: int
+    behind_before: int
+    ahead_after: int
+    behind_after: int
     requested_by: str | None = None
     agent_id: str | None = None
     agent_role: str | None = None
@@ -434,6 +475,112 @@ def run_git_commit_workflow(
     return result
 
 
+def run_git_push_workflow(
+    request: GitPushRunRequest,
+    *,
+    actor: str | None = None,
+) -> GitPushRunResult:
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="push",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git push runner requires a ready push checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git push runner requires a fresh matching checkpoint digest.")
+    _require_push_checkpoint_for_approval(checkpoint, workflow_name="Git push runner")
+    remote_name, upstream_branch = _push_target_for_checkpoint(checkpoint)
+    git_executable = _resolve_git_executable()
+    started = monotonic()
+    try:
+        with tempfile.TemporaryDirectory(prefix="dgentic-git-hooks-") as hooks_path:
+            completed = subprocess.run(
+                [
+                    git_executable,
+                    "--no-optional-locks",
+                    "-c",
+                    f"core.hooksPath={hooks_path}",
+                    "-c",
+                    "push.gpgSign=false",
+                    "push",
+                    "--porcelain",
+                    remote_name,
+                    f"HEAD:refs/heads/{upstream_branch}",
+                ],
+                cwd=checkpoint.repo_root,
+                env=_git_environment(),
+                capture_output=True,
+                text=True,
+                timeout=request.timeout_seconds,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        _record_push_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=None,
+            duration_ms=int((monotonic() - started) * 1000),
+            status="timed_out",
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise TimeoutError("Git push runner timed out.") from exc
+
+    duration_ms = int((monotonic() - started) * 1000)
+    if completed.returncode != 0:
+        _record_push_run_event(
+            checkpoint=checkpoint,
+            actor=actor or request.requested_by,
+            exit_code=completed.returncode,
+            duration_ms=duration_ms,
+            status="failed",
+            test_evidence_count=len(request.test_evidence),
+        )
+        raise ValueError("Git push runner failed.")
+
+    ahead_after, behind_after = _ahead_behind(
+        git_executable, checkpoint.repo_root, checkpoint.upstream
+    )
+    result = GitPushRunResult(
+        repo_root=checkpoint.repo_root,
+        cwd=checkpoint.cwd,
+        branch=checkpoint.branch,
+        upstream=checkpoint.upstream,
+        remote_name=checkpoint.remote_name,
+        remote_url_digest=checkpoint.remote_url_digest,
+        head_sha=checkpoint.head_sha,
+        checkpoint_digest=checkpoint.checkpoint_digest,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        ahead_before=checkpoint.ahead,
+        behind_before=checkpoint.behind,
+        ahead_after=ahead_after,
+        behind_after=behind_after,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    _record_push_run_event(
+        checkpoint=checkpoint,
+        actor=actor or request.requested_by,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        status="completed",
+        test_evidence_count=len(request.test_evidence),
+        ahead_after=ahead_after,
+        behind_after=behind_after,
+    )
+    return result
+
+
 def build_git_push_approval_request(
     request: GitPushApprovalRequest,
     *,
@@ -650,16 +797,33 @@ def _binding_evidence_count(value: object) -> int:
 def _require_push_checkpoint_for_approval(
     checkpoint: GitWorkflowCheckpoint,
     *,
+    workflow_name: str = "Git push approval",
     error_type: type[Exception] = ValueError,
 ) -> None:
     if not checkpoint.upstream:
-        raise error_type("Git push approval requires a configured upstream branch.")
+        raise error_type(f"{workflow_name} requires a configured upstream branch.")
     if not checkpoint.remote_name or not checkpoint.remote_url_digest:
-        raise error_type("Git push approval requires a bound upstream remote URL.")
+        raise error_type(f"{workflow_name} requires a bound upstream remote URL.")
     if checkpoint.ahead <= 0:
-        raise error_type("Git push approval requires local commits ahead of upstream.")
+        raise error_type(f"{workflow_name} requires local commits ahead of upstream.")
     if checkpoint.behind > 0:
-        raise error_type("Git push approval requires the branch to be current with upstream.")
+        raise error_type(f"{workflow_name} requires the branch to be current with upstream.")
+
+
+def _push_target_for_checkpoint(checkpoint: GitWorkflowCheckpoint) -> tuple[str, str]:
+    remote_name = checkpoint.remote_name.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", remote_name):
+        raise ValueError("Git push runner has an unsupported upstream remote name.")
+    upstream_prefix = f"{remote_name}/"
+    if not checkpoint.upstream.startswith(upstream_prefix):
+        raise ValueError("Git push runner upstream does not match the configured remote.")
+    upstream_branch = _validate_pr_branch(
+        checkpoint.upstream[len(upstream_prefix) :],
+        field_name="Git push upstream branch",
+    )
+    if upstream_branch.lower() in PROTECTED_BRANCHES:
+        raise ValueError("Git push runner to protected upstream branch is blocked.")
+    return remote_name, upstream_branch
 
 
 def _require_pr_checkpoint_for_approval(
@@ -1166,6 +1330,47 @@ def _record_commit_run_event(
             "duration_ms": duration_ms,
             "staged_count": checkpoint.staged_count,
             "diff_stat": checkpoint.diff_stat.model_dump(),
+            "test_evidence_count": test_evidence_count,
+            "requested_by": checkpoint.requested_by,
+            "agent_id": checkpoint.agent_id,
+            "agent_role": checkpoint.agent_role,
+            "task_id": checkpoint.task_id,
+        },
+    )
+
+
+def _record_push_run_event(
+    *,
+    checkpoint: GitWorkflowCheckpoint,
+    actor: str | None,
+    exit_code: int | None,
+    duration_ms: int,
+    status: str,
+    test_evidence_count: int,
+    ahead_after: int | None = None,
+    behind_after: int | None = None,
+) -> None:
+    event_log.record(
+        LogEventType.cli,
+        "Ran direct git push workflow.",
+        actor=actor or "system",
+        subject_id=checkpoint.checkpoint_digest,
+        metadata={
+            "action": "push",
+            "status": status,
+            "repo_root": str(checkpoint.repo_root),
+            "branch": checkpoint.branch,
+            "upstream": checkpoint.upstream,
+            "remote_name": checkpoint.remote_name,
+            "remote_url_digest": checkpoint.remote_url_digest,
+            "head_sha": checkpoint.head_sha,
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "ahead_before": checkpoint.ahead,
+            "behind_before": checkpoint.behind,
+            "ahead_after": ahead_after,
+            "behind_after": behind_after,
             "test_evidence_count": test_evidence_count,
             "requested_by": checkpoint.requested_by,
             "agent_id": checkpoint.agent_id,

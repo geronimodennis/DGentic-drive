@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009as Direct Git Push Runner
+
+Status: completed for the scoped direct configured-upstream git push runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct PR workflow runner beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected the direct configured-upstream push runner as the next bounded Sprint 15 git workflow automation slice after BL-009ar because push checkpoint and approval gates already provided upstream, ahead/behind, clean-worktree, protected-branch, and remote URL digest contracts.
+- Completed: Architect/Security scoped the runner to `push` only, requiring a fresh ready push checkpoint digest, checkpoint-derived remote/refspec, no caller-supplied remote/refspec/flags, hook isolation, push GPG-signing disablement, no raw remote URL/output exposure, no approval creation, and no direct PR execution.
+- Completed: Developer added `GitPushRunRequest`, `GitPushRunResult`, `run_git_push_workflow`, and `POST /cli/git/push-runs` under the existing `cli` capability mapping.
+- Completed: QA added direct push runner coverage for success, stale digest rejection, dirty worktree rejection, no-upstream and no-ahead rejection, arbitrary remote/branch/flag payload rejection, secret-shaped remote URL non-exposure, pre-push hook isolation, and authenticated principal binding.
+- Completed: Architect scout confirmed the direct push runner should derive the upstream target from the fresh checkpoint and leave direct PR execution out of scope.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/push-runs` re-runs a push checkpoint and only pushes when the supplied `checkpoint_digest` still matches a fresh ready push checkpoint.
+- Implemented in this slice: direct push execution uses argv `git push --porcelain [remote] HEAD:refs/heads/[upstream-branch]`, where the remote and branch are derived from the checkpointed repository upstream.
+- Implemented in this slice: the runner requires a clean non-protected branch, configured upstream remote URL digest, local commits ahead of upstream, and no remote-tracking commits behind.
+- Implemented in this slice: successful responses include repo/cwd, branch/upstream, remote name, remote URL digest, head SHA, checkpoint digest, ahead/behind before/after, duration, requester/context metadata, and no raw remote URL or command output.
+- Implemented in this slice: CLI audit metadata records safe push-run facts without raw remote URLs, stdout, stderr, caller refspecs, or approval records.
+- Still out of scope after this slice: direct `gh pr create`, remote ref freshness checks that require a separate fetch, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused direct push runner gate: `python -m pytest tests\test_git_workflows.py -q -k "push_run" --maxfail=1 -x` passed with 8 tests and 33 deselected.
+- Focused auth capability mapping gate: `python -m pytest tests\test_auth.py -q -k "capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 68 tests and 58 deselected.
+- Combined git/auth gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py -q -k "git or capability_for_path_maps_public_and_sensitive_routes or capability_for_request_splits_approval_review_from_execution" --maxfail=1 -x` passed with 109 tests and 58 deselected.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_git_workflows.py tests\test_auth.py tests\test_api.py --maxfail=1 -x` with 377 tests.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,256 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009ar Direct Git Commit Runner
 
 Status: completed for the scoped direct local git commit runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct push/PR workflow runners beyond approval-bound CLI execution.

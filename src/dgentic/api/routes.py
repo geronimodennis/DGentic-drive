@@ -80,6 +80,11 @@ from dgentic.credentials import (
 )
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
+from dgentic.git_workflows import (
+    GitWorkflowCheckpoint,
+    GitWorkflowCheckpointRequest,
+    create_git_workflow_checkpoint,
+)
 from dgentic.guardrails import (
     FileApproval,
     FileApprovalRequiredError,
@@ -1302,6 +1307,24 @@ def start_cli_command_recipe_run(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/git/checkpoints", response_model=GitWorkflowCheckpoint)
+def create_cli_git_checkpoint(
+    payload: GitWorkflowCheckpointRequest,
+    request: Request,
+) -> GitWorkflowCheckpoint:
+    try:
+        return create_git_workflow_checkpoint(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

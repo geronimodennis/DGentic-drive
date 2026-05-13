@@ -1891,6 +1891,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/cli/recipes/qa.echo/execute", "cli"),
         ("/cli/recipes/qa.echo/runs", "cli"),
         ("/cli/recipes/qa.echo/approvals", "cli"),
+        ("/cli/git/checkpoints", "cli"),
         ("/cli/runs", "cli"),
         ("/providers", "providers"),
         ("/providers/external-openai-compatible/approvals", "approvals"),

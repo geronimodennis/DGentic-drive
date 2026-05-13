@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009aa Git Workflow Safety Checkpoints
+
+Status: completed for the scoped read-only git workflow checkpoint foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR execution automation beyond checkpoints.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected git workflow safety checkpoints as the next bounded Sprint 15 slice after BL-009z because commit, push, and PR preparation need auditable readiness metadata before any future execution automation is safe.
+- Completed: Architect/Security scoped this slice to shell-free read-only git inspection only, with no `git add`, `git commit`, `git push`, `gh`, PR creation, or network calls.
+- Completed: Developer added `git_workflows.py`, the `POST /cli/git/checkpoints` API route, root-bounded git executable/cwd/repository inspection, readiness blockers/warnings, checkpoint digests, bounded audit metadata, and command-policy protection so configured-safe `git` rules cannot downgrade mutating git commands.
+- Completed: QA added focused coverage for cwd/repo-root escape rejection, commit readiness, protected staged files, secret-shaped staged additions without leakage, push/PR branch and dirty-worktree blockers, no-network PR warnings, CLI capability mapping, authenticated requester binding, and configured-safe git downgrade regressions.
+- Completed: Reviewer/Security validated that the checkpoint surface is metadata-only, secret-safe, root-bounded, and does not introduce commit/push/PR side effects.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/checkpoints` returns read-only readiness snapshots for `commit`, `push`, and `pr` actions with branch/head/upstream metadata, ahead/behind counts, staged/unstaged/untracked counts, redacted changed paths, diff stats, blockers, warnings, and a checkpoint digest.
+- Implemented in this slice: checkpoint inspection resolves the system `git` executable outside `rootDir`, bounds requested cwd and repository root under `rootDir`, disables optional locks and prompts, and records only bounded metadata in CLI audit events.
+- Implemented in this slice: commit checkpoints require staged changes and test evidence; push/PR checkpoints require test evidence, clean worktrees, and non-protected branches.
+- Implemented in this slice: protected staged files and secret-shaped staged additions block readiness without returning raw diff or secret values.
+- Implemented in this slice: broad configured-safe `git` policy rules can still allow recognized read-only inspections such as `git status`, but cannot downgrade mutating or ambiguous git subcommands, including shell-wrapped forms.
+- Still out of scope after this slice: running `git add`, `git commit`, `git push`, branch cleanup, PR creation, GitHub API calls, checkpoint-bound execution approvals, UI presentation, CLI client workflow commands, and CI/observability around checkpoint freshness.
+
+Validation:
+- Focused git/policy/auth gate: `python -m pytest tests\test_git_workflows.py tests\test_command_policy.py tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes -q --maxfail=1 -x` passed with 352 tests.
+- Touched lint/format gates: `python -m ruff check src\dgentic\git_workflows.py src\dgentic\api\routes.py src\dgentic\command_policy.py tests\test_git_workflows.py tests\test_command_policy.py tests\test_auth.py` and `python -m ruff format --check src\dgentic\git_workflows.py src\dgentic\api\routes.py src\dgentic\command_policy.py tests\test_git_workflows.py tests\test_command_policy.py tests\test_auth.py` passed.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1088 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with guarded git/PR execution automation, richer managed policy-source controls, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, or plugin hook/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009z Plugin Command Recipe Activation Governance
 
 Status: completed for the scoped backend plugin command recipe activation foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.

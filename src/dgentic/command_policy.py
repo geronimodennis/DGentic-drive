@@ -92,6 +92,67 @@ COMMAND_PATH_ARGUMENT_FLAGS = {
     "uv": frozenset({"--directory", "--project"}),
     "yarn": frozenset({"--cwd"}),
 }
+GIT_EXECUTABLES = frozenset({"git", "git.exe"})
+GIT_GLOBAL_FLAGS_WITH_VALUES = frozenset(
+    {
+        "-c",
+        "-C",
+        "--config-env",
+        "--exec-path",
+        "--git-dir",
+        "--namespace",
+        "--super-prefix",
+        "--work-tree",
+    }
+)
+GIT_READ_ONLY_SUBCOMMANDS = frozenset(
+    {
+        "",
+        "--help",
+        "--version",
+        "blame",
+        "cat-file",
+        "describe",
+        "diff",
+        "for-each-ref",
+        "grep",
+        "help",
+        "log",
+        "ls-files",
+        "ls-tree",
+        "merge-base",
+        "name-rev",
+        "rev-list",
+        "rev-parse",
+        "shortlog",
+        "show",
+        "show-ref",
+        "status",
+        "version",
+        "whatchanged",
+    }
+)
+GIT_BRANCH_MUTATING_FLAGS = frozenset(
+    {
+        "--copy",
+        "--create-reflog",
+        "--delete",
+        "--edit-description",
+        "--move",
+        "--no-track",
+        "--set-upstream",
+        "--set-upstream-to",
+        "--track",
+        "--unset-upstream",
+        "-c",
+        "-d",
+        "-m",
+    }
+)
+GIT_REMOTE_READ_ONLY_ACTIONS = frozenset({"", "-v", "--verbose", "get-url", "show"})
+GIT_STASH_READ_ONLY_ACTIONS = frozenset({"list", "show"})
+GIT_SUBMODULE_READ_ONLY_ACTIONS = frozenset({"", "status", "summary"})
+GIT_WORKTREE_READ_ONLY_ACTIONS = frozenset({"list"})
 SHELL_COMMAND_FLAGS = {
     "cmd": {"/c", "/k"},
     "cmd.exe": {"/c", "/k"},
@@ -382,6 +443,10 @@ def evaluate_command_policy(
         ):
             return finish(default_decision)
         decision = _decision_from_configured_rules(command, parsed, request)
+        if decision is not None and decision.permission_mode == PermissionMode.blocked:
+            return finish(decision)
+        if _git_command_requires_approval(parsed):
+            return finish(default_decision)
         if decision is not None:
             return finish(decision)
 
@@ -486,6 +551,64 @@ def _strip_matching_quotes(token: str) -> str:
     if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
         return token[1:-1]
     return token
+
+
+def _git_command_requires_approval(parsed: ParsedCommand) -> bool:
+    return parsed.executable in GIT_EXECUTABLES and not _git_command_is_read_only(parsed)
+
+
+def _git_command_is_read_only(parsed: ParsedCommand) -> bool:
+    subcommand, subcommand_args = _git_subcommand_and_args(parsed)
+    if subcommand in GIT_READ_ONLY_SUBCOMMANDS:
+        return True
+    if subcommand == "branch":
+        return _git_branch_is_read_only(subcommand_args)
+    if subcommand == "remote":
+        return _first_non_option_git_arg(subcommand_args) in GIT_REMOTE_READ_ONLY_ACTIONS
+    if subcommand == "stash":
+        return _first_non_option_git_arg(subcommand_args) in GIT_STASH_READ_ONLY_ACTIONS
+    if subcommand == "submodule":
+        return _first_non_option_git_arg(subcommand_args) in GIT_SUBMODULE_READ_ONLY_ACTIONS
+    if subcommand == "worktree":
+        return _first_non_option_git_arg(subcommand_args) in GIT_WORKTREE_READ_ONLY_ACTIONS
+    return False
+
+
+def _git_subcommand_and_args(parsed: ParsedCommand) -> tuple[str, list[str]]:
+    args = [_strip_matching_quotes(argument.strip()) for argument in parsed.arguments]
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        lowered = argument.lower()
+        if lowered == "--":
+            return "", []
+        if not lowered.startswith("-"):
+            return lowered, args[index + 1 :]
+        if lowered in {flag.lower() for flag in GIT_GLOBAL_FLAGS_WITH_VALUES}:
+            index += 2
+            continue
+        index += 1
+    return "", []
+
+
+def _git_branch_is_read_only(arguments: list[str]) -> bool:
+    for argument in arguments:
+        lowered = argument.lower()
+        if lowered in GIT_BRANCH_MUTATING_FLAGS or any(
+            lowered.startswith(f"{flag}=") for flag in GIT_BRANCH_MUTATING_FLAGS
+        ):
+            return False
+        if not lowered.startswith("-"):
+            return False
+    return True
+
+
+def _first_non_option_git_arg(arguments: list[str]) -> str:
+    for argument in arguments:
+        lowered = argument.lower()
+        if lowered and not lowered.startswith("-"):
+            return lowered
+    return ""
 
 
 def _sorted_rules(rules: list[CommandPolicyRule]) -> list[CommandPolicyRule]:
@@ -633,6 +756,19 @@ def _default_decision(
             agent_id=request.agent_id,
             task_id=request.task_id,
         )
+    if _git_command_requires_approval(parsed):
+        return CommandPolicyDecision(
+            command=command,
+            risk=CommandRisk.approval_required,
+            permission_mode=PermissionMode.approval_required,
+            reason=(
+                f"{executable} command is not a recognized read-only git inspection "
+                "and needs approval."
+            ),
+            agent_role=request.agent_role,
+            agent_id=request.agent_id,
+            task_id=request.task_id,
+        )
     if executable in APPROVAL_COMMANDS:
         return CommandPolicyDecision(
             command=command,
@@ -766,6 +902,14 @@ def _decision_for_inner_shell_command(
                     f"command policy: {configured_decision.reason}"
                 )
                 return configured_decision
+            if _git_command_requires_approval(inner):
+                if approval_decision is None:
+                    inner_decision.reason = (
+                        f"Inner shell command {inner.executable} requires approval by "
+                        "the command policy."
+                    )
+                    approval_decision = inner_decision
+                continue
             if (
                 configured_decision.permission_mode == PermissionMode.autopilot_safe
                 and _configured_safe_shell_decision_can_apply(

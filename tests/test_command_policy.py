@@ -85,6 +85,59 @@ def test_command_policy_rules_override_defaults_and_match_arguments(policy_state
     assert (data_dir / "cli-command-policy-rules.json").exists()
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git add README.md",
+        "git commit -m checkpoint",
+        "git push origin main",
+        "git branch -D stale-branch",
+        "git reset --hard HEAD~1",
+        "bash -c 'git commit -m checkpoint'",
+    ],
+)
+def test_configured_safe_git_rules_do_not_downgrade_mutating_git_commands(
+    policy_state,
+    command: str,
+) -> None:
+    _root_dir, _data_dir = policy_state
+    create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow broad git executable",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="git",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Broad git allow-list should only cover read-only inspections.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.approval_required
+    assert decision.matched_rule_id is None
+    assert "git" in decision.reason.lower()
+
+
+def test_configured_safe_git_rules_still_allow_read_only_git_inspections(policy_state) -> None:
+    _root_dir, _data_dir = policy_state
+    rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Allow broad git executable",
+            match_type=CommandPolicyMatchType.executable,
+            pattern="git",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Read-only git inspection is allowed.",
+            priority=5,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="git status --short"))
+
+    assert decision.permission_mode == PermissionMode.autopilot_safe
+    assert decision.matched_rule_id == rule.id
+
+
 def test_command_policy_rules_can_be_disabled(policy_state) -> None:
     _root_dir, _data_dir = policy_state
     rule = create_command_policy_rule(

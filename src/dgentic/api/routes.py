@@ -494,6 +494,8 @@ def create_persisted_credential_reference(
 ) -> CredentialReferenceView:
     try:
         return create_credential_reference(payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except CredentialReferenceError as exc:
         raise HTTPException(status_code=400, detail="Credential reference is invalid.") from exc
     except ValueError as exc:
@@ -531,6 +533,8 @@ def revoke_persisted_credential_reference(
 ) -> CredentialReferenceView:
     try:
         return revoke_credential_reference(credential_ref_id, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

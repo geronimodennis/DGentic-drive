@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009aq Managed Credential Reference Records
+
+Status: completed for the scoped managed credential reference record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/Architect selected managed credential reference records after BL-009ap because deployment-owned credential metadata was the next bounded managed policy-source control that could improve provider/runtime secret governance without adding KMS or cloud SDK dependencies.
+- Completed: Architect/Security scoped records as read-only settings-file data for `env` and `external_process` sources only, with fail-closed validation, no raw secret values, no local JSON persistence, managed-over-local overlay, and local spoof filtering.
+- Completed: Developer added `managed_credential_references` settings parsing, redacted effective-settings reporting, source-attributed credential views, managed/local overlay and resolution, read-only managed revoke rejection, and provider runtime compatibility through existing credential-reference configuration.
+- Completed: QA added managed-settings, auth/API, and provider-runtime coverage for managed-only loading, parser failures, source attribution, auth capability gates, no secret echo, local id collision shadowing, local managed-source spoof filtering, read-only mutation behavior, provider use, and no local persistence.
+- Completed: Reviewer/Security validated that managed records do not add local-vault/KMS semantics, do not expose raw secret material, and do not let local JSON rows impersonate managed deployment records.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_credential_references` with stable ids, `env` or `external_process` source metadata, purpose, status, and optional labels.
+- Implemented in this slice: `GET /credentials/references` returns managed credential records with `source: "managed"` ahead of non-shadowed local records, while local rows that spoof managed source are ignored.
+- Implemented in this slice: managed credential references can be resolved by provider/runtime credential flows, including `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF`, without writing the managed id or secret metadata to `credential-references.json`.
+- Implemented in this slice: managed credential records are read-only through local credential mutation APIs; local records cannot shadow managed ids, and managed records cannot use `local_vault` ciphertext.
+- Still out of scope after this slice: managed KMS/local-vault ciphertext ownership, first-class cloud secret-manager adapters beyond the process adapter bridge, per-record policy-source controls beyond current managed records, direct git/PR runners, OS-level egress isolation, and executable plugin loading.
+
+Validation:
+- Focused managed credential settings gate: `python -m pytest tests\test_managed_settings.py -q -k "managed_credential_reference"` passed with 10 tests and 54 deselected.
+- Focused managed credential auth/API gate: `python -m pytest tests\test_auth.py -q -k "managed_credential_reference or credential_reference_list_returns_managed"` passed with 2 tests and 120 deselected.
+- Focused managed credential provider gate: `python -m pytest tests\test_provider_runtime.py -q -k "managed_env_credential_reference or managed_external_process"` passed with 2 tests and 123 deselected.
+- Combined credential/provider/settings gate: `python -m pytest tests\test_managed_settings.py tests\test_auth.py tests\test_provider_runtime.py -q -k "credential_reference or credential or managed_settings"` passed with 96 tests and 215 deselected.
+- Affected suite gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_auth.py tests\test_provider_runtime.py tests\test_api.py --maxfail=1 -x` with 521 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,237 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009ap Guarded Web Retrieval Fetch Runtime
 
 Status: completed for the scoped guarded web retrieval fetch runtime slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

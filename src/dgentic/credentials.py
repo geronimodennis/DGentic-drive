@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import LogEventType
-from dgentic.settings import Settings, get_settings
+from dgentic.settings import Settings, get_settings, managed_credential_references
 from dgentic.storage import JsonCollection
 
 CREDENTIAL_ENV_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -23,6 +23,7 @@ CREDENTIAL_ADAPTER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 CREDENTIAL_SECRET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.:/@-]{1,200}$")
 CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES = 64 * 1024
 CredentialSourceType = Literal["env", "external_process", "local_vault"]
+CredentialReferenceSource = Literal["local", "managed"]
 
 
 class CredentialReferenceError(RuntimeError):
@@ -100,6 +101,7 @@ class CredentialReferenceRecord(BaseModel):
     label: str = ""
     purpose: Literal["provider", "runtime"] = "provider"
     status: Literal["active", "revoked"] = "active"
+    source: CredentialReferenceSource = "local"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     revoked_at: datetime | None = None
@@ -141,6 +143,8 @@ class CredentialReferenceRecord(BaseModel):
             adapter_id=self.adapter_id,
             secret_name=self.secret_name,
         )
+        if self.source == "managed" and self.source_type == "local_vault":
+            raise ValueError("Managed credential references cannot use local_vault.")
         if self.source_type == "local_vault":
             if not self.encrypted_secret:
                 raise ValueError("encrypted_secret is required for local_vault credentials.")
@@ -167,6 +171,7 @@ class CredentialReferenceView(BaseModel):
     label: str = ""
     purpose: Literal["provider", "runtime"]
     status: Literal["active", "revoked"]
+    source: CredentialReferenceSource = "local"
     created_at: datetime
     updated_at: datetime
     revoked_at: datetime | None = None
@@ -214,13 +219,31 @@ def create_credential_reference(
         created_at=now,
         updated_at=now,
     )
-    saved = _credential_references.upsert(record)
+    if _managed_credential_reference_by_id(record.id) is not None:
+        raise PermissionError("Credential reference id is managed.")
+
+    def persist_local_record(
+        items: list[CredentialReferenceRecord],
+    ) -> tuple[list[CredentialReferenceRecord], CredentialReferenceRecord]:
+        local_items = _local_persisted_credential_records(items)
+        updated_items = [item for item in local_items if item.id != record.id]
+        updated_items.append(record)
+        return updated_items, record
+
+    saved = _credential_references.transact(persist_local_record)
     _record_credential_event("Created credential reference.", saved, actor=actor)
     return _credential_reference_view(saved)
 
 
 def list_credential_references() -> list[CredentialReferenceView]:
-    return [_credential_reference_view(record) for record in _credential_references.list()]
+    managed_records = _managed_credential_reference_records()
+    managed_ids = {record.id for record in managed_records}
+    local_records = [
+        record
+        for record in _local_persisted_credential_records(_credential_references.list())
+        if record.id not in managed_ids
+    ]
+    return [_credential_reference_view(record) for record in [*managed_records, *local_records]]
 
 
 def revoke_credential_reference(
@@ -229,6 +252,8 @@ def revoke_credential_reference(
     actor: str | None = None,
 ) -> CredentialReferenceView:
     now = datetime.now(UTC)
+    if _managed_credential_reference_by_id(credential_ref_id) is not None:
+        raise PermissionError("Managed credential references are read-only.")
 
     def revoke(record: CredentialReferenceRecord) -> CredentialReferenceRecord:
         if record.status == "revoked":
@@ -236,7 +261,19 @@ def revoke_credential_reference(
         return record.model_copy(update={"status": "revoked", "revoked_at": now, "updated_at": now})
 
     try:
-        saved = _credential_references.update(credential_ref_id, revoke)
+
+        def revoke_local_record(
+            items: list[CredentialReferenceRecord],
+        ) -> tuple[list[CredentialReferenceRecord], CredentialReferenceRecord]:
+            local_items = _local_persisted_credential_records(items)
+            for index, record in enumerate(local_items):
+                if record.id == credential_ref_id:
+                    saved_record = revoke(record)
+                    local_items[index] = saved_record
+                    return local_items, saved_record
+            raise KeyError(f"Credential reference not found: {credential_ref_id}")
+
+        saved = _credential_references.transact(revoke_local_record)
     except KeyError as exc:
         raise KeyError(f"Credential reference not found: {credential_ref_id}") from exc
     _record_credential_event("Revoked credential reference.", saved, actor=actor)
@@ -260,7 +297,7 @@ def rotate_local_vault_credential_references(
         rotated_count = 0
         skipped_count = 0
         updated_items: list[CredentialReferenceRecord] = []
-        for record in items:
+        for record in _local_persisted_credential_records(items):
             if record.source_type != "local_vault":
                 skipped_count += 1
                 updated_items.append(record)
@@ -379,6 +416,7 @@ def _credential_reference_view(record: CredentialReferenceRecord) -> CredentialR
         label=_redact_credential_label(record.label),
         purpose=record.purpose,
         status=record.status,
+        source=record.source,
         created_at=record.created_at,
         updated_at=record.updated_at,
         revoked_at=record.revoked_at,
@@ -435,7 +473,9 @@ def _credential_reference_for_use(
     *,
     purpose: Literal["provider", "runtime"] | None,
 ) -> CredentialReferenceRecord:
-    record = _credential_references.get(credential_ref_id)
+    record = _managed_credential_reference_by_id(credential_ref_id)
+    if record is None:
+        record = _local_credential_reference_by_id(credential_ref_id)
     if record is None:
         raise KeyError(f"Credential reference not found: {credential_ref_id}")
     if record.status != "active":
@@ -469,6 +509,42 @@ def _validate_source_fields(
             raise ValueError("Invalid credential source fields.")
         return
     raise ValueError("Credential reference source_type is not supported.")
+
+
+def _managed_credential_reference_records() -> tuple[CredentialReferenceRecord, ...]:
+    return tuple(managed_credential_references())
+
+
+def _managed_credential_reference_by_id(
+    credential_ref_id: str,
+) -> CredentialReferenceRecord | None:
+    return next(
+        (
+            record
+            for record in _managed_credential_reference_records()
+            if record.id == credential_ref_id
+        ),
+        None,
+    )
+
+
+def _local_credential_reference_by_id(
+    credential_ref_id: str,
+) -> CredentialReferenceRecord | None:
+    return next(
+        (
+            record
+            for record in _local_persisted_credential_records(_credential_references.list())
+            if record.id == credential_ref_id
+        ),
+        None,
+    )
+
+
+def _local_persisted_credential_records(
+    records: list[CredentialReferenceRecord],
+) -> list[CredentialReferenceRecord]:
+    return [record for record in records if record.source != "managed"]
 
 
 def _encrypt_local_vault_secret(secret_value: str, *, settings: Settings | None = None) -> str:

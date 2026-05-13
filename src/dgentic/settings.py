@@ -27,6 +27,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "external_openai_compatible_base_url",
         "external_openai_compatible_credential_ref",
         "external_openai_compatible_models",
+        "managed_credential_references",
         "lm_studio_base_url",
         "managed_cli_policy_rules",
         "managed_command_recipes",
@@ -54,6 +55,7 @@ _MANAGED_SETTINGS_MAX_BYTES = 256 * 1024
 _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
+        "managed_credential_references",
         "managed_cli_policy_rules",
         "managed_command_recipes",
         "managed_hook_policy_rules",
@@ -92,6 +94,20 @@ _MANAGED_COMMAND_RECIPE_ALLOWED_FIELDS = frozenset(
         "parameters",
         "tags",
         "enabled",
+    }
+)
+_MANAGED_CREDENTIAL_REFERENCE_MAX_COUNT = 100
+_MANAGED_CREDENTIAL_REFERENCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
+_MANAGED_CREDENTIAL_REFERENCE_ALLOWED_FIELDS = frozenset(
+    {
+        "id",
+        "source_type",
+        "env_var",
+        "adapter_id",
+        "secret_name",
+        "label",
+        "purpose",
+        "status",
     }
 )
 _MANAGED_HOOK_POLICY_RULE_MAX_COUNT = 100
@@ -157,6 +173,7 @@ _SECRET_SETTINGS_FIELDS = frozenset(
         "credential_vault_key",
         "external_openai_compatible_api_key_env",
         "external_openai_compatible_credential_ref",
+        "managed_credential_references",
     }
 )
 
@@ -201,6 +218,7 @@ class Settings(BaseSettings):
     external_openai_compatible_api_key_env: str = ""
     external_openai_compatible_credential_ref: str = ""
     external_openai_compatible_models: str = ""
+    managed_credential_references: str = ""
     credential_vault_key: str = ""
     credential_process_adapters: str = ""
     credential_process_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
@@ -339,6 +357,13 @@ def managed_command_recipes():
     return _parse_managed_command_recipes(get_settings().managed_command_recipes)
 
 
+def managed_credential_references():
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_credential_references") != "managed":
+        return tuple()
+    return _parse_managed_credential_references(get_settings().managed_credential_references)
+
+
 def managed_hook_policy_rules():
     metadata = get_settings_source_metadata()
     if metadata.sources.get("managed_hook_policy_rules") != "managed":
@@ -461,6 +486,9 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
             _parse_managed_cli_policy_rules(value)
         if key == "managed_command_recipes":
             _parse_managed_command_recipes(value)
+        if key == "managed_credential_references":
+            _parse_managed_credential_references(value)
+            continue
         if key == "managed_hook_policy_rules":
             _parse_managed_hook_policy_rules(value)
         if key == "managed_plugin_component_records":
@@ -647,6 +675,91 @@ def _parse_managed_command_recipes(raw_value: str):
             )
         )
     return tuple(recipes)
+
+
+def _parse_managed_credential_references(raw_value: str):
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_credential_references must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_credential_references must be a list.")
+    if len(parsed) > _MANAGED_CREDENTIAL_REFERENCE_MAX_COUNT:
+        raise ManagedSettingsError("managed_credential_references declares too many records.")
+
+    from dgentic.credentials import CredentialReferenceRecord
+
+    records: list[CredentialReferenceRecord] = []
+    seen_ids: set[str] = set()
+    required_fields = {"id", "source_type", "purpose", "status"}
+    for raw_record in parsed:
+        if not isinstance(raw_record, dict):
+            raise ManagedSettingsError("managed_credential_references entries must be objects.")
+        normalized_record: dict[str, Any] = {}
+        for raw_key, value in raw_record.items():
+            key = _normalize_managed_settings_key(str(raw_key))
+            if key in normalized_record:
+                raise ManagedSettingsError(f"Duplicate managed credential reference field: {key}")
+            normalized_record[key] = value
+        unknown_fields = sorted(
+            set(normalized_record) - _MANAGED_CREDENTIAL_REFERENCE_ALLOWED_FIELDS
+        )
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed credential reference field: {unknown_fields[0]}"
+            )
+        missing_fields = sorted(required_fields - set(normalized_record))
+        if missing_fields:
+            raise ManagedSettingsError(
+                f"Managed credential reference field is required: {missing_fields[0]}"
+            )
+
+        record_id = normalized_record.get("id")
+        if not isinstance(record_id, str) or not _MANAGED_CREDENTIAL_REFERENCE_ID_RE.fullmatch(
+            record_id
+        ):
+            raise ManagedSettingsError("Managed credential reference id is invalid.")
+        if redact_sensitive_values(record_id) != record_id:
+            raise ManagedSettingsError("Managed credential reference id is invalid.")
+        if record_id in seen_ids:
+            raise ManagedSettingsError(f"Duplicate managed credential reference id: {record_id}")
+        seen_ids.add(record_id)
+
+        source_type = normalized_record.get("source_type")
+        if source_type not in {"env", "external_process"}:
+            raise ManagedSettingsError("Managed credential reference source_type is invalid.")
+
+        _validate_managed_credential_reference_metadata(normalized_record)
+
+        try:
+            record = CredentialReferenceRecord.model_validate(
+                {
+                    **normalized_record,
+                    "source": "managed",
+                    "created_at": _MANAGED_RULE_TIMESTAMP,
+                    "updated_at": _MANAGED_RULE_TIMESTAMP,
+                    "revoked_at": None,
+                    "encrypted_secret": "",
+                }
+            )
+        except ValueError as exc:
+            raise ManagedSettingsError("Managed credential reference is invalid.") from exc
+        records.append(record)
+    return tuple(records)
+
+
+def _validate_managed_credential_reference_metadata(record: dict[str, Any]) -> None:
+    for field_name in ("id", "env_var", "adapter_id", "secret_name", "label"):
+        value = record.get(field_name)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ManagedSettingsError("Managed credential reference metadata is invalid.")
+        if redact_sensitive_values(value.strip()) != value.strip():
+            raise ManagedSettingsError("Managed credential reference contains secret-shaped text.")
 
 
 def _parse_managed_hook_policy_rules(raw_value: str):

@@ -142,6 +142,25 @@ Deployment-owned command recipes can be published through `managed_command_recip
 }
 ```
 
+Deployment-owned credential references can be published through `managed_credential_references`. Managed credential references are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, support `env` and `external_process` source metadata, are listed by `GET /credentials/references` with `source: "managed"`, can be used anywhere a credential reference id is accepted, and are never written to `credential-references.json`. Local rows with the same id are shadowed, local rows that spoof `source: "managed"` are ignored, and managed ids cannot be revoked through the local credential API:
+
+```json
+{
+  "settings": {
+    "managed_credential_references": [
+      {
+        "id": "managed.provider-key",
+        "source_type": "env",
+        "env_var": "OPENAI_API_KEY",
+        "label": "Managed provider key",
+        "purpose": "provider",
+        "status": "active"
+      }
+    ]
+  }
+}
+```
+
 Managed settings can also pin plugin trust to exact manifest digests through `managed_plugin_trust_records`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, reported with `trust_source: "managed"` by `GET /plugins`, override local `plugin-trust.json` records for the same plugin id, reject local trust mutation as read-only, and become `stale` when the manifest bytes change:
 
 ```json
@@ -626,7 +645,7 @@ curl -X POST http://127.0.0.1:8000/guardrails/network `
   -d '{"url":"https://provider.example.test/v1/chat/completions"}'
 ```
 
-The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS`, and either `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV` or `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. Credential references can store an external location, such as an environment variable name or a configured `external_process` adapter id plus secret name, or local vault ciphertext encrypted with the operator-supplied `DGENTIC_CREDENTIAL_VAULT_KEY`. The actual API key value is sent only as an outbound Authorization header after pricing, configuration, circuit-breaker, and approval gates allow transport. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`; staging/production requests need a single-use bound `approval_id`.
+The OpenAI-compatible external adapter is disabled until `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL`, `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS`, and either `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV` or `DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF` are configured. The external base URL must use HTTPS because the adapter sends a bearer credential. Credential references can store an external location, such as an environment variable name or a configured `external_process` adapter id plus secret name, or local vault ciphertext encrypted with the operator-supplied `DGENTIC_CREDENTIAL_VAULT_KEY`; deployment-managed env and external-process references can provide the same ids without local persistence. The actual API key value is sent only as an outbound Authorization header after pricing, configuration, circuit-breaker, and approval gates allow transport. Direct external generation is approval-required: development/test smoke checks can include `"approved": true`; staging/production requests need a single-use bound `approval_id`.
 
 External process credential adapters are disabled by default. When configured with `DGENTIC_CREDENTIAL_PROCESS_ADAPTERS`, DGentic runs the fixed adapter argv without a shell, appends the credential reference `secret_name`, closes stdin, uses a minimal inherited environment, enforces timeout and output-size limits, and rejects stderr, non-zero exit, empty, multiline, or oversized output. This is adapter plumbing for externally managed secret systems, not encrypted local vaulting.
 
@@ -879,7 +898,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, and shell-free external-process sources, provider-call network/domain guardrails, guarded web retrieval fetch runtime, bound filesystem approval records, generated-tool Python socket network policy guardrails with bound network approval consumption, plugin manifest trust controls, managed policy surface locks, managed-source CLI and hook-policy rule precedence, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, managed policy-source controls beyond CLI/hook policy rules, and OS-level egress isolation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, shell-free external-process sources, and deployment-managed credential references, provider-call network/domain guardrails, guarded web retrieval fetch runtime, bound filesystem approval records, generated-tool Python socket network policy guardrails with bound network approval consumption, plugin manifest trust controls, managed policy surface locks, managed-source credential/CLI/hook/command-recipe/plugin records, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, first-class secret-manager adapters, and OS-level egress isolation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential reference or env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while vault key rotation, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters remain future work.

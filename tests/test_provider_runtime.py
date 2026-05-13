@@ -1071,6 +1071,152 @@ def test_external_generation_uses_configured_credential_reference(
     get_settings.cache_clear()
 
 
+def test_external_generation_uses_managed_env_credential_reference_without_local_state_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "state"
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_credential_references": [
+                        {
+                            "id": "managed.provider-key",
+                            "source_type": "env",
+                            "env_var": "DGENTIC_MANAGED_REF_EXTERNAL_API_KEY",
+                            "label": "Managed external provider",
+                            "purpose": "provider",
+                            "status": "active",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", "managed.provider-key")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_MANAGED_REF_EXTERNAL_API_KEY",
+        value="managed-reference-secret",
+    )
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeResponse(lm_studio_response("Hello from managed credential."))
+
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+
+    result = generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+    approval_storage = (data_dir / "provider-approvals.json").read_text(encoding="utf-8")
+    credential_storage_path = data_dir / "credential-references.json"
+    serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
+
+    assert result.content == "Hello from managed credential."
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer managed-reference-secret",
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert tracked_credentials.calls == ["DGENTIC_MANAGED_REF_EXTERNAL_API_KEY"]
+    assert "managed-reference-secret" not in approval_storage
+    assert "managed-reference-secret" not in serialized_event
+    if credential_storage_path.exists():
+        credential_storage = credential_storage_path.read_text(encoding="utf-8")
+        assert "managed.provider-key" not in credential_storage
+        assert "managed-reference-secret" not in credential_storage
+    get_settings.cache_clear()
+
+
+def test_managed_external_process_credential_reference_resolves_without_local_state_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    adapter_script, marker_path = write_process_credential_adapter(
+        tmp_path,
+        "import pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')\n"
+        "print('managed-process-secret')\n",
+    )
+    data_dir = tmp_path / "state"
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_credential_references": [
+                        {
+                            "id": "managed.process-key",
+                            "source_type": "external_process",
+                            "adapter_id": "process-vault",
+                            "secret_name": "providers/openai",
+                            "purpose": "provider",
+                            "status": "active",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_PROCESS_ADAPTERS",
+        json.dumps(
+            {
+                "process-vault": {
+                    "argv": [sys.executable, adapter_script, str(marker_path)],
+                }
+            }
+        ),
+    )
+    get_settings.cache_clear()
+
+    secret = credential_secret_for_reference("managed.process-key", purpose="provider")
+    credential_storage_path = data_dir / "credential-references.json"
+
+    assert secret == "managed-process-secret"
+    assert marker_path.read_text(encoding="utf-8") == "providers/openai"
+    assert not credential_storage_path.exists()
+    assert "managed-process-secret" not in managed_path.read_text(encoding="utf-8")
+    get_settings.cache_clear()
+
+
 def test_env_credential_reference_respects_explicit_sanitized_environ(
     tmp_path,
     monkeypatch,

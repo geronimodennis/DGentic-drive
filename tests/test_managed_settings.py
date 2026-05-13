@@ -13,6 +13,7 @@ from dgentic.settings import (
     get_settings,
     managed_cli_policy_rules,
     managed_command_recipes,
+    managed_credential_references,
     managed_hook_policy_rules,
     managed_plugin_component_records,
     managed_plugin_trust_records,
@@ -249,6 +250,79 @@ def test_managed_plugin_component_records_apply_only_from_managed_settings(
     assert records[0].installed_by == "managed"
 
 
+def test_managed_credential_reference_records_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_CREDENTIAL_REFERENCES",
+        json.dumps(
+            [
+                {
+                    "id": "env.credential",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_ENV_IGNORED",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ]
+        ),
+    )
+
+    assert managed_credential_references() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_credential_references": [
+                    {
+                        "id": "managed.provider-env",
+                        "source_type": "env",
+                        "env_var": "DGENTIC_MANAGED_PROVIDER_KEY",
+                        "label": "Managed provider key",
+                        "purpose": "provider",
+                        "status": "active",
+                    },
+                    {
+                        "id": "managed.runtime-process",
+                        "source_type": "external_process",
+                        "adapter_id": "platform-vault",
+                        "secret_name": "runtime/worker",
+                        "purpose": "runtime",
+                        "status": "revoked",
+                    },
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    records = managed_credential_references()
+
+    assert json.loads(settings.managed_credential_references)[0]["id"] == "managed.provider-env"
+    assert fields["managed_credential_references"].source == "managed"
+    assert fields["managed_credential_references"].redacted is True
+    assert view.managed_fields == ["managed_credential_references"]
+    assert [record.id for record in records] == [
+        "managed.provider-env",
+        "managed.runtime-process",
+    ]
+    assert records[0].source == "managed"
+    assert records[0].source_type == "env"
+    assert records[0].env_var == "DGENTIC_MANAGED_PROVIDER_KEY"
+    assert records[0].label == "Managed provider key"
+    assert records[1].source == "managed"
+    assert records[1].source_type == "external_process"
+    assert records[1].adapter_id == "platform-vault"
+    assert records[1].secret_name == "runtime/worker"
+
+
 @pytest.mark.parametrize(
     ("records_payload", "error_match"),
     [
@@ -459,6 +533,136 @@ def test_managed_plugin_component_records_fail_closed(
     managed_path, _raw_payload = _write_managed_settings(
         tmp_path,
         {"settings": {"managed_plugin_component_records": records_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
+
+
+@pytest.mark.parametrize(
+    ("records_payload", "error_match"),
+    [
+        ({"id": "not-a-list"}, "must be a list"),
+        (
+            [
+                {
+                    "id": "managed.bad",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_KEY",
+                    "purpose": "provider",
+                    "status": "active",
+                    "unknown": True,
+                }
+            ],
+            "Unknown managed credential reference field",
+        ),
+        (
+            [
+                {
+                    "id": "managed.duplicate",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_ONE",
+                    "purpose": "provider",
+                    "status": "active",
+                },
+                {
+                    "id": "managed.duplicate",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_TWO",
+                    "purpose": "provider",
+                    "status": "active",
+                },
+            ],
+            "Duplicate managed credential reference id",
+        ),
+        (
+            [
+                {
+                    "id": "managed.invalid-env",
+                    "source_type": "env",
+                    "env_var": "not a safe env",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "Managed credential reference is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "managed.mix",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_KEY",
+                    "adapter_id": "vault",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "Managed credential reference is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "managed.secret-label",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_KEY",
+                    "label": "TOKEN=raw-secret",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "secret-shaped",
+        ),
+        (
+            [
+                {
+                    "id": "managed.secret-name",
+                    "source_type": "external_process",
+                    "adapter_id": "vault",
+                    "secret_name": "TOKEN=raw-secret",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "secret-shaped",
+        ),
+        (
+            [
+                {
+                    "id": "managed.local-vault",
+                    "source_type": "local_vault",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "source_type is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "managed.raw-secret",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_KEY",
+                    "purpose": "provider",
+                    "status": "active",
+                    "secret_value": "raw-secret",
+                }
+            ],
+            "Unknown managed credential reference field",
+        ),
+    ],
+)
+def test_managed_credential_reference_records_fail_closed(
+    tmp_path,
+    monkeypatch,
+    records_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_credential_references": records_payload}},
     )
     monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
 

@@ -154,6 +154,12 @@ def credential_state_records(tmp_path) -> list[dict[str, object]]:
     return json.loads(credential_state_text(tmp_path))
 
 
+def write_managed_settings(tmp_path, payload: dict) -> Path:
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(json.dumps(payload), encoding="utf-8")
+    return managed_path
+
+
 def create_credential_reference_api(
     client: TestClient,
     auth_token: str,
@@ -1336,6 +1342,75 @@ def test_external_process_credential_reference_lifecycle_is_metadata_only(
     assert "external-process-secret" not in state_text
 
 
+def test_credential_reference_list_returns_managed_and_local_sources_without_secret_echo(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_MANAGED_PROVIDER_KEY", "managed-provider-secret")
+    managed_path = write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_credential_references": [
+                    {
+                        "id": "managed.provider-key",
+                        "source_type": "env",
+                        "env_var": "DGENTIC_MANAGED_PROVIDER_KEY",
+                        "label": "Managed provider",
+                        "purpose": "provider",
+                        "status": "active",
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-task", ["tasks"])
+    create_operator(client, "operator-credential", ["credentials"])
+    task_token = issue_auth_token(client, "operator-task", ["tasks"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    forbidden_create = client.post(
+        "/credentials/references",
+        headers=bearer(task_token["token"]),
+        json={"env_var": "DGENTIC_LOCAL_PROVIDER_KEY", "label": "local provider"},
+    )
+    local_create = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={"env_var": "DGENTIC_LOCAL_PROVIDER_KEY", "label": "local provider"},
+    )
+    unauthenticated_list = client.get("/credentials/references")
+    forbidden_list = client.get("/credentials/references", headers=bearer(task_token["token"]))
+    allowed_list = client.get(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+    )
+    managed_revoke = client.post(
+        "/credentials/references/managed.provider-key/revoke",
+        headers=bearer(credential_token["token"]),
+    )
+    state_text = credential_state_text(tmp_path)
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+    serialized = "\n".join([local_create.text, allowed_list.text, state_text, logs])
+
+    assert forbidden_create.status_code == 403
+    assert local_create.status_code == 201
+    assert unauthenticated_list.status_code == 401
+    assert forbidden_list.status_code == 403
+    assert allowed_list.status_code == 200
+    assert managed_revoke.status_code == 403
+    references = {item["id"]: item for item in allowed_list.json()}
+    assert references["managed.provider-key"]["source"] == "managed"
+    assert references["managed.provider-key"]["env_var"] == "DGENTIC_MANAGED_PROVIDER_KEY"
+    assert references[local_create.json()["id"]]["source"] == "local"
+    assert "managed.provider-key" not in state_text
+    assert "managed-provider-secret" not in serialized
+
+
 def test_local_vault_credential_reference_lifecycle_encrypts_secret(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1787,6 +1862,102 @@ def test_legacy_credential_reference_label_is_redacted_on_load_and_mutation(
     assert "legacy-credential-secret" not in serialized
     assert "legacy-env-secret" not in serialized
     assert "[REDACTED]" in serialized
+
+
+def test_managed_credential_reference_shadows_local_id_and_ignores_spoofed_local_source(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    data_dir.mkdir()
+    now = datetime.now(UTC).isoformat()
+    managed_path = write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_credential_references": [
+                    {
+                        "id": "managed.provider-key",
+                        "source_type": "env",
+                        "env_var": "DGENTIC_MANAGED_PROVIDER_KEY",
+                        "label": "Managed provider",
+                        "purpose": "provider",
+                        "status": "active",
+                    }
+                ]
+            }
+        },
+    )
+    (data_dir / "credential-references.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "managed.provider-key",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_LOCAL_COLLISION_KEY",
+                    "label": "local collision",
+                    "purpose": "provider",
+                    "status": "active",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "id": "spoofed.local-managed",
+                    "source_type": "env",
+                    "env_var": "DGENTIC_SPOOFED_KEY",
+                    "label": "spoofed managed",
+                    "purpose": "provider",
+                    "status": "active",
+                    "source": "managed",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", "bootstrap-token=admin")
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    list_response = client.get("/credentials/references", headers=bearer("bootstrap-token"))
+    managed_revoke = client.post(
+        "/credentials/references/managed.provider-key/revoke",
+        headers=bearer("bootstrap-token"),
+    )
+    spoofed_revoke = client.post(
+        "/credentials/references/spoofed.local-managed/revoke",
+        headers=bearer("bootstrap-token"),
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.json() == [
+        {
+            "id": "managed.provider-key",
+            "source_type": "env",
+            "env_var": "DGENTIC_MANAGED_PROVIDER_KEY",
+            "adapter_id": "",
+            "secret_name": "",
+            "label": "Managed provider",
+            "purpose": "provider",
+            "status": "active",
+            "source": "managed",
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "revoked_at": None,
+        }
+    ]
+    assert credential_env_for_reference("managed.provider-key") == "DGENTIC_MANAGED_PROVIDER_KEY"
+    with pytest.raises(KeyError):
+        credential_env_for_reference("spoofed.local-managed")
+    assert managed_revoke.status_code == 403
+    assert spoofed_revoke.status_code == 404
 
 
 def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(

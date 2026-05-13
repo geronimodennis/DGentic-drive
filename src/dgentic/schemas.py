@@ -663,6 +663,18 @@ class FileAccessRequest(AgentActionContext):
     target_path: Path | None = None
 
 
+class FileApprovalRequest(AgentActionContext):
+    path: Path
+    action: FileAction
+    target_path: Path | None = None
+    content: str | None = None
+    content_base64: str | None = None
+    recursive: bool = False
+    overwrite: bool = False
+    create_parent_dirs: bool = True
+    requested_by: str | None = Field(default=None, max_length=256)
+
+
 class FileAccessDecision(BaseModel):
     path: Path
     resolved_path: Path
@@ -698,6 +710,7 @@ class NetworkPolicyDecision(BaseModel):
 
 class FileReadRequest(AgentActionContext):
     path: Path
+    approval_id: str | None = None
 
 
 class FileReadResponse(BaseModel):
@@ -710,6 +723,7 @@ class FileWriteRequest(AgentActionContext):
     path: Path
     content: str
     create_parent_dirs: bool = True
+    approval_id: str | None = None
 
 
 class FileWriteResponse(BaseModel):
@@ -719,6 +733,7 @@ class FileWriteResponse(BaseModel):
 
 class FileBinaryReadRequest(AgentActionContext):
     path: Path
+    approval_id: str | None = None
 
 
 class FileBinaryReadResponse(BaseModel):
@@ -731,12 +746,14 @@ class FileBinaryWriteRequest(AgentActionContext):
     path: Path
     content_base64: str
     create_parent_dirs: bool = True
+    approval_id: str | None = None
 
 
 class FileDeleteRequest(AgentActionContext):
     path: Path
     recursive: bool = False
     approved: bool = False
+    approval_id: str | None = None
 
 
 class FileDeleteResponse(BaseModel):
@@ -749,6 +766,7 @@ class FileMoveRequest(AgentActionContext):
     target_path: Path
     overwrite: bool = False
     approved: bool = False
+    approval_id: str | None = None
 
 
 class FileMoveResponse(BaseModel):
@@ -763,6 +781,7 @@ class FileCopyRequest(AgentActionContext):
     overwrite: bool = False
     recursive: bool = False
     approved: bool = False
+    approval_id: str | None = None
 
 
 class FileCopyResponse(BaseModel):
@@ -777,6 +796,7 @@ class FileRenameRequest(AgentActionContext):
     new_name: str
     overwrite: bool = False
     approved: bool = False
+    approval_id: str | None = None
 
     @field_validator("new_name")
     @classmethod
@@ -795,6 +815,7 @@ class FileRenameResponse(BaseModel):
 
 class FileMetadataRequest(AgentActionContext):
     path: Path
+    approval_id: str | None = None
 
 
 class FileMetadataResponse(BaseModel):
@@ -807,6 +828,7 @@ class FileMetadataResponse(BaseModel):
 
 class FileListRequest(AgentActionContext):
     path: Path = Field(default_factory=lambda: Path("."))
+    approval_id: str | None = None
 
 
 class FileListEntry(FileMetadataResponse):

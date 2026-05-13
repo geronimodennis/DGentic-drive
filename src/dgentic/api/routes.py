@@ -65,11 +65,20 @@ from dgentic.credentials import (
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.guardrails import (
+    FileApproval,
+    FileApprovalRequiredError,
+    FileApprovalReview,
+    FileApprovalStatus,
+    approve_file_approval,
     copy_guarded_path,
+    create_file_approval,
     delete_guarded_path,
+    deny_file_approval,
     evaluate_command_policy,
     evaluate_file_access,
+    get_file_approval_review,
     get_guarded_path_metadata,
+    list_file_approvals,
     list_guarded_directory,
     move_guarded_path,
     read_guarded_binary_file,
@@ -153,6 +162,7 @@ from dgentic.schemas import (
     CommandPolicyRuleUpdate,
     FileAccessDecision,
     FileAccessRequest,
+    FileApprovalRequest,
     FileBinaryReadRequest,
     FileBinaryReadResponse,
     FileBinaryWriteRequest,
@@ -799,6 +809,75 @@ def check_filesystem_access(payload: FileAccessRequest, request: Request) -> Fil
     return evaluate_file_access(payload, actor=_principal_actor(request))
 
 
+@router.post("/filesystem/approvals", response_model=FileApproval, status_code=201)
+def create_filesystem_approval(
+    payload: FileApprovalRequest,
+    request: Request,
+) -> FileApproval:
+    try:
+        return create_file_approval(
+            payload,
+            requested_by=_approval_requester(request, payload.requested_by),
+        )
+    except (FileApprovalRequiredError, PermissionError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/filesystem/approvals", response_model=list[FileApproval])
+def get_filesystem_approvals(
+    status: FileApprovalStatus | None = None,
+) -> list[FileApproval]:
+    return list_file_approvals(status)
+
+
+@router.get("/filesystem/approvals/{approval_id}/review", response_model=FileApprovalReview)
+def review_filesystem_approval(approval_id: str) -> FileApprovalReview:
+    try:
+        return get_file_approval_review(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/approvals/{approval_id}/approve", response_model=FileApproval)
+def approve_filesystem_approval(
+    approval_id: str,
+    decision: CommandApprovalDecisionRequest,
+    request: Request,
+) -> FileApproval:
+    try:
+        return approve_file_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/filesystem/approvals/{approval_id}/deny", response_model=FileApproval)
+def deny_filesystem_approval(
+    approval_id: str,
+    decision: CommandApprovalDecisionRequest,
+    request: Request,
+) -> FileApproval:
+    try:
+        return deny_file_approval(
+            approval_id,
+            decided_by=_approval_decider(request, decision.decided_by),
+            reason=decision.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/filesystem/read", response_model=FileReadResponse)
 def read_file(payload: FileReadRequest, request: Request) -> FileReadResponse:
     try:
@@ -806,7 +885,8 @@ def read_file(payload: FileReadRequest, request: Request) -> FileReadResponse:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
+        status_code = 413 if "maximum filesystem payload size" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except (IsADirectoryError, PermissionError) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -818,7 +898,8 @@ def write_file(payload: FileWriteRequest, request: Request) -> FileWriteResponse
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
+        status_code = 413 if "maximum filesystem payload size" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -830,7 +911,8 @@ def read_binary_file(payload: FileBinaryReadRequest, request: Request) -> FileBi
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
+        status_code = 413 if "maximum filesystem payload size" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except (IsADirectoryError, PermissionError) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -854,6 +936,8 @@ def delete_file(payload: FileDeleteRequest, request: Request) -> FileDeleteRespo
         return delete_guarded_path(payload, actor=_principal_actor(request))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except OSError as exc:
@@ -917,6 +1001,8 @@ def list_directory(payload: FileListRequest, request: Request) -> FileListRespon
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

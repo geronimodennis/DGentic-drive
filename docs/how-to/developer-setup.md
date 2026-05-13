@@ -101,7 +101,7 @@ Invoke-RestMethod `
   -Body '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. Filesystem approval creation and bound filesystem execution use the `filesystem` capability, while filesystem approval list, review, approve, and deny routes use the separate `approvals` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
@@ -236,7 +236,7 @@ Invoke-RestMethod `
   -Body '{"path":"artifacts"}'
 ```
 
-Destructive filesystem operations are approval-gated at the backend contract level. The current MVP endpoint requires an explicit `approved` flag and records audit metadata:
+Destructive filesystem operations are approval-gated at the backend contract level. In `development` and `test`, local smoke checks may still use `approved: true`:
 
 ```powershell
 Invoke-RestMethod `
@@ -244,6 +244,31 @@ Invoke-RestMethod `
   -Uri http://127.0.0.1:8000/filesystem/copy `
   -ContentType "application/json" `
   -Body '{"path":"artifacts/blob.bin","target_path":"artifacts/blob-copy.bin","approved":true}'
+```
+
+In `staging` and `production`, approval-required filesystem operations need a single-use bound `approval_id`. Approval records are persisted in `filesystem-approvals.json` and bind the action, path/target digests, write payload digest when present, source/target state digests, options, requester, agent/task context, orchestration decision, and hook-policy decision:
+
+```powershell
+$approval = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/approvals `
+  -Headers @{ Authorization = "Bearer filesystem-token" } `
+  -ContentType "application/json" `
+  -Body '{"path":"artifacts/blob.bin","target_path":"artifacts/blob-copy.bin","action":"copy","requested_by":"operator"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/filesystem/approvals/$($approval.id)/approve" `
+  -Headers @{ Authorization = "Bearer approval-token" } `
+  -ContentType "application/json" `
+  -Body '{"reason":"Reviewed copy target."}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/filesystem/copy `
+  -Headers @{ Authorization = "Bearer filesystem-token" } `
+  -ContentType "application/json" `
+  -Body ('{"path":"artifacts/blob.bin","target_path":"artifacts/blob-copy.bin","approval_id":"' + $approval.id + '"}')
 ```
 
 ## Use Guarded CLI Execution
@@ -392,7 +417,7 @@ Invoke-RestMethod `
   -Body '{"enabled":false}'
 ```
 
-Configure backend hook policy rules when you need an audited pre-action layer across command, filesystem, or network guardrail decisions. Hook rules are persisted in `hook-policy-rules.json`, evaluated by priority, can match `any`, `exact`, `contains`, or `prefix`, and support `audit`, `approval_required`, or `blocked` effects. Command and network approval-required hook decisions are bound into their existing approval digests and rechecked before execution or network approval claim. Filesystem hook `blocked` decisions enforce immediately; filesystem hook `approval_required` is currently report-only until a bound filesystem approval-record flow exists.
+Configure backend hook policy rules when you need an audited pre-action layer across command, filesystem, or network guardrail decisions. Hook rules are persisted in `hook-policy-rules.json`, evaluated by priority, can match `any`, `exact`, `contains`, or `prefix`, and support `audit`, `approval_required`, or `blocked` effects. Command, filesystem, and network approval-required hook decisions are bound into approval digests and rechecked before execution or approval claim. Filesystem hook `blocked` decisions enforce immediately.
 
 ```powershell
 Invoke-RestMethod `
@@ -749,8 +774,8 @@ uv run ruff format .
 ## Current Limitations
 
 - The planner is deterministic and does not call local or external models yet.
-- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references with supplied-key rotation, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
-- Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, and approval-gated delete/move/copy/rename inside `DGENTIC_ROOT_DIR`, but bound filesystem approval records, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
+- Production/staging auth supports route capability gates, startup fail-closed validation, persisted operator profiles with direct and group-inherited effective capabilities, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted external credential references, encrypted local credential-vault references with supplied-key rotation, shell-free external-process credential resolver adapters, provider-call network/domain guardrails with bound approval records, bound filesystem approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, method-aware CLI/filesystem approval reviewer capability separation, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, and OS-level egress isolation remain follow-up work.
+- Filesystem runtime supports guarded text and binary read/write, directory listing, metadata, approval-gated delete/move/copy/rename, and single-use bound approval records inside `DGENTIC_ROOT_DIR`, but interactive filesystem approval UI, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain follow-up work.
 - CLI execution is policy-enforced and root-bound with configurable and agent-role scoped policy rules, explicit executable path boundary checks, configured-safe command path-argument checks, nested shell startup-hardening checks, bare executable workspace/PATH trust checks, single-use bound approval IDs, reviewer operations behind the separate `approvals` capability, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, failed launch run records for claimed synchronous approvals, asynchronous status/output polling, stale-running reconciliation, process-local cancellation, conservative post-restart orphan termination for matching prior-supervisor processes, controlled environment overrides with startup/preload injection blocking, and context audit metadata, but there is no interactive approval UI, full process adoption/resumable output after restart, or production multi-worker lease supervision yet.
 - Ollama and LM Studio can be probed and called for chat generation through exact allowlisted endpoints with redirect blocking, bounded request/payload validation, bounded retry/backoff, in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, NDJSON streaming, and optional role-to-provider/model routing preferences. The OpenAI-compatible external adapter can call and stream a configured model allowlist using an HTTPS-only external credential reference, local encrypted vault reference, shell-free external-process credential adapter, or env-var fallback and an explicit development/test approval flag or staging/production bound provider approval ID, with optional exact provider/model pricing for advisory usage and routing estimates; it defers API-key/header resolution on fail-fast approval, configuration, pricing, and circuit paths, but vault key rotation, durable multi-worker circuit state, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters are not implemented yet.
 - Local JSON persistence and SQLite-compatible semantic memory prototypes exist with local SQLite backup/restore helpers, additive lifecycle metadata migrations, lifecycle preview/apply APIs, deterministic metadata compression APIs, a SQLite JSON-vector backend abstraction, retrieval attribution/score explanations, and baseline retrieval performance smoke coverage, but no pgvector production backend, scheduled memory lifecycle/compression job, frontend, or VS Code extension exists yet.

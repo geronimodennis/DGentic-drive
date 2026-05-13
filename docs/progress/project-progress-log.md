@@ -2,6 +2,41 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+## 2026-05-13
+
+### Sprint 15 BL-009w Bound Filesystem Approval Records
+
+Status: completed for the scoped backend filesystem approval-record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, command recipe execution contracts, managed settings precedence, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected bound filesystem approval records as the next bounded Sprint 15 security slice after BL-009v because filesystem hook approval decisions were intentionally report-only until a bound approval flow existed.
+- Completed: Architect/Reviewer mapped the filesystem guardrail, hook-policy, auth capability, and existing CLI/tool/network approval-binding patterns.
+- Completed: Developer added persisted filesystem approval records, approval create/list/review/approve/deny routes, production/staging rejection of the old `approved: true` filesystem bypass, method-aware filesystem approval capability separation, hook-forced filesystem approval enforcement, and HMAC approval binding over action, path/target, payload, source/target state, options, policy, orchestration, hook, actor, and agent/task context.
+- Completed: QA added focused filesystem approval tests for lifecycle, single-use claim, path/target/payload/state drift rejection, hook-forced write approval enforcement, and capability split coverage.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: filesystem approvals persist in `filesystem-approvals.json` and expose safe create/list/review/approve/deny API contracts.
+- Implemented in this slice: approval records store redacted review metadata plus HMAC digests for logical paths, resolved paths, write payloads, source/target state, action options, policy decisions, and approval binding.
+- Implemented in this slice: approval claims are single-use and re-run guardrails before execution; stale approvals fail after path, target, payload, state, hook-policy, orchestration, requester, or agent/task-context drift.
+- Implemented in this slice: filesystem hook `approval_required` decisions now enforce approval for matching filesystem operations instead of remaining report-only.
+- Implemented in this slice: creating filesystem approvals and executing bound filesystem operations use the `filesystem` capability, while list/review/approve/deny use the separate `approvals` capability.
+- Still out of scope after this slice: interactive approval UI, persisted configurable filesystem policy rules, deeper platform-specific locked-file validation, OS-level filesystem isolation, and complete TOCTOU elimination against same-user workspace races.
+
+Validation:
+- Source sanity gate: `python -m ruff check src\dgentic\guardrails.py src\dgentic\api\routes.py src\dgentic\auth.py src\dgentic\schemas.py` and `python -m compileall -q src\dgentic` passed.
+- Focused filesystem approval gate: `python -m pytest -q tests\test_filesystem_approvals.py` passed with 4 tests.
+- Focused auth/hook gate: `python -m pytest -q tests\test_filesystem_approvals.py tests\test_hook_policy.py tests\test_auth.py -k "filesystem or capability_for_request or hook"` passed with 24 tests.
+- Affected broad API/auth/hook gate: `python -m pytest -q tests\test_filesystem_approvals.py tests\test_api.py tests\test_auth.py tests\test_hook_policy.py` passed with 280 tests.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1045 tests and 2 skipped.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+
+Next:
+- Continue Sprint 15 with managed settings precedence, command recipe execution contracts, plugin installation/loading governance, guarded git/PR workflow automation, or another remaining security-hardening slice based on risk.
+
 ## 2026-05-12
 
 ### Sprint 15 BL-009v Hook Policy Foundation

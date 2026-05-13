@@ -463,6 +463,13 @@ def capability_for_request(method: str, path: str) -> str | None:
 
     parts = path.strip("/").split("/")
     normalized_method = method.strip().upper()
+    if len(parts) >= 2 and parts[0] == "filesystem" and parts[1] == "approvals":
+        action = parts[3] if len(parts) >= 4 else ""
+        if action in {"approve", "deny", "review"}:
+            return CAPABILITY_APPROVALS
+        if len(parts) == 2 and normalized_method == "GET":
+            return CAPABILITY_APPROVALS
+        return CAPABILITY_FILESYSTEM
     if len(parts) >= 2 and parts[0] == "cli" and parts[1] == "approvals":
         action = parts[3] if len(parts) >= 4 else ""
         if action in {"approve", "deny", "review"}:

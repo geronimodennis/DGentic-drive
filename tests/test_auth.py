@@ -1917,10 +1917,16 @@ def test_capability_for_path_maps_public_and_sensitive_routes(
         ("POST", "/cli/approvals/approval-1/approve", "approvals"),
         ("POST", "/cli/approvals/approval-1/deny", "approvals"),
         ("POST", "/cli/approvals/approval-1/execute", "cli"),
+        ("POST", "/filesystem/approvals", "filesystem"),
+        ("GET", "/filesystem/approvals", "approvals"),
+        ("GET", "/filesystem/approvals/approval-1/review", "approvals"),
+        ("POST", "/filesystem/approvals/approval-1/approve", "approvals"),
+        ("POST", "/filesystem/approvals/approval-1/deny", "approvals"),
+        ("POST", "/filesystem/delete", "filesystem"),
         ("GET", "/cli/runs", "cli"),
     ],
 )
-def test_capability_for_request_splits_cli_approval_review_from_execution(
+def test_capability_for_request_splits_approval_review_from_execution(
     method: str,
     path: str,
     capability: str | None,

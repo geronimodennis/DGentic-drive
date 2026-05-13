@@ -1923,8 +1923,9 @@ def test_hook_policy_rule_api_reports_filesystem_approval_and_blocks_writes(
 
     assert create_response.status_code == 201
     assert approval_response.status_code == 200
-    assert approval_response.json()["allowed"] is True
-    assert approval_response.json()["permission_mode"] == "autopilot_safe"
+    assert approval_response.json()["allowed"] is False
+    assert approval_response.json()["permission_mode"] == "approval_required"
+    assert approval_response.json()["reason"] == "Review protected path."
     assert approval_response.json()["hook_policy"]["effect"] == "approval_required"
     assert patch_response.status_code == 200
     assert blocked_policy_response.status_code == 200

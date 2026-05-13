@@ -69,6 +69,24 @@ def _checkpoint(
     )
 
 
+def _push_ready_workspace(git_workspace: Path, *, ahead: bool = True) -> Path:
+    remote_dir = git_workspace.parent / "remote.git"
+    current_branch = _git(git_workspace, "branch", "--show-current").stdout.strip()
+    _git(git_workspace.parent, "init", "--bare", str(remote_dir))
+    _git(git_workspace, "remote", "add", "origin", str(remote_dir))
+    _git(git_workspace, "push", "-u", "origin", current_branch)
+    _git(git_workspace, "checkout", "-b", "feature/push-approval")
+    _git(git_workspace, "push", "-u", "origin", "feature/push-approval")
+    if ahead:
+        git_workspace.joinpath("README.md").write_text(
+            "# Checkpoint\n\nPush-ready.\n",
+            encoding="utf-8",
+        )
+        _git(git_workspace, "add", "README.md")
+        _git(git_workspace, "commit", "-m", "Add push-ready change")
+    return remote_dir
+
+
 def test_git_checkpoint_rejects_cwd_outside_root(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     outside_dir = tmp_path / "outside"
@@ -328,6 +346,45 @@ def test_git_commit_approval_rejects_secret_shaped_commit_message(git_workspace)
     assert approvals == []
 
 
+def test_git_commit_approval_revalidates_workflow_state_before_execution(
+    git_workspace,
+) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nApproved staged state.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/cli/git/commit-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "commit_message": "Add workflow-bound commit",
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "Commit checkpoint reviewed."},
+    )
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nDifferent staged state.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+
+    execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "no longer matches current repository state" in execute_response.json()["detail"]
+    assert review_response.json()["status"] == "approved"
+
+
 def test_git_commit_approval_api_uses_cli_capability_and_authenticated_principal(
     tmp_path,
     monkeypatch,
@@ -381,6 +438,218 @@ def test_git_commit_approval_api_uses_cli_capability_and_authenticated_principal
         json={
             "checkpoint_digest": checkpoint.checkpoint_digest,
             "commit_message": "Add authenticated approval",
+            "test_evidence": ["pytest -q"],
+            "requested_by": "spoofed-body-actor",
+        },
+    )
+
+    assert wrong_capability.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["requested_by"] == expected_actor
+    get_settings.cache_clear()
+
+
+def test_git_push_approval_api_creates_pending_approval_without_pushing(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace)
+    local_head = _git(git_workspace, "rev-parse", "HEAD").stdout.strip()
+    remote_head_before = _git(
+        git_workspace,
+        "rev-parse",
+        "origin/feature/push-approval",
+    ).stdout.strip()
+    checkpoint = _checkpoint("push", git_workspace, evidence=["python -m pytest -q"])
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["python -m pytest -q"],
+            "requested_by": "qa-agent",
+        },
+    )
+    remote_head_after = _git(
+        git_workspace,
+        "rev-parse",
+        "origin/feature/push-approval",
+    ).stdout.strip()
+
+    assert checkpoint.ready is True
+    assert checkpoint.ahead == 1
+    assert checkpoint.upstream == "origin/feature/push-approval"
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    assert response.json()["permission_mode"] == "approval_required"
+    assert response.json()["command"] == "git push"
+    assert response.json()["workflow_binding"]["action"] == "push"
+    assert response.json()["workflow_binding"]["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert Path(response.json()["cwd"]) == git_workspace.resolve()
+    assert remote_head_before != local_head
+    assert remote_head_after == remote_head_before
+
+
+def test_git_push_approval_rejects_stale_checkpoint_digest(git_workspace) -> None:
+    _push_ready_workspace(git_workspace)
+    checkpoint = _checkpoint("push", git_workspace)
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nAnother local commit.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    _git(git_workspace, "commit", "-m", "Add stale push change")
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approvals = client.get("/cli/approvals").json()
+
+    assert response.status_code == 400
+    assert "fresh matching checkpoint digest" in response.json()["detail"]
+    assert approvals == []
+
+
+def test_git_push_approval_rejects_no_upstream_and_no_ahead(git_workspace) -> None:
+    _git(git_workspace, "checkout", "-b", "feature/no-upstream")
+    no_upstream = _checkpoint("push", git_workspace)
+    client = TestClient(create_app())
+
+    missing_upstream_response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": no_upstream.checkpoint_digest,
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    remote_dir = git_workspace.parent / "remote.git"
+    _git(git_workspace.parent, "init", "--bare", str(remote_dir))
+    _git(git_workspace, "remote", "add", "origin", str(remote_dir))
+    _git(git_workspace, "push", "-u", "origin", "feature/no-upstream")
+    no_ahead = _checkpoint("push", git_workspace)
+
+    no_ahead_response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": no_ahead.checkpoint_digest,
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+
+    assert no_upstream.ready is True
+    assert missing_upstream_response.status_code == 400
+    assert "configured upstream" in missing_upstream_response.json()["detail"]
+    assert no_ahead.ready is True
+    assert no_ahead_response.status_code == 400
+    assert "local commits ahead" in no_ahead_response.json()["detail"]
+
+
+def test_git_push_approval_revalidates_workflow_state_before_execution(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace)
+    checkpoint = _checkpoint("push", git_workspace)
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    approval_id = create_response.json()["id"]
+    approve_response = client.post(
+        f"/cli/approvals/{approval_id}/approve",
+        json={"decided_by": "reviewer", "reason": "Push checkpoint reviewed."},
+    )
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nChanged after approval.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    _git(git_workspace, "commit", "-m", "Change after approval")
+
+    execute_response = client.post(f"/cli/approvals/{approval_id}/execute")
+    review_response = client.get(f"/cli/approvals/{approval_id}/review")
+
+    assert create_response.status_code == 201
+    assert approve_response.status_code == 200
+    assert execute_response.status_code == 403
+    assert "no longer matches current repository state" in execute_response.json()["detail"]
+    assert review_response.json()["status"] == "approved"
+
+
+def test_git_push_approval_rejects_arbitrary_remote_branch_and_flags_payload(
+    git_workspace,
+) -> None:
+    _push_ready_workspace(git_workspace)
+    checkpoint = _checkpoint("push", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/push-approvals",
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["python -m pytest tests/test_git_workflows.py -q"],
+            "remote": "origin",
+            "branch": "feature/push-approval",
+            "flags": ["--force"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_git_push_approval_api_uses_cli_capability_and_authenticated_principal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable is not available")
+
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("DGENTIC_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("DGENTIC_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("DGENTIC_AUTH_TOKENS", raising=False)
+    get_settings.cache_clear()
+    _git(root_dir, "init")
+    _git(root_dir, "config", "user.email", "qa@example.test")
+    _git(root_dir, "config", "user.name", "QA Agent")
+    root_dir.joinpath("README.md").write_text("# Push auth\n", encoding="utf-8")
+    _git(root_dir, "add", "README.md")
+    _git(root_dir, "commit", "-m", "Initial commit")
+    _push_ready_workspace(root_dir)
+    checkpoint = _checkpoint("push", root_dir, evidence=["pytest -q"])
+
+    cli_token = "git-push-approval-cli-token"
+    expected_actor = sha256(cli_token.encode("utf-8")).hexdigest()[:12]
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_TOKENS", f"{cli_token}=cli;task-token=tasks")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    wrong_capability = client.post(
+        "/cli/git/push-approvals",
+        headers={"Authorization": "Bearer task-token"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["pytest -q"],
+        },
+    )
+    allowed = client.post(
+        "/cli/git/push-approvals",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        json={
+            "checkpoint_digest": checkpoint.checkpoint_digest,
             "test_evidence": ["pytest -q"],
             "requested_by": "spoofed-body-actor",
         },

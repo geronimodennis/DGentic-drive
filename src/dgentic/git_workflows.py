@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dgentic.events import event_log
 from dgentic.orchestration import authorize_cli_action
@@ -53,8 +53,28 @@ class GitWorkflowCheckpointRequest(BaseModel):
 
 
 class GitCommitApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
     commit_message: str = Field(min_length=1, max_length=MAX_COMMIT_MESSAGE_CHARS)
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
+class GitPushApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
     cwd: Path | None = None
     test_evidence: list[str] = Field(default_factory=list, max_length=20)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
@@ -84,6 +104,8 @@ class GitWorkflowCheckpoint(BaseModel):
     branch: str
     head_sha: str = ""
     upstream: str = ""
+    remote_name: str = ""
+    remote_url_digest: str = ""
     ahead: int = 0
     behind: int = 0
     staged_count: int = 0
@@ -134,6 +156,8 @@ def create_git_workflow_checkpoint(
         repo_root,
         ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
     )
+    remote_name = _branch_remote(git_executable, repo_root, status.branch)
+    remote_url_digest = _remote_url_digest(git_executable, repo_root, remote_name)
     ahead, behind = _ahead_behind(git_executable, repo_root, upstream)
     diff_stat = _combined_diff_stat(git_executable, repo_root)
     staged_diff_digest = _git_diff_digest(git_executable, repo_root, cached=True)
@@ -157,6 +181,8 @@ def create_git_workflow_checkpoint(
             "branch": status.branch,
             "head_sha": head_sha,
             "upstream": upstream,
+            "remote_name": remote_name,
+            "remote_url_digest": remote_url_digest,
             "ahead": ahead,
             "behind": behind,
             "staged_paths": status.staged_paths,
@@ -178,6 +204,8 @@ def create_git_workflow_checkpoint(
         branch=status.branch,
         head_sha=head_sha,
         upstream=upstream,
+        remote_name=remote_name,
+        remote_url_digest=remote_url_digest,
         ahead=ahead,
         behind=behind,
         staged_count=len(status.staged_paths),
@@ -233,7 +261,148 @@ def build_git_commit_approval_request(
         agent_id=request.agent_id,
         agent_role=request.agent_role,
         task_id=request.task_id,
+        workflow_binding=_git_workflow_binding(
+            action="commit",
+            checkpoint=checkpoint,
+            command=_git_commit_command(commit_message),
+            test_evidence_count=len(request.test_evidence),
+        ),
     )
+
+
+def build_git_push_approval_request(
+    request: GitPushApprovalRequest,
+    *,
+    actor: str | None = None,
+) -> CommandExecutionRequest:
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action="push",
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if not checkpoint.ready:
+        raise ValueError("Git push approval requires a ready push checkpoint.")
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git push approval requires a fresh matching checkpoint digest.")
+    _require_push_checkpoint_for_approval(checkpoint)
+    return CommandExecutionRequest(
+        command="git push",
+        cwd=checkpoint.repo_root,
+        timeout_seconds=request.timeout_seconds,
+        approved=False,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        workflow_binding=_git_workflow_binding(
+            action="push",
+            checkpoint=checkpoint,
+            command="git push",
+            test_evidence_count=len(request.test_evidence),
+        ),
+    )
+
+
+def validate_git_workflow_approval_binding(
+    binding: dict[str, object],
+    *,
+    request: CommandExecutionRequest,
+    command: str,
+    cwd: Path,
+) -> None:
+    action = str(binding.get("action") or "")
+    expected_command = str(binding.get("command") or "")
+    checkpoint_digest = str(binding.get("checkpoint_digest") or "")
+    evidence_count = _binding_evidence_count(binding.get("test_evidence_count"))
+
+    if action not in {"commit", "push"}:
+        raise PermissionError("Git workflow approval action is not supported.")
+    if command != expected_command:
+        raise PermissionError("Git workflow approval command does not match the bound workflow.")
+    if action == "commit" and not expected_command.startswith('git commit -m "'):
+        raise PermissionError("Git commit workflow approval command is not supported.")
+    if action == "push" and expected_command != "git push":
+        raise PermissionError("Git push workflow approval command is not supported.")
+
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action=action,
+            cwd=cwd,
+            test_evidence=["approval-bound workflow evidence"] * evidence_count,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=request.requested_by,
+    )
+    if not checkpoint.ready:
+        raise PermissionError("Git workflow approval requires a ready current checkpoint.")
+    if checkpoint.checkpoint_digest != checkpoint_digest:
+        raise PermissionError("Git workflow approval no longer matches current repository state.")
+    for field in ("branch", "head_sha", "upstream", "remote_name", "remote_url_digest"):
+        if str(binding.get(field) or "") != str(getattr(checkpoint, field)):
+            raise PermissionError("Git workflow approval metadata no longer matches.")
+    if action == "push":
+        _require_push_checkpoint_for_approval(checkpoint, error_type=PermissionError)
+
+
+def _git_workflow_binding(
+    *,
+    action: GitWorkflowAction,
+    checkpoint: GitWorkflowCheckpoint,
+    command: str,
+    test_evidence_count: int,
+) -> dict[str, object]:
+    return {
+        "type": "git_workflow",
+        "action": action,
+        "checkpoint_digest": checkpoint.checkpoint_digest,
+        "command": command,
+        "branch": checkpoint.branch,
+        "head_sha": checkpoint.head_sha,
+        "upstream": checkpoint.upstream,
+        "remote_name": checkpoint.remote_name,
+        "remote_url_digest": checkpoint.remote_url_digest,
+        "ahead": checkpoint.ahead,
+        "behind": checkpoint.behind,
+        "staged_count": checkpoint.staged_count,
+        "unstaged_count": checkpoint.unstaged_count,
+        "untracked_count": checkpoint.untracked_count,
+        "test_evidence_count": test_evidence_count,
+    }
+
+
+def _binding_evidence_count(value: object) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise PermissionError("Git workflow approval has invalid evidence binding.") from exc
+    if count < 1 or count > 20:
+        raise PermissionError("Git workflow approval has invalid evidence binding.")
+    return count
+
+
+def _require_push_checkpoint_for_approval(
+    checkpoint: GitWorkflowCheckpoint,
+    *,
+    error_type: type[Exception] = ValueError,
+) -> None:
+    if not checkpoint.upstream:
+        raise error_type("Git push approval requires a configured upstream branch.")
+    if not checkpoint.remote_name or not checkpoint.remote_url_digest:
+        raise error_type("Git push approval requires a bound upstream remote URL.")
+    if checkpoint.ahead <= 0:
+        raise error_type("Git push approval requires local commits ahead of upstream.")
+    if checkpoint.behind > 0:
+        raise error_type("Git push approval requires the branch to be current with upstream.")
 
 
 def _normalize_test_evidence(value: list[str]) -> list[str]:
@@ -431,6 +600,26 @@ def _ahead_behind(git_executable: str, repo_root: Path, upstream: str) -> tuple[
         return 0, 0
 
 
+def _branch_remote(git_executable: str, repo_root: Path, branch: str) -> str:
+    if not branch or branch == "DETACHED":
+        return ""
+    remote = _git_optional_output(
+        git_executable,
+        repo_root,
+        ["config", "--get", f"branch.{branch}.remote"],
+    )
+    return redact_sensitive_values(remote)[:120]
+
+
+def _remote_url_digest(git_executable: str, repo_root: Path, remote_name: str) -> str:
+    if not remote_name:
+        return ""
+    remote_url = _git_optional_output(git_executable, repo_root, ["remote", "get-url", remote_name])
+    if not remote_url:
+        return ""
+    return f"sha256:{sha256(remote_url.encode('utf-8')).hexdigest()}"
+
+
 def _combined_diff_stat(git_executable: str, repo_root: Path) -> GitDiffStat:
     staged = _parse_shortstat(
         _git_optional_output(
@@ -579,6 +768,8 @@ def _record_checkpoint_event(
             "branch": checkpoint.branch,
             "head_sha": checkpoint.head_sha,
             "upstream": checkpoint.upstream,
+            "remote_name": checkpoint.remote_name,
+            "remote_url_digest": checkpoint.remote_url_digest,
             "ahead": checkpoint.ahead,
             "behind": checkpoint.behind,
             "staged_count": checkpoint.staged_count,

@@ -1893,6 +1893,7 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/cli/recipes/qa.echo/approvals", "cli"),
         ("/cli/git/checkpoints", "cli"),
         ("/cli/git/commit-approvals", "cli"),
+        ("/cli/git/push-approvals", "cli"),
         ("/cli/runs", "cli"),
         ("/providers", "providers"),
         ("/providers/external-openai-compatible/approvals", "approvals"),
@@ -1935,6 +1936,7 @@ def test_capability_for_path_maps_public_and_sensitive_routes(
         ("POST", "/filesystem/approvals/approval-1/deny", "approvals"),
         ("POST", "/filesystem/delete", "filesystem"),
         ("POST", "/cli/git/commit-approvals", "cli"),
+        ("POST", "/cli/git/push-approvals", "cli"),
         ("GET", "/cli/runs", "cli"),
     ],
 )

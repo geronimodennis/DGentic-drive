@@ -4,6 +4,35 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ad Checkpoint-Bound Git Push Approval Creation
+
+Status: completed for the scoped push-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded PR execution automation beyond checkpoints and commit/push approval creation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected checkpoint-bound git push approval creation as the next bounded Sprint 15 slice after BL-009ac because push approval needs stronger repository-state and network-target binding than a generic raw CLI approval.
+- Completed: Architect/Security scoped the slice to structured push intent, fresh ready checkpoint digest matching, upstream remote URL digest binding, pending approval creation, and execution-time workflow revalidation before approval claim.
+- Completed: Developer added `GitPushApprovalRequest`, push approval request construction, upstream/ahead/behind/remote URL digest gates, workflow-bound CLI approval metadata, git workflow revalidation before CLI approval claim, and `POST /cli/git/push-approvals`.
+- Completed: QA added endpoint and auth coverage proving pending push approval creation does not push, stale checkpoint digests are rejected, no-upstream and no-ahead states are rejected, arbitrary remote/branch/flag payloads are rejected, authenticated principals override spoofed requesters, and approved commit/push workflow approvals revalidate state before execution.
+- Completed: Reviewer/Security/DevOps validated that workflow binding is included in CLI approval digests, remote URLs are represented by digests only, approved workflow-bound executions fail closed after repository state changes, and no PR network behavior was introduced.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `POST /cli/git/push-approvals` re-runs a push checkpoint, requires the supplied `checkpoint_digest` to match the fresh ready state, requires a configured upstream remote URL digest and local commits ahead of upstream, rejects behind-upstream state, and queues a normal pending CLI approval for exactly `git push`.
+- Implemented hardening in this slice: CLI approvals can carry workflow-bound metadata, include that metadata in approval HMAC digests, expose safe workflow-binding review metadata, and call the git workflow validator before claiming a workflow-bound approval for execution.
+- Still out of scope after this slice: PR creation, direct git workflow runners beyond approval-bound CLI execution, remote server ref freshness checks that would require fetch/network I/O, destructive branch cleanup, force operations, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused git/auth/runtime/policy gate: `python -m pytest tests\test_git_workflows.py tests\test_auth.py tests\test_cli_runtime.py tests\test_command_policy.py -q` passed with 524 tests and 2 skipped.
+- Touched lint/format gates: `python -m ruff check tests\test_git_workflows.py tests\test_auth.py src\dgentic\git_workflows.py src\dgentic\cli_runtime.py src\dgentic\api\routes.py src\dgentic\schemas.py` and matching `ruff format --check` passed.
+- Full lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1107 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with guarded PR approval creation, per-record managed policy-source precedence, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, or plugin hook/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009ac Checkpoint-Bound Git Commit Approval Creation
 
 Status: completed for the scoped commit-approval creation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance beyond declarative command recipes, per-record managed policy-source precedence beyond coarse surface locks, and guarded push/PR execution automation beyond checkpoints and commit approval creation.

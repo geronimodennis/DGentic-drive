@@ -926,6 +926,7 @@ class CommandExecutionRequest(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     environment: dict[str, str] = Field(default_factory=dict)
+    workflow_binding: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("command")
     @classmethod

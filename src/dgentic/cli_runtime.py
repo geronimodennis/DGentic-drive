@@ -25,7 +25,7 @@ from dgentic.command_policy import (
 )
 from dgentic.events import event_log
 from dgentic.guardrails import evaluate_command_policy
-from dgentic.redaction import REDACTED_SECRET_MARKER, redact_sensitive_values
+from dgentic.redaction import REDACTED_SECRET_MARKER, redact_metadata, redact_sensitive_values
 from dgentic.schemas import (
     CommandExecutionRequest,
     CommandExecutionResult,
@@ -142,6 +142,7 @@ class CommandApproval(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     environment_keys: list[str] = Field(default_factory=list)
+    workflow_binding: dict[str, object] = Field(default_factory=dict)
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
     hook_policy: HookPolicyDecision | None = None
@@ -163,6 +164,7 @@ class CommandApproval(BaseModel):
         self.review_command = redact_sensitive_values(self.review_command or redacted_command)
         self.decision_reason = _redact_optional_sensitive_text(self.decision_reason)
         self.denial_reason = _redact_optional_sensitive_text(self.denial_reason)
+        self.workflow_binding = _approval_workflow_binding(self.workflow_binding)
         self.command_digest = _sanitize_approval_digest(self.command_digest)
         self.environment_digest = _sanitize_approval_digest(self.environment_digest)
 
@@ -180,6 +182,7 @@ class CommandApprovalReview(BaseModel):
     agent_role: str | None = None
     task_id: str | None = None
     environment_keys: list[str] = Field(default_factory=list)
+    workflow_binding: dict[str, object] = Field(default_factory=dict)
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
     hook_policy: HookPolicyDecision | None = None
@@ -539,6 +542,7 @@ def _approval_binding_payload(
     task_id: str | None,
     environment_keys: list[str],
     environment_digest: str,
+    workflow_binding: dict[str, object],
     permission_mode: PermissionMode,
     matched_rule_id: str | None,
     matched_rule_name: str | None,
@@ -551,6 +555,7 @@ def _approval_binding_payload(
         "cwd": str(cwd),
         "environment_digest": environment_digest,
         "environment_keys": sorted(environment_keys),
+        "workflow_binding": _approval_workflow_binding(workflow_binding),
         "matched_rule_id": matched_rule_id,
         "matched_rule_name": matched_rule_name,
         "hook_policy": _hook_policy_binding_payload(hook_policy),
@@ -572,6 +577,7 @@ def command_approval_digest(
     task_id: str | None,
     environment_keys: list[str],
     environment_digest: str,
+    workflow_binding: dict[str, object] | None = None,
     permission_mode: PermissionMode,
     matched_rule_id: str | None,
     matched_rule_name: str | None,
@@ -587,6 +593,7 @@ def command_approval_digest(
         task_id=task_id,
         environment_keys=environment_keys,
         environment_digest=environment_digest,
+        workflow_binding=workflow_binding or {},
         permission_mode=permission_mode,
         matched_rule_id=matched_rule_id,
         matched_rule_name=matched_rule_name,
@@ -594,6 +601,36 @@ def command_approval_digest(
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return _approval_hmac_digest(encoded)
+
+
+def _approval_workflow_binding(binding: dict[str, object] | None) -> dict[str, object]:
+    if not binding:
+        return {}
+    redacted = redact_metadata(binding)
+    return redacted if isinstance(redacted, dict) else {}
+
+
+def _validate_workflow_bound_approval(
+    approval: CommandApproval,
+    *,
+    request: CommandExecutionRequest,
+    command: str,
+    cwd: Path,
+) -> None:
+    binding = _approval_workflow_binding(approval.workflow_binding)
+    if not binding:
+        return
+    if binding.get("type") == "git_workflow":
+        from dgentic.git_workflows import validate_git_workflow_approval_binding
+
+        validate_git_workflow_approval_binding(
+            binding,
+            request=request,
+            command=command,
+            cwd=cwd,
+        )
+        return
+    raise PermissionError("Approval has an unsupported workflow binding.")
 
 
 def _hook_policy_binding_payload(
@@ -766,6 +803,7 @@ class CliRuntimeService:
             raise ValueError("Only approval-required commands can be queued for approval.")
         environment_keys = validate_command_environment(request.environment)
         environment_digest = command_environment_digest(request.environment)
+        workflow_binding = _approval_workflow_binding(request.workflow_binding)
         command_digest = command_approval_digest(
             command=decision.command,
             cwd=cwd,
@@ -776,6 +814,7 @@ class CliRuntimeService:
             task_id=request.task_id,
             environment_keys=environment_keys,
             environment_digest=environment_digest,
+            workflow_binding=workflow_binding,
             permission_mode=decision.permission_mode,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
@@ -798,6 +837,7 @@ class CliRuntimeService:
             agent_role=request.agent_role,
             task_id=request.task_id,
             environment_keys=environment_keys,
+            workflow_binding=workflow_binding,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
             hook_policy=decision.hook_policy,
@@ -819,6 +859,7 @@ class CliRuntimeService:
                 "task_id": approval.task_id,
                 "environment_keys": approval.environment_keys,
                 "environment_digest": approval.environment_digest,
+                "workflow_binding": approval.workflow_binding,
                 "matched_rule_id": approval.matched_rule_id,
                 "matched_rule_name": approval.matched_rule_name,
                 "hook_policy": (
@@ -911,6 +952,10 @@ class CliRuntimeService:
                 "Approval has environment keys; execute with a bound request that supplies "
                 "the same environment keys."
             )
+        if approval.workflow_binding:
+            warnings.append(
+                "Approval is workflow-bound and revalidates workflow state before execution."
+            )
         has_current_binding_digests = True
         if not requires_bound_execution_request:
             has_current_binding_digests = self._approval_has_current_binding_digests(approval)
@@ -939,6 +984,7 @@ class CliRuntimeService:
             agent_role=approval.agent_role,
             task_id=approval.task_id,
             environment_keys=approval.environment_keys,
+            workflow_binding=approval.workflow_binding,
             matched_rule_id=approval.matched_rule_id,
             matched_rule_name=approval.matched_rule_name,
             hook_policy=approval.hook_policy,
@@ -979,6 +1025,7 @@ class CliRuntimeService:
             task_id=approval.task_id,
             environment_keys=approval.environment_keys,
             environment_digest=approval.environment_digest,
+            workflow_binding=approval.workflow_binding,
             permission_mode=approval.permission_mode,
             matched_rule_id=approval.matched_rule_id,
             matched_rule_name=approval.matched_rule_name,
@@ -1032,6 +1079,7 @@ class CliRuntimeService:
             agent_id=approval.agent_id,
             agent_role=approval.agent_role,
             task_id=approval.task_id,
+            workflow_binding=approval.workflow_binding,
         )
         return self.execute_command(request, actor=actor or approval.requested_by)
 
@@ -1941,6 +1989,7 @@ class CliRuntimeService:
             task_id=request.task_id,
             environment_keys=environment_keys,
             environment_digest=environment_digest,
+            workflow_binding=request.workflow_binding,
             permission_mode=decision.permission_mode,
             matched_rule_id=decision.matched_rule_id,
             matched_rule_name=decision.matched_rule_name,
@@ -1958,6 +2007,7 @@ class CliRuntimeService:
             approval.task_id == request.task_id,
             sorted(approval.environment_keys) == environment_keys,
             approval.environment_digest == environment_digest,
+            approval.workflow_binding == _approval_workflow_binding(request.workflow_binding),
             approval.permission_mode == decision.permission_mode,
             approval.matched_rule_id == decision.matched_rule_id,
             approval.matched_rule_name == decision.matched_rule_name,
@@ -1966,6 +2016,9 @@ class CliRuntimeService:
         ]
         if not all(checks):
             raise PermissionError(f"Approval {approval.id} is not bound to this command request.")
+        _validate_workflow_bound_approval(
+            approval, request=request, command=decision.command, cwd=cwd
+        )
 
     def _claim_bound_approval(
         self,

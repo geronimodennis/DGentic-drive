@@ -1,6 +1,8 @@
 import json
 import os
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
@@ -26,6 +28,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "external_openai_compatible_credential_ref",
         "external_openai_compatible_models",
         "lm_studio_base_url",
+        "managed_cli_policy_rules",
         "managed_policy_locks",
         "max_filesystem_bytes",
         "network_domain_policy",
@@ -45,12 +48,29 @@ _MANAGED_SETTINGS_MAX_BYTES = 256 * 1024
 _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
+        "managed_cli_policy_rules",
         "managed_policy_locks",
         "network_domain_policy",
         "provider_pricing_catalog",
         "provider_role_routing",
     }
 )
+_MANAGED_CLI_POLICY_RULE_MAX_COUNT = 100
+_MANAGED_CLI_POLICY_RULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
+_MANAGED_CLI_POLICY_RULE_ALLOWED_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "match_type",
+        "pattern",
+        "permission_mode",
+        "reason",
+        "agent_roles",
+        "enabled",
+        "priority",
+    }
+)
+_MANAGED_RULE_TIMESTAMP = datetime(1970, 1, 1, tzinfo=UTC)
 MANAGED_POLICY_LOCK_SURFACES = frozenset(
     {
         "cli_policy",
@@ -90,6 +110,7 @@ class Settings(BaseSettings):
     auth_tokens: str = ""
     approval_digest_key: str = ""
     managed_settings_file: str = ""
+    managed_cli_policy_rules: str = ""
     managed_policy_locks: str = ""
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -217,6 +238,13 @@ def managed_policy_locks() -> frozenset[str]:
     return _parse_managed_policy_locks(get_settings().managed_policy_locks)
 
 
+def managed_cli_policy_rules():
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_cli_policy_rules") != "managed":
+        return tuple()
+    return _parse_managed_cli_policy_rules(get_settings().managed_cli_policy_rules)
+
+
 def require_managed_policy_surface_mutable(surface: str) -> None:
     normalized = _normalize_managed_policy_lock_surface(surface)
     if normalized in managed_policy_locks():
@@ -314,6 +342,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
         raise ManagedSettingsError("Managed settings cannot disable already-effective auth.")
 
     for key, value in values.items():
+        if key == "managed_cli_policy_rules":
+            _parse_managed_cli_policy_rules(value)
         if key == "managed_policy_locks":
             _parse_managed_policy_locks(value)
         if _managed_value_contains_secret_shape(key, value):
@@ -366,6 +396,69 @@ def _parse_managed_policy_locks(raw_value: str) -> frozenset[str]:
         if surface not in locks:
             locks.append(surface)
     return frozenset(locks)
+
+
+def _parse_managed_cli_policy_rules(raw_value: str):
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_cli_policy_rules must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_cli_policy_rules must be a list.")
+    if len(parsed) > _MANAGED_CLI_POLICY_RULE_MAX_COUNT:
+        raise ManagedSettingsError("managed_cli_policy_rules declares too many rules.")
+
+    from dgentic.schemas import CommandPolicyRule, CommandPolicyRuleRequest
+
+    rules: list[CommandPolicyRule] = []
+    seen_ids: set[str] = set()
+    for raw_rule in parsed:
+        if not isinstance(raw_rule, dict):
+            raise ManagedSettingsError("managed_cli_policy_rules entries must be objects.")
+        normalized_rule = {
+            _normalize_managed_settings_key(str(key)): value for key, value in raw_rule.items()
+        }
+        unknown_fields = sorted(set(normalized_rule) - _MANAGED_CLI_POLICY_RULE_ALLOWED_FIELDS)
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed CLI policy rule field: {unknown_fields[0]}"
+            )
+        rule_id = normalized_rule.pop("id", None)
+        if not isinstance(rule_id, str) or not _MANAGED_CLI_POLICY_RULE_ID_RE.fullmatch(rule_id):
+            raise ManagedSettingsError("Managed CLI policy rule id is invalid.")
+        if redact_sensitive_values(rule_id) != rule_id:
+            raise ManagedSettingsError("Managed CLI policy rule id is invalid.")
+        if rule_id in seen_ids:
+            raise ManagedSettingsError(f"Duplicate managed CLI policy rule id: {rule_id}")
+        seen_ids.add(rule_id)
+        try:
+            request = CommandPolicyRuleRequest.model_validate(normalized_rule)
+        except ValueError as exc:
+            raise ManagedSettingsError("Managed CLI policy rule is invalid.") from exc
+        rules.append(
+            CommandPolicyRule(
+                id=rule_id,
+                name=request.name,
+                match_type=request.match_type,
+                pattern=request.pattern,
+                permission_mode=request.permission_mode,
+                reason=request.reason,
+                agent_roles=_normalize_managed_cli_policy_agent_roles(request.agent_roles),
+                enabled=request.enabled,
+                priority=request.priority,
+                source="managed",
+                created_at=_MANAGED_RULE_TIMESTAMP,
+                updated_at=_MANAGED_RULE_TIMESTAMP,
+            )
+        )
+    return tuple(rules)
+
+
+def _normalize_managed_cli_policy_agent_roles(agent_roles: list[str]) -> list[str]:
+    return sorted({role.strip().lower() for role in agent_roles if role.strip()})
 
 
 def _normalize_managed_policy_lock_surface(value: str) -> str:

@@ -907,7 +907,8 @@ class CommandPolicyRuleRequest(BaseModel):
 
 
 class CommandPolicyRule(CommandPolicyRuleRequest):
-    id: str = ""
+    id: str = Field(default="", max_length=120)
+    source: Literal["local", "managed"] = "local"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

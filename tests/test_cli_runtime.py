@@ -1182,6 +1182,74 @@ def test_production_approval_required_commands_need_bound_approval_id(
     get_settings.cache_clear()
 
 
+def test_bound_approval_rejects_changed_managed_policy_rule(runtime, monkeypatch) -> None:
+    service, _root_dir, data_dir = runtime
+    managed_path = data_dir.parent / "managed-settings.json"
+
+    def write_managed_rule(rule_id: str, name: str, reason: str) -> None:
+        managed_path.write_text(
+            json.dumps(
+                {
+                    "settings": {
+                        "managed_cli_policy_rules": [
+                            {
+                                "id": rule_id,
+                                "name": name,
+                                "match_type": "executable",
+                                "pattern": "python",
+                                "permission_mode": "approval_required",
+                                "reason": reason,
+                                "priority": 0,
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+        get_settings.cache_clear()
+
+    write_managed_rule(
+        "managed.review-python.v1",
+        "Managed Python review v1",
+        "Initial managed review.",
+    )
+
+    approval = service.create_approval(
+        CommandExecutionRequest(
+            command="python --version",
+            timeout_seconds=5,
+            requested_by="operator",
+            agent_role="developer",
+        )
+    )
+    service.approve_approval(approval.id, decided_by="reviewer")
+
+    write_managed_rule(
+        "managed.review-python.v2",
+        "Managed Python review v2",
+        "Changed managed review.",
+    )
+
+    with pytest.raises(PermissionError, match="not bound"):
+        service.execute_command(
+            CommandExecutionRequest(
+                command="python --version",
+                timeout_seconds=5,
+                approval_id=approval.id,
+                requested_by="operator",
+                agent_role="developer",
+            )
+        )
+
+    stored = service.list_approvals()[0]
+    assert approval.matched_rule_id == "managed.review-python.v1"
+    assert approval.matched_rule_name == "Managed Python review v1"
+    assert stored.status == CommandApprovalStatus.approved
+    assert service.list_command_runs() == []
+
+
 def test_legacy_guarded_command_uses_runtime_approval_gate(tmp_path, monkeypatch) -> None:
     import dgentic.cli_runtime as cli_runtime_module
     from dgentic.guardrails import execute_guarded_command

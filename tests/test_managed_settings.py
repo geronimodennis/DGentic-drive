@@ -11,6 +11,7 @@ from dgentic.settings import (
     ManagedSettingsError,
     get_effective_settings_view,
     get_settings,
+    managed_cli_policy_rules,
     managed_policy_locks,
     require_managed_policy_surface_mutable,
 )
@@ -119,6 +120,133 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
     with pytest.raises(PermissionError, match="plugin_hook_policies"):
         require_managed_policy_surface_mutable("plugin_hook_policies")
     require_managed_policy_surface_mutable("command_recipes")
+
+
+def test_managed_cli_policy_rules_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_CLI_POLICY_RULES",
+        json.dumps(
+            [
+                {
+                    "id": "env.rule",
+                    "name": "Environment rule",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "permission_mode": "blocked",
+                    "reason": "Environment rules are not managed.",
+                }
+            ]
+        ),
+    )
+
+    assert managed_cli_policy_rules() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_cli_policy_rules": [
+                    {
+                        "id": "managed.deploy-review",
+                        "name": "Managed deploy review",
+                        "match_type": "contains",
+                        "pattern": "deploy",
+                        "permission_mode": "approval_required",
+                        "reason": "Deploy commands require managed approval.",
+                        "agent_roles": [" QA ", "developer", "qa"],
+                        "priority": 15,
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    rules = managed_cli_policy_rules()
+
+    assert json.loads(settings.managed_cli_policy_rules)[0]["id"] == "managed.deploy-review"
+    assert fields["managed_cli_policy_rules"].source == "managed"
+    assert view.managed_fields == ["managed_cli_policy_rules"]
+    assert len(rules) == 1
+    assert rules[0].id == "managed.deploy-review"
+    assert rules[0].source == "managed"
+    assert rules[0].agent_roles == ["developer", "qa"]
+    assert rules[0].priority == 15
+
+
+@pytest.mark.parametrize(
+    ("rules_payload", "error_match"),
+    [
+        ({"id": "not-a-list"}, "must be a list"),
+        ([{"id": "bad.unknown", "unknown": True}], "Unknown managed CLI policy rule field"),
+        (
+            [
+                {
+                    "id": "missing-required-fields",
+                    "name": "Missing required fields",
+                }
+            ],
+            "Managed CLI policy rule is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "duplicate.rule",
+                    "name": "First duplicate",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "permission_mode": "blocked",
+                    "reason": "First duplicate rule.",
+                },
+                {
+                    "id": "duplicate.rule",
+                    "name": "Second duplicate",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "permission_mode": "blocked",
+                    "reason": "Second duplicate rule.",
+                },
+            ],
+            "Duplicate managed CLI policy rule id",
+        ),
+        (
+            [
+                {
+                    "id": "secret.rule",
+                    "name": "Secret-shaped rule",
+                    "match_type": "contains",
+                    "pattern": "deploy",
+                    "permission_mode": "blocked",
+                    "reason": "TOKEN=raw-secret",
+                }
+            ],
+            "secret-shaped",
+        ),
+    ],
+)
+def test_managed_cli_policy_rules_fail_closed(
+    tmp_path,
+    monkeypatch,
+    rules_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_cli_policy_rules": rules_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
 
 
 @pytest.mark.parametrize(

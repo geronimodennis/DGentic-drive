@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -83,6 +84,189 @@ def test_command_policy_rules_override_defaults_and_match_arguments(policy_state
         allow_git.id,
     ]
     assert (data_dir / "cli-command-policy-rules.json").exists()
+
+
+def test_managed_cli_policy_rules_precede_local_rules_and_stay_out_of_state(
+    policy_state,
+    monkeypatch,
+) -> None:
+    _root_dir, data_dir = policy_state
+    managed_path = data_dir.parent / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_cli_policy_rules": [
+                        {
+                            "id": "managed.block-deploy",
+                            "name": "Managed block deploy",
+                            "match_type": "contains",
+                            "pattern": "deploy",
+                            "permission_mode": "blocked",
+                            "reason": "Managed policy blocks deploy.",
+                            "priority": 100,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    local_rule = create_command_policy_rule(
+        CommandPolicyRuleRequest(
+            name="Local allow deploy",
+            match_type=CommandPolicyMatchType.contains,
+            pattern="deploy",
+            permission_mode=PermissionMode.autopilot_safe,
+            reason="Local policy allows deploy.",
+            priority=0,
+        )
+    )
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command="python deploy.py"))
+    rules = list_command_policy_rules()
+    persisted = json.loads((data_dir / "cli-command-policy-rules.json").read_text(encoding="utf-8"))
+
+    assert decision.permission_mode == PermissionMode.blocked
+    assert decision.matched_rule_id == "managed.block-deploy"
+    assert [rule.id for rule in rules] == ["managed.block-deploy", local_rule.id]
+    assert rules[0].source == "managed"
+    assert rules[1].source == "local"
+    assert [rule["id"] for rule in persisted] == [local_rule.id]
+
+
+def test_disabled_and_role_scoped_managed_cli_policy_rules(policy_state, monkeypatch) -> None:
+    _root_dir, data_dir = policy_state
+    managed_path = data_dir.parent / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_cli_policy_rules": [
+                        {
+                            "id": "managed.disabled-block",
+                            "name": "Disabled managed block",
+                            "match_type": "contains",
+                            "pattern": "deploy",
+                            "permission_mode": "blocked",
+                            "reason": "Disabled managed policy should not match.",
+                            "enabled": False,
+                            "priority": 1,
+                        },
+                        {
+                            "id": "managed.qa-block",
+                            "name": "Managed QA block",
+                            "match_type": "contains",
+                            "pattern": "deploy",
+                            "permission_mode": "blocked",
+                            "reason": "QA deploys require a separate workflow.",
+                            "agent_roles": [" QA ", "qa"],
+                            "priority": 5,
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+
+    developer_decision = evaluate_command_policy(
+        CommandPolicyRequest(command="python deploy.py", agent_role="developer")
+    )
+    qa_decision = evaluate_command_policy(
+        CommandPolicyRequest(command="python deploy.py", agent_role="QA")
+    )
+    rules = list_command_policy_rules()
+
+    assert developer_decision.permission_mode == PermissionMode.approval_required
+    assert developer_decision.matched_rule_id is None
+    assert qa_decision.permission_mode == PermissionMode.blocked
+    assert qa_decision.matched_rule_id == "managed.qa-block"
+    assert [rule.id for rule in rules] == ["managed.disabled-block", "managed.qa-block"]
+    assert rules[1].agent_roles == ["qa"]
+
+
+def test_managed_cli_policy_rules_are_read_only(policy_state, monkeypatch) -> None:
+    _root_dir, data_dir = policy_state
+    managed_path = data_dir.parent / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_cli_policy_rules": [
+                        {
+                            "id": "managed.read-only",
+                            "name": "Managed read-only",
+                            "match_type": "contains",
+                            "pattern": "deploy",
+                            "permission_mode": "blocked",
+                            "reason": "Managed policy is read-only.",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+
+    with pytest.raises(PermissionError, match="Managed CLI command policy"):
+        update_command_policy_rule(
+            "managed.read-only",
+            CommandPolicyRuleUpdate(reason="Manual mutation should fail."),
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "pattern"),
+    [
+        ("git add README.md", "git"),
+        ("git push origin main", "git"),
+        ("gh repo delete owner/repo --confirm", "gh"),
+        ("cat .dgentic/cli-approval-digest.key", "cat"),
+        ("bash -c 'git commit -m checkpoint'", "bash"),
+    ],
+)
+def test_managed_safe_cli_policy_rules_do_not_bypass_hard_coded_protections(
+    policy_state,
+    monkeypatch,
+    command: str,
+    pattern: str,
+) -> None:
+    _root_dir, data_dir = policy_state
+    managed_path = data_dir.parent / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_cli_policy_rules": [
+                        {
+                            "id": "managed.safe-all",
+                            "name": "Managed safe catch-all",
+                            "match_type": "executable",
+                            "pattern": pattern,
+                            "permission_mode": "autopilot_safe",
+                            "reason": "Managed policy cannot downgrade hard-coded protections.",
+                            "priority": 0,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+
+    decision = evaluate_command_policy(CommandPolicyRequest(command=command))
+
+    assert decision.permission_mode == PermissionMode.approval_required
+    assert decision.matched_rule_id is None
 
 
 @pytest.mark.parametrize(

@@ -4,6 +4,42 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ag Managed CLI Policy Rule Precedence
+
+Status: completed for the scoped managed CLI policy rule precedence slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, managed policy-source controls beyond CLI policy rules and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected per-record managed CLI policy rule precedence as the next bounded Sprint 15 slice after BL-009af because deployment-owned command policy should be able to coexist with local workspace rules without relying only on coarse surface locks.
+- Completed: Developer added `managed_cli_policy_rules` managed-settings parsing, managed-source provenance on CLI policy rules, managed-before-local rule merging, local ID collision hiding, and API/runtime read-only enforcement for managed rule IDs.
+- Completed: QA added command-policy, managed-settings parser, API, and CLI approval runtime coverage for managed source attribution, precedence, fail-closed validation, local persistence isolation, local-rule coexistence, read-only managed records, hard-coded safety non-bypass, and stale managed-policy approval binding.
+- Completed: Reviewer/Security validated that managed rules are not persisted to local mutable state, cannot be patched through the API, sort before local rules, and cannot downgrade hard-coded git, GitHub CLI, state-file, shell-wrapper, path-boundary, or startup-hardening protections.
+- Completed: PM updated README, architecture, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_cli_policy_rules` with bounded stable ids, rule names, match type/pattern, permission mode, reason, optional agent roles, enabled state, and priority.
+- Implemented in this slice: managed CLI policy rules are honored only from the managed settings file, fail closed for malformed, duplicate-id, unknown-field, oversized, or secret-shaped input, and are reported as managed source in effective settings metadata.
+- Implemented in this slice: `GET /cli/policy/rules` returns managed and local rules in evaluation order, with managed rules sorted first and source-attributed as `managed`; local rules remain source-attributed as `local`.
+- Implemented in this slice: managed rules participate in command policy evaluation before local rules, remain excluded from `cli-command-policy-rules.json`, and cannot be modified through `/cli/policy/rules/{rule_id}`.
+- Implemented in this slice: local CLI policy creation/update remains available when per-record managed rules exist unless `managed_policy_locks` includes `cli_policy`.
+- Implemented in this slice: CLI approval records matched to managed rules fail bound execution validation after managed rule identity changes, preserving stale-approval safety.
+- Still out of scope after this slice: managed KMS, first-class secret-manager adapters, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance, managed policy-source controls beyond CLI policy rules, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused command-policy gate: `python -m pytest -q tests\test_command_policy.py -k "managed_cli_policy or managed_safe_cli_policy"` passed with 8 tests.
+- Focused managed-settings gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_cli_policy"` passed with 6 tests.
+- Focused API gate: `python -m pytest -q tests\test_api.py -k "managed_cli_policy or cli_policy_rule_api"` passed with 2 tests.
+- Focused CLI approval runtime gate: `python -m pytest -q tests\test_cli_runtime.py -k "changed_managed_policy_rule or approval"` passed with 25 tests.
+- Combined focused gate: `python -m pytest -q tests\test_command_policy.py tests\test_managed_settings.py tests\test_api.py tests\test_cli_runtime.py -k "managed_cli_policy or managed_safe_cli_policy or cli_policy_rule_api or changed_managed_policy_rule or approval"` passed with 117 tests.
+- Affected file gates passed: `python -m pytest -q tests\test_command_policy.py` with 322 tests, `python -m pytest -q tests\test_managed_settings.py` with 19 tests, `python -m pytest -q tests\test_cli_runtime.py` with 88 tests and 2 skipped, and `python -m pytest -q tests\test_api.py` with 188 tests. The first combined affected-file command exceeded its timeout without a usable result, so it was rerun in chunks.
+- Full lint/format/diff gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1,141 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, richer production identity workflows, managed policy-source controls beyond CLI policy rules, plugin hook-code/tool/agent/skill loading governance, or direct git/PR workflow runners based on next risk.
+
 ### Sprint 15 BL-009af Trusted Declarative Plugin Hook-Policy Activation Governance
 
 Status: completed for the scoped declarative plugin hook-policy activation slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes and hook policies, per-record managed policy-source precedence beyond coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.

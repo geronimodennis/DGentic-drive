@@ -65,13 +65,35 @@ Managed settings can also lock selected mutable policy surfaces so deployment-ow
       "command_recipes",
       "hook_policy",
       "plugin_trust",
-      "plugin_command_recipes"
+      "plugin_command_recipes",
+      "plugin_hook_policies"
     ]
   }
 }
 ```
 
 `managed_policy_locks` only takes effect from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value from a normal environment variable is ignored for locking. Locked surfaces reject mutation routes with `403`, including CLI policy create/update, command recipe create/update, hook policy create/update, plugin trust changes, plugin command recipe install/disable, and plugin hook-policy install/disable. Read routes, recipe previews, plugin discovery, plugin activation previews, command-policy evaluation, and git checkpoints remain available.
+
+Managed settings can also publish read-only CLI policy rules. `managed_cli_policy_rules` is honored only when it comes from `DGENTIC_MANAGED_SETTINGS_FILE`; the same value in a normal environment variable is ignored for managed-rule loading. Managed CLI policy rules are validated fail-closed, listed with `source: "managed"` by `GET /cli/policy/rules`, evaluated before local mutable rules, and cannot be patched through `/cli/policy/rules/{rule_id}`. Local CLI policy rules can still be created and updated unless `managed_policy_locks` includes `cli_policy`:
+
+```json
+{
+  "settings": {
+    "managed_cli_policy_rules": [
+      {
+        "id": "managed.deploy-review",
+        "name": "Managed deploy review",
+        "match_type": "contains",
+        "pattern": "deploy",
+        "permission_mode": "approval_required",
+        "reason": "Deployment commands require managed approval.",
+        "agent_roles": ["developer", "qa"],
+        "priority": 10
+      }
+    ]
+  }
+}
+```
 
 Example protected request in production mode:
 
@@ -274,6 +296,8 @@ curl -X PATCH http://127.0.0.1:8000/cli/policy/rules/[rule_id] `
 ```
 
 Configured-safe `git` rules are intentionally limited to recognized read-only inspections such as `git status`, `git diff`, `git log`, and similar metadata commands. Mutating or ambiguous subcommands such as `git add`, `git commit`, `git push`, `git branch -D`, `git reset`, `git checkout`, `git switch`, `git merge`, `git rebase`, `git tag`, and shell-wrapped equivalents still require approval even when a broad executable rule marks `git` as autopilot-safe.
+
+Managed CLI policy rules follow the same non-downgrade protections as local configured rules. A managed `autopilot_safe` rule cannot bypass hard-coded approval requirements for mutating `git`, GitHub CLI, DGentic state-file reads, shell-wrapper risks, executable path boundaries, or startup hardening.
 
 Create a read-only git workflow checkpoint before preparing a commit, push, or PR:
 
@@ -753,7 +777,7 @@ DGentic should persist session state so future sessions can resume with context,
 ## Current Limitations
 
 - DGentic has backend MVP contracts, not production autonomy.
-- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, and shell-free external-process sources, provider-call network/domain guardrails, bound filesystem approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, managed policy surface locks, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, per-record policy-source precedence, and OS-level egress isolation are not complete yet.
+- Production/staging API routes have a bearer-token capability gate, startup fail-closed token validation, persisted operator profiles with direct and group-inherited effective capability assignment, persisted operator groups, persisted generated token create/list/rotate/revoke/expire APIs with hashed storage, authenticated audit actors across the main API-triggered execution/mutation surfaces, persisted credential-reference APIs with env, local encrypted vault plus supplied-key rotation, and shell-free external-process sources, provider-call network/domain guardrails, bound filesystem approval records, generated-tool Python socket network policy guardrails, plugin manifest trust controls, managed policy surface locks, managed-source CLI policy rule precedence, active-task verification for caller-supplied orchestration agent context across CLI, generated-tool, provider, and network approval surfaces, and secret-shaped metadata redaction for operator/group/token/credential/plugin trust labels, but richer production identity workflows beyond operator groups, managed KMS integration, web retrieval network enforcement, generated-tool network approval workflows, managed policy-source controls beyond CLI policy rules, and OS-level egress isolation are not complete yet.
 - State is persisted as local JSON collections and a SQLite-compatible SQLAlchemy baseline with a schema migration ledger, additive memory lifecycle metadata migrations, and SQLite backup/restore smoke helpers, but production PostgreSQL driver packaging, JSON-store migration, vector backend integration, indexing, scheduled/remote backup automation, and concurrency controls still need to be added.
 - Ollama and LM Studio have policy-validated local health/model probes and chat generation calls with redirect blocking, bounded request and upstream response payload validation, bounded retry/backoff plus in-process per-provider circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe telemetry, and NDJSON streaming through `/providers/generate/stream`.
 - The OpenAI-compatible external adapter is disabled by default and requires HTTPS base URL, model allowlist, credential reference or env-var configuration, and explicit approval for direct generation; it supports non-streaming and NDJSON streaming calls with single-use bound provider approval IDs outside development/test mode plus optional exact provider/model pricing estimates and role-to-model routing preferences, and it skips credential value/header resolution on fail-fast approval, configuration, pricing, and circuit paths, while vault key rotation, provider billing reconciliation, first-class secret-manager adapters, and provider-specific external adapters remain future work.

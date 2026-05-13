@@ -5039,6 +5039,80 @@ def test_cli_policy_rule_api_persists_and_controls_command_decisions(tmp_path, m
     get_settings.cache_clear()
 
 
+def test_managed_cli_policy_rules_api_are_read_only_and_coexist_with_local_rules(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_cli_policy_rules": [
+                        {
+                            "id": "managed.block-deploy",
+                            "name": "Managed block deploy",
+                            "match_type": "contains",
+                            "pattern": "deploy",
+                            "permission_mode": "blocked",
+                            "reason": "Managed policy blocks deploy.",
+                            "priority": 100,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/policy/rules",
+        json={
+            "name": "Local allow deploy",
+            "match_type": "contains",
+            "pattern": "deploy",
+            "permission_mode": "autopilot_safe",
+            "reason": "Local policy allows deploy.",
+            "priority": 0,
+        },
+    )
+    local_rule_id = create_response.json()["id"]
+    list_response = client.get("/cli/policy/rules")
+    patch_response = client.patch(
+        "/cli/policy/rules/managed.block-deploy",
+        json={"enabled": False},
+    )
+    decision_response = client.post(
+        "/guardrails/commands",
+        json={"command": "python deploy.py"},
+    )
+    persisted_rules = json.loads(
+        (tmp_path / "state" / "cli-command-policy-rules.json").read_text(encoding="utf-8")
+    )
+
+    assert create_response.status_code == 201
+    assert create_response.json()["source"] == "local"
+    assert list_response.status_code == 200
+    assert [(rule["id"], rule["source"]) for rule in list_response.json()] == [
+        ("managed.block-deploy", "managed"),
+        (local_rule_id, "local"),
+    ]
+    assert patch_response.status_code == 403
+    assert "Managed CLI command policy" in patch_response.text
+    assert decision_response.status_code == 200
+    assert decision_response.json()["permission_mode"] == "blocked"
+    assert decision_response.json()["matched_rule_id"] == "managed.block-deploy"
+    assert [rule["id"] for rule in persisted_rules] == [local_rule_id]
+    get_settings.cache_clear()
+
+
 def test_cli_policy_api_uses_authenticated_principal_as_audit_actor(
     tmp_path,
     monkeypatch,

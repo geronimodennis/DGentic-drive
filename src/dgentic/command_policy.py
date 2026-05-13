@@ -24,7 +24,7 @@ from dgentic.schemas import (
     LogEventType,
     PermissionMode,
 )
-from dgentic.settings import get_settings
+from dgentic.settings import get_settings, managed_cli_policy_rules
 from dgentic.storage import JsonCollection
 
 BLOCKED_COMMANDS = {
@@ -358,7 +358,7 @@ def create_command_policy_rule(
 
 
 def list_command_policy_rules() -> list[CommandPolicyRule]:
-    return _sorted_rules(_rules.list())
+    return _combined_command_policy_rules()
 
 
 def update_command_policy_rule(
@@ -367,6 +367,10 @@ def update_command_policy_rule(
     *,
     actor: str | None = None,
 ) -> CommandPolicyRule | None:
+    if _managed_command_policy_rule(rule_id) is not None:
+        raise PermissionError(
+            "Managed CLI command policy rules cannot be modified through the API."
+        )
     rule = _rules.get(rule_id)
     if rule is None:
         return None
@@ -483,7 +487,7 @@ def _decision_from_configured_rules(
     parsed: ParsedCommand,
     request: CommandPolicyRequest,
 ) -> CommandPolicyDecision | None:
-    for rule in _sorted_rules(_rules.list()):
+    for rule in _combined_command_policy_rules():
         if not rule.enabled:
             continue
         if not _rule_applies_to_context(rule, request):
@@ -621,7 +625,25 @@ def _first_non_option_git_arg(arguments: list[str]) -> str:
 
 
 def _sorted_rules(rules: list[CommandPolicyRule]) -> list[CommandPolicyRule]:
-    return sorted(rules, key=lambda rule: (rule.priority, rule.created_at, rule.id))
+    return sorted(
+        rules,
+        key=lambda rule: (_rule_source_rank(rule), rule.priority, rule.created_at, rule.id),
+    )
+
+
+def _combined_command_policy_rules() -> list[CommandPolicyRule]:
+    managed_rules = list(managed_cli_policy_rules())
+    managed_ids = {rule.id for rule in managed_rules}
+    local_rules = [rule for rule in _rules.list() if rule.id not in managed_ids]
+    return _sorted_rules([*managed_rules, *local_rules])
+
+
+def _managed_command_policy_rule(rule_id: str) -> CommandPolicyRule | None:
+    return next((rule for rule in managed_cli_policy_rules() if rule.id == rule_id), None)
+
+
+def _rule_source_rank(rule: CommandPolicyRule) -> int:
+    return 0 if rule.source == "managed" else 1
 
 
 def _rule_matches(rule: CommandPolicyRule, command: str, parsed: ParsedCommand) -> bool:

@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009z Plugin Command Recipe Activation Governance
+
+Status: completed for the scoped backend plugin command recipe activation foundation; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin hook/tool/agent/skill loading governance, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM selected plugin command recipe activation governance as the next bounded Sprint 15 security slice after BL-009y because plugin trust and command recipes now exist but must not combine into unaudited component loading.
+- Completed: Architect/Security scoped the slice to declarative command recipe JSON components only, with no plugin Python imports, scripts, hook loading, generated-tool loading, dependency loading, or new plugin runner.
+- Completed: Developer added plugin manifest `command_recipes` component paths, trusted-current-manifest activation preview/install/disable services and routes, bounded root-confined component reads, component digest provenance, plugin-owned recipe mutation blocking, and recipe activation drift checks.
+- Completed: QA added focused coverage for trusted-only activation, blocked/stale trust rejection, secret-shaped component rejection without leakage, plugin-owned recipe provenance, disable/reinstall behavior, component digest drift blocking, recipe-level `approved` bypass rejection, and `tools` plus `cli` activation authorization.
+- Completed: Reviewer/Security/DevOps validated that activation remains declarative, digest-bound, reversible, and routed through existing command recipe plus CLI policy/approval/runtime contracts.
+- Completed: PM updated README, architecture, setup/usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: trusted current plugin manifests may declare command recipe components with relative JSON paths such as `{"command_recipes":[{"path":"recipes/git-status.json"}]}`.
+- Implemented in this slice: component reads are bounded, root-confined under `rootDir/plugins/[plugin_id]`, symlink-rejected, SHA-256 digested, and schema-validated as normal command recipe requests.
+- Implemented in this slice: installed plugin-owned recipes persist plugin id, manifest digest, component path, component digest, source type, and active/disabled activation status in `command-recipes.json`.
+- Implemented in this slice: plugin command recipe preview/install/disable routes are under `/plugins/{plugin_id}/command-recipes/*`; when auth is enabled they require `tools` plus `cli`, or `admin`.
+- Implemented in this slice: plugin-owned command recipes cannot be manually mutated through `/cli/recipes/{recipe_id}`, and preview/execute/approval/run fail closed if plugin trust is blocked/stale, manifest digest changes, component digest changes, or activation is disabled.
+- Still out of scope after this slice: plugin hook/tool/agent/skill loading, plugin Python execution, plugin dependency lifecycle, signed/marketplace distribution, plugin UI workflows, and multi-step plugin orchestration templates.
+
+Validation:
+- Focused plugin API gate: `python -m pytest -q tests\test_api.py -k "plugin"` passed with 9 tests and 174 deselected.
+- Focused auth gate: `python -m pytest -q tests\test_auth.py -k "capability_for_path or capability_for_request"` passed with 46 tests and 56 deselected.
+- Focused recipe gate: `python -m pytest -q tests\test_command_recipes.py` passed with 6 tests.
+- Combined affected gate: `python -m pytest -q tests\test_api.py tests\test_command_recipes.py tests\test_auth.py tests\test_cli_runtime.py tests\test_command_policy.py -k "plugin or recipe or capability_for_path or capability_for_request or cli_approval or guarded_cli or approval or environment or shell_wrapper or path_argument"` passed with 226 tests and 459 deselected.
+- Lint/format/diff gates: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check` passed.
+- Full regression gate: `python -m pytest -q --maxfail=1 -x` passed with 1074 tests and 2 skipped.
+
+Next:
+- Continue Sprint 15 with guarded git/PR workflow automation, richer managed policy-source controls, managed KMS/secret-manager hardening, web retrieval network enforcement, generated-tool OS-level egress isolation, or plugin hook/tool/agent/skill loading governance based on next risk.
+
 ### Sprint 15 BL-009y Command Recipe Execution Contracts
 
 Status: completed for the scoped backend command-recipe execution contract; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, web retrieval network enforcement, OS-level/non-Python generated-tool egress isolation, plugin installation/loading/execution governance beyond manifest trust, plugin-backed recipe distribution/loading, richer managed policy-source controls across persisted policy surfaces, and guarded git/PR workflow automation.

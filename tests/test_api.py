@@ -70,6 +70,12 @@ def _write_plugin_manifest(root_dir, plugin_id: str, manifest: dict) -> None:
     )
 
 
+def _write_plugin_component(root_dir, plugin_id: str, relative_path: str, payload: dict) -> None:
+    component_path = root_dir / "plugins" / plugin_id / relative_path
+    component_path.parent.mkdir(parents=True, exist_ok=True)
+    component_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def test_health_returns_service_status() -> None:
     client = TestClient(create_app())
 
@@ -3600,6 +3606,260 @@ def test_plugin_routes_require_tools_capability_in_production(
     assert tools_get_response.status_code == 200
     assert tools_trust_response.status_code == 200
     assert tools_trust_response.json()["trust_status"] == "trusted"
+    get_settings.cache_clear()
+
+
+def test_plugin_command_recipe_install_requires_trust_and_blocks_component_drift(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "recipe-plugin",
+        "recipes/echo.json",
+        {
+            "id": "recipe-plugin.echo",
+            "name": "Plugin echo",
+            "command_template": "cmd /c echo {{message}}",
+            "parameters": [{"name": "message"}],
+            "tags": ["plugin", "smoke"],
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "recipe-plugin",
+        {
+            "plugin_id": "recipe-plugin",
+            "name": "Recipe plugin",
+            "version": "1.0.0",
+            "components": {"command_recipes": ["Plugin echo"]},
+            "command_recipes": [{"path": "recipes/echo.json"}],
+        },
+    )
+    client = TestClient(create_app())
+
+    untrusted_preview_response = client.post("/plugins/recipe-plugin/command-recipes/preview")
+    trust_response = client.patch(
+        "/plugins/recipe-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed recipe component."},
+    )
+    preview_response = client.post("/plugins/recipe-plugin/command-recipes/preview")
+    install_response = client.post("/plugins/recipe-plugin/command-recipes/install")
+    execute_response = client.post(
+        "/cli/recipes/recipe-plugin.echo/execute",
+        json={"parameters": {"message": "hello"}},
+    )
+    disable_response = client.post("/plugins/recipe-plugin/command-recipes/disable")
+    disabled_execute_response = client.post(
+        "/cli/recipes/recipe-plugin.echo/execute",
+        json={"parameters": {"message": "hello"}},
+    )
+    reinstall_response = client.post("/plugins/recipe-plugin/command-recipes/install")
+    patch_response = client.patch(
+        "/cli/recipes/recipe-plugin.echo",
+        json={"description": "manual plugin recipe mutation"},
+    )
+    bypass_response = client.post(
+        "/cli/recipes/recipe-plugin.echo/runs",
+        json={"parameters": {"message": "hello"}, "approved": True},
+    )
+    persisted = json.loads((data_dir / "command-recipes.json").read_text(encoding="utf-8"))
+    _write_plugin_component(
+        root_dir,
+        "recipe-plugin",
+        "recipes/echo.json",
+        {
+            "id": "recipe-plugin.echo",
+            "name": "Plugin echo",
+            "command_template": "cmd /c echo changed-{{message}}",
+            "parameters": [{"name": "message"}],
+        },
+    )
+    drift_response = client.post(
+        "/cli/recipes/recipe-plugin.echo/preview",
+        json={"parameters": {"message": "hello"}},
+    )
+
+    assert untrusted_preview_response.status_code == 403
+    assert trust_response.status_code == 200
+    assert preview_response.status_code == 200
+    assert preview_response.json()["command_recipes"][0]["status"] == "ready"
+    assert preview_response.json()["command_recipes"][0]["recipe_id"] == "recipe-plugin.echo"
+    assert install_response.status_code == 200
+    installed = install_response.json()["command_recipes"][0]
+    assert installed["status"] == "installed"
+    assert installed["component_path"] == "recipes/echo.json"
+    assert len(installed["component_digest"]) == 64
+    assert execute_response.status_code == 200
+    assert "hello" in execute_response.json()["stdout"]
+    assert disable_response.status_code == 200
+    assert disable_response.json()["command_recipes"][0]["status"] == "disabled"
+    assert disabled_execute_response.status_code == 403
+    assert "disabled" in disabled_execute_response.text
+    assert reinstall_response.status_code == 200
+    assert reinstall_response.json()["command_recipes"][0]["status"] == "installed"
+    assert patch_response.status_code == 403
+    assert bypass_response.status_code == 422
+    assert persisted[0]["source"] == "plugin"
+    assert persisted[0]["source_plugin_id"] == "recipe-plugin"
+    assert persisted[0]["source_plugin_manifest_digest"] == trust_response.json()["manifest_digest"]
+    assert persisted[0]["source_plugin_component_path"] == "recipes/echo.json"
+    assert persisted[0]["source_plugin_component_digest"] == installed["component_digest"]
+    assert persisted[0]["source_plugin_status"] == "active"
+    assert drift_response.status_code == 403
+    assert "component digest has drifted" in drift_response.text
+    get_settings.cache_clear()
+
+
+def test_plugin_command_recipe_install_fails_for_blocked_stale_and_secret_components(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "blocked-plugin",
+        "recipes/echo.json",
+        {
+            "id": "blocked-plugin.echo",
+            "name": "Blocked plugin echo",
+            "command_template": "cmd /c echo {{message}}",
+            "parameters": [{"name": "message"}],
+        },
+    )
+    blocked_manifest = {
+        "plugin_id": "blocked-plugin",
+        "name": "Blocked plugin",
+        "version": "1.0.0",
+        "command_recipes": [{"path": "recipes/echo.json"}],
+    }
+    _write_plugin_manifest(root_dir, "blocked-plugin", blocked_manifest)
+    _write_plugin_component(
+        root_dir,
+        "secret-plugin",
+        "recipes/secret.json",
+        {
+            "id": "secret-plugin.echo",
+            "name": "Secret plugin echo",
+            "command_template": "cmd /c echo --token {{token}}",
+            "parameters": [{"name": "token"}],
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "secret-plugin",
+        {
+            "plugin_id": "secret-plugin",
+            "name": "Secret plugin",
+            "version": "1.0.0",
+            "command_recipes": [{"path": "recipes/secret.json"}],
+        },
+    )
+    client = TestClient(create_app())
+
+    blocked_trust_response = client.patch(
+        "/plugins/blocked-plugin/trust",
+        json={"status": "blocked", "reason": "Do not install."},
+    )
+    blocked_install_response = client.post("/plugins/blocked-plugin/command-recipes/install")
+    trusted_response = client.patch(
+        "/plugins/blocked-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed now."},
+    )
+    blocked_manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "blocked-plugin", blocked_manifest)
+    stale_install_response = client.post("/plugins/blocked-plugin/command-recipes/install")
+    secret_trust_response = client.patch(
+        "/plugins/secret-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed manifest."},
+    )
+    secret_install_response = client.post("/plugins/secret-plugin/command-recipes/install")
+
+    assert blocked_trust_response.status_code == 200
+    assert blocked_trust_response.json()["trust_status"] == "blocked"
+    assert blocked_install_response.status_code == 403
+    assert trusted_response.status_code == 200
+    assert stale_install_response.status_code == 403
+    assert secret_trust_response.status_code == 200
+    assert secret_install_response.status_code == 400
+    assert "token" not in secret_install_response.text.lower()
+    get_settings.cache_clear()
+
+
+def test_plugin_command_recipe_activation_requires_tools_and_cli_capabilities(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "tools-token=tools;cli-token=cli;combo-token=tools,cli;admin-token=admin",
+    )
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "auth-recipe-plugin",
+        "recipes/echo.json",
+        {
+            "id": "auth-recipe-plugin.echo",
+            "name": "Auth recipe echo",
+            "command_template": "cmd /c echo {{message}}",
+            "parameters": [{"name": "message"}],
+        },
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "auth-recipe-plugin",
+        {
+            "plugin_id": "auth-recipe-plugin",
+            "name": "Auth recipe plugin",
+            "version": "1.0.0",
+            "command_recipes": [{"path": "recipes/echo.json"}],
+        },
+    )
+    client = TestClient(create_app())
+    tools_headers = {"Authorization": "Bearer tools-token"}
+    cli_headers = {"Authorization": "Bearer cli-token"}
+    combo_headers = {"Authorization": "Bearer combo-token"}
+
+    trust_response = client.patch(
+        "/plugins/auth-recipe-plugin/trust",
+        headers=tools_headers,
+        json={"status": "trusted", "reason": "Reviewed by tools."},
+    )
+    tools_install_response = client.post(
+        "/plugins/auth-recipe-plugin/command-recipes/install",
+        headers=tools_headers,
+    )
+    cli_install_response = client.post(
+        "/plugins/auth-recipe-plugin/command-recipes/install",
+        headers=cli_headers,
+    )
+    combo_install_response = client.post(
+        "/plugins/auth-recipe-plugin/command-recipes/install",
+        headers=combo_headers,
+    )
+
+    assert trust_response.status_code == 200
+    assert tools_install_response.status_code == 403
+    assert cli_install_response.status_code == 403
+    assert combo_install_response.status_code == 200
+    assert combo_install_response.json()["command_recipes"][0]["status"] == "installed"
     get_settings.cache_clear()
 
 

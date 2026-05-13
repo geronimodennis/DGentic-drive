@@ -14,6 +14,7 @@ from dgentic.agents import (
     update_agent_status,
 )
 from dgentic.auth import (
+    CAPABILITY_CLI,
     AuthTokenCreateResponse,
     AuthTokenRequest,
     AuthTokenRotateRequest,
@@ -30,6 +31,7 @@ from dgentic.auth import (
     expire_auth_token,
     get_operator,
     get_operator_group,
+    has_capability,
     list_auth_tokens,
     list_operator_groups,
     list_operators,
@@ -126,11 +128,15 @@ from dgentic.orchestration import (
 )
 from dgentic.planner import create_initial_plan, list_plans
 from dgentic.plugins import (
+    PluginCommandRecipeActivationResponse,
     PluginDiscoveryResponse,
     PluginDiscoveryView,
     PluginTrustRequest,
+    disable_plugin_command_recipe_activation,
     discover_plugins,
     get_plugin,
+    install_plugin_command_recipes,
+    preview_plugin_command_recipe_activation,
     update_plugin_trust,
 )
 from dgentic.provider_pricing import ProviderPricingConfigurationError
@@ -280,6 +286,17 @@ def _bind_principal_requester(payload, http_request: Request):
     if actor is None:
         return payload
     return payload.model_copy(update={"requested_by": actor})
+
+
+def _require_authenticated_capability(request: Request, capability: str) -> None:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        return
+    if not has_capability(principal, capability):
+        raise HTTPException(
+            status_code=403,
+            detail="Bearer token lacks the required capability.",
+        )
 
 
 @router.get("/", response_model=HealthResponse)
@@ -1186,6 +1203,8 @@ def patch_cli_command_recipe(
 ) -> CommandRecipe:
     try:
         return update_command_recipe(recipe_id, payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1341,6 +1360,59 @@ def patch_local_plugin_trust(
         return update_plugin_trust(plugin_id, payload, actor=_principal_actor(request))
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/command-recipes/preview",
+    response_model=PluginCommandRecipeActivationResponse,
+)
+def preview_local_plugin_command_recipes(
+    plugin_id: str,
+    request: Request,
+) -> PluginCommandRecipeActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_CLI)
+    try:
+        return preview_plugin_command_recipe_activation(plugin_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/command-recipes/install",
+    response_model=PluginCommandRecipeActivationResponse,
+)
+def install_local_plugin_command_recipes(
+    plugin_id: str,
+    request: Request,
+) -> PluginCommandRecipeActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_CLI)
+    try:
+        return install_plugin_command_recipes(plugin_id, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plugins/{plugin_id}/command-recipes/disable",
+    response_model=PluginCommandRecipeActivationResponse,
+)
+def disable_local_plugin_command_recipes(
+    plugin_id: str,
+    request: Request,
+) -> PluginCommandRecipeActivationResponse:
+    _require_authenticated_capability(request, CAPABILITY_CLI)
+    try:
+        return disable_plugin_command_recipe_activation(plugin_id, actor=_principal_actor(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/cli/execute", response_model=CommandExecutionResult)

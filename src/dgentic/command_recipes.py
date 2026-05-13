@@ -1,6 +1,7 @@
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -166,6 +167,12 @@ class CommandRecipe(BaseModel):
     tags: list[str] = Field(default_factory=list)
     enabled: bool = True
     usage_count: int = 0
+    source: Literal["local", "plugin"] = "local"
+    source_plugin_id: str | None = Field(default=None, max_length=80)
+    source_plugin_manifest_digest: str | None = Field(default=None, min_length=64, max_length=64)
+    source_plugin_component_path: str | None = Field(default=None, max_length=300)
+    source_plugin_component_digest: str | None = Field(default=None, min_length=64, max_length=64)
+    source_plugin_status: Literal["active", "disabled"] | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -173,6 +180,28 @@ class CommandRecipe(BaseModel):
     def recipe_must_still_be_valid(self) -> "CommandRecipe":
         _normalize_recipe_id(self.id)
         _validate_template_parameters(self.command_template, self.parameters)
+        if self.source == "local":
+            if any(
+                (
+                    self.source_plugin_id,
+                    self.source_plugin_manifest_digest,
+                    self.source_plugin_component_path,
+                    self.source_plugin_component_digest,
+                    self.source_plugin_status,
+                )
+            ):
+                raise ValueError("Local command recipes must not include plugin provenance.")
+            return self
+        if not all(
+            (
+                self.source_plugin_id,
+                self.source_plugin_manifest_digest,
+                self.source_plugin_component_path,
+                self.source_plugin_component_digest,
+                self.source_plugin_status,
+            )
+        ):
+            raise ValueError("Plugin command recipes require complete plugin provenance.")
         return self
 
 
@@ -209,6 +238,14 @@ class CommandRecipeExpansion(BaseModel):
     task_id: str | None = None
     parameter_names: list[str] = Field(default_factory=list)
     policy: CommandPolicyDecision
+
+
+class PluginCommandRecipeInstallRequest(BaseModel):
+    recipe: CommandRecipeRequest
+    plugin_id: str = Field(min_length=1, max_length=80)
+    manifest_digest: str = Field(min_length=64, max_length=64)
+    component_path: str = Field(min_length=1, max_length=300)
+    component_digest: str = Field(min_length=64, max_length=64)
 
 
 _command_recipes = JsonCollection("command-recipes", CommandRecipe)
@@ -264,6 +301,8 @@ def update_command_recipe(
     now = datetime.now(UTC)
 
     def apply_update(recipe: CommandRecipe) -> CommandRecipe:
+        if recipe.source == "plugin":
+            raise PermissionError("Plugin-owned command recipes must be managed through plugins.")
         payload = recipe.model_dump()
         for field_name in update.model_fields_set:
             payload[field_name] = getattr(update, field_name)
@@ -280,11 +319,92 @@ def update_command_recipe(
     return saved
 
 
+def install_plugin_command_recipe(
+    request: PluginCommandRecipeInstallRequest,
+    *,
+    actor: str | None = None,
+) -> CommandRecipe:
+    now = datetime.now(UTC)
+    recipe = CommandRecipe(
+        id=request.recipe.id or f"{request.plugin_id}.command-recipe-{uuid4()}",
+        name=redact_sensitive_values(request.recipe.name),
+        description=redact_sensitive_values(request.recipe.description),
+        command_template=request.recipe.command_template,
+        cwd=request.recipe.cwd,
+        timeout_seconds=request.recipe.timeout_seconds,
+        parameters=request.recipe.parameters,
+        tags=request.recipe.tags,
+        enabled=request.recipe.enabled,
+        source="plugin",
+        source_plugin_id=request.plugin_id,
+        source_plugin_manifest_digest=request.manifest_digest,
+        source_plugin_component_path=request.component_path,
+        source_plugin_component_digest=request.component_digest,
+        source_plugin_status="active",
+        created_at=now,
+        updated_at=now,
+    )
+
+    def upsert(items: list[CommandRecipe]) -> tuple[list[CommandRecipe], CommandRecipe]:
+        updated_items: list[CommandRecipe] = []
+        replaced = False
+        created_at = now
+        usage_count = 0
+        for item in items:
+            if item.id != recipe.id:
+                updated_items.append(item)
+                continue
+            if item.source != "plugin" or item.source_plugin_id != recipe.source_plugin_id:
+                raise ValueError(f"Command recipe id is already in use: {recipe.id}")
+            created_at = item.created_at
+            usage_count = item.usage_count
+            updated_items.append(
+                recipe.model_copy(update={"created_at": created_at, "usage_count": usage_count})
+            )
+            replaced = True
+        saved = recipe.model_copy(update={"created_at": created_at, "usage_count": usage_count})
+        if not replaced:
+            updated_items.append(saved)
+        return updated_items, saved
+
+    saved = _command_recipes.transact(upsert)
+    _record_recipe_event("Installed plugin command recipe.", saved, actor=actor)
+    return saved
+
+
+def disable_plugin_command_recipes(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> list[CommandRecipe]:
+    now = datetime.now(UTC)
+    disabled: list[CommandRecipe] = []
+
+    def disable(items: list[CommandRecipe]) -> tuple[list[CommandRecipe], list[CommandRecipe]]:
+        updated_items: list[CommandRecipe] = []
+        for item in items:
+            if item.source == "plugin" and item.source_plugin_id == plugin_id:
+                updated = item.model_copy(
+                    update={"source_plugin_status": "disabled", "updated_at": now}
+                )
+                updated_items.append(updated)
+                disabled.append(updated)
+            else:
+                updated_items.append(item)
+        return updated_items, disabled
+
+    saved = _command_recipes.transact(disable)
+    for recipe in saved:
+        _record_recipe_event("Disabled plugin command recipe.", recipe, actor=actor)
+    return saved
+
+
 def build_command_recipe_request(
     recipe_id: str,
     request: CommandRecipeExecutionRequest,
 ) -> CommandExecutionRequest:
     recipe = get_command_recipe(recipe_id)
+    _validate_recipe_activation(recipe)
     if not recipe.enabled:
         raise PermissionError(f"Command recipe is disabled: {recipe.id}")
 
@@ -309,6 +429,7 @@ def expand_command_recipe(
     actor: str | None = None,
 ) -> CommandRecipeExpansion:
     recipe = get_command_recipe(recipe_id)
+    _validate_recipe_activation(recipe)
     command_request = build_command_recipe_request(recipe.id, request)
     cwd = resolve_command_cwd(command_request.cwd)
     policy = evaluate_command_policy(
@@ -354,6 +475,28 @@ def record_command_recipe_usage(
         extra_metadata={"action": action},
     )
     return saved
+
+
+def _validate_recipe_activation(recipe: CommandRecipe) -> None:
+    if recipe.source != "plugin":
+        return
+    if recipe.source_plugin_status != "active":
+        raise PermissionError(f"Plugin command recipe is disabled: {recipe.id}")
+    if not (
+        recipe.source_plugin_id
+        and recipe.source_plugin_manifest_digest
+        and recipe.source_plugin_component_path
+        and recipe.source_plugin_component_digest
+    ):
+        raise PermissionError(f"Plugin command recipe provenance is incomplete: {recipe.id}")
+    from dgentic.plugins import validate_plugin_component_activation
+
+    validate_plugin_component_activation(
+        recipe.source_plugin_id,
+        recipe.source_plugin_manifest_digest,
+        recipe.source_plugin_component_path,
+        recipe.source_plugin_component_digest,
+    )
 
 
 def _render_command_template(recipe: CommandRecipe, parameters: dict[str, str]) -> str:
@@ -436,7 +579,18 @@ def _record_recipe_event(
         "parameter_names": sorted(parameter.name for parameter in recipe.parameters),
         "tags": recipe.tags,
         "usage_count": recipe.usage_count,
+        "source": recipe.source,
     }
+    if recipe.source == "plugin":
+        metadata.update(
+            {
+                "plugin_id": recipe.source_plugin_id,
+                "plugin_manifest_digest": recipe.source_plugin_manifest_digest,
+                "plugin_component_path": recipe.source_plugin_component_path,
+                "plugin_component_digest": recipe.source_plugin_component_digest,
+                "plugin_status": recipe.source_plugin_status,
+            }
+        )
     if extra_metadata:
         metadata.update(extra_metadata)
     event_log.record(

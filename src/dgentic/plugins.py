@@ -2,12 +2,18 @@ import json
 import os
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from stat import S_ISREG
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from dgentic.command_recipes import (
+    CommandRecipeRequest,
+    PluginCommandRecipeInstallRequest,
+    disable_plugin_command_recipes,
+    install_plugin_command_recipe,
+)
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import LogEventType
@@ -16,9 +22,22 @@ from dgentic.storage import JsonCollection
 
 PLUGIN_MANIFEST_NAME = "dgentic-plugin.json"
 PLUGIN_MANIFEST_MAX_BYTES = 64 * 1024
+PLUGIN_COMPONENT_MAX_BYTES = 64 * 1024
 PLUGIN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
 PluginTrustDecision = Literal["trusted", "blocked"]
 PluginTrustStatus = Literal["trusted", "blocked", "untrusted", "stale"]
+PluginActivationStatus = Literal["ready", "installed", "disabled"]
+
+
+class PluginCommandRecipeComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=300)
+
+    @field_validator("path")
+    @classmethod
+    def path_must_be_relative_safe_text(cls, value: str) -> str:
+        return _normalize_component_path(value)
 
 
 class PluginComponentSummary(BaseModel):
@@ -53,6 +72,7 @@ class PluginManifest(BaseModel):
     description: str = Field(default="", max_length=500)
     source: str = Field(default="", max_length=200)
     components: PluginComponentSummary = Field(default_factory=PluginComponentSummary)
+    command_recipes: list[PluginCommandRecipeComponent] = Field(default_factory=list, max_length=50)
 
     @field_validator("plugin_id", "name", "version", "description", "source")
     @classmethod
@@ -99,6 +119,7 @@ class PluginDiscoveryView(BaseModel):
     description: str = ""
     source: str = ""
     components: PluginComponentSummary
+    command_recipes: list[PluginCommandRecipeComponent] = Field(default_factory=list)
     manifest_path: str
     manifest_digest: str
     manifest_size_bytes: int = Field(ge=0)
@@ -118,6 +139,21 @@ class PluginDiscoveryError(BaseModel):
 class PluginDiscoveryResponse(BaseModel):
     plugins: list[PluginDiscoveryView] = Field(default_factory=list)
     errors: list[PluginDiscoveryError] = Field(default_factory=list)
+
+
+class PluginCommandRecipeActivationView(BaseModel):
+    recipe_id: str
+    name: str
+    component_path: str
+    component_digest: str
+    manifest_digest: str
+    status: PluginActivationStatus
+
+
+class PluginCommandRecipeActivationResponse(BaseModel):
+    plugin_id: str
+    manifest_digest: str = ""
+    command_recipes: list[PluginCommandRecipeActivationView] = Field(default_factory=list)
 
 
 _plugin_trust = JsonCollection("plugin-trust", PluginTrustRecord, key_field="plugin_id")
@@ -219,6 +255,121 @@ def update_plugin_trust(
     return get_plugin(plugin.plugin_id)
 
 
+def preview_plugin_command_recipe_activation(
+    plugin_id: str,
+) -> PluginCommandRecipeActivationResponse:
+    plugin = _trusted_plugin_for_activation(plugin_id)
+    components = _load_plugin_command_recipe_components(plugin)
+    return PluginCommandRecipeActivationResponse(
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        command_recipes=[
+            PluginCommandRecipeActivationView(
+                recipe_id=recipe.id or "",
+                name=recipe.name,
+                component_path=component_path,
+                component_digest=component_digest,
+                manifest_digest=plugin.manifest_digest,
+                status="ready",
+            )
+            for recipe, component_path, component_digest in components
+        ],
+    )
+
+
+def install_plugin_command_recipes(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> PluginCommandRecipeActivationResponse:
+    plugin = _trusted_plugin_for_activation(plugin_id)
+    components = _load_plugin_command_recipe_components(plugin)
+    installed: list[PluginCommandRecipeActivationView] = []
+    for recipe, component_path, component_digest in components:
+        saved = install_plugin_command_recipe(
+            PluginCommandRecipeInstallRequest(
+                recipe=recipe,
+                plugin_id=plugin.plugin_id,
+                manifest_digest=plugin.manifest_digest,
+                component_path=component_path,
+                component_digest=component_digest,
+            ),
+            actor=actor,
+        )
+        installed.append(
+            PluginCommandRecipeActivationView(
+                recipe_id=saved.id,
+                name=saved.name,
+                component_path=component_path,
+                component_digest=component_digest,
+                manifest_digest=plugin.manifest_digest,
+                status="installed",
+            )
+        )
+    _record_plugin_activation_event(
+        "Installed plugin command recipes.",
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        actor=actor,
+        command_recipes=installed,
+    )
+    return PluginCommandRecipeActivationResponse(
+        plugin_id=plugin.plugin_id,
+        manifest_digest=plugin.manifest_digest,
+        command_recipes=installed,
+    )
+
+
+def disable_plugin_command_recipe_activation(
+    plugin_id: str,
+    *,
+    actor: str | None = None,
+) -> PluginCommandRecipeActivationResponse:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    disabled_recipes = disable_plugin_command_recipes(normalized_plugin_id, actor=actor)
+    disabled = [
+        PluginCommandRecipeActivationView(
+            recipe_id=recipe.id,
+            name=recipe.name,
+            component_path=recipe.source_plugin_component_path or "",
+            component_digest=recipe.source_plugin_component_digest or "",
+            manifest_digest=recipe.source_plugin_manifest_digest or "",
+            status="disabled",
+        )
+        for recipe in disabled_recipes
+    ]
+    _record_plugin_activation_event(
+        "Disabled plugin command recipes.",
+        plugin_id=normalized_plugin_id,
+        manifest_digest="",
+        actor=actor,
+        command_recipes=disabled,
+    )
+    return PluginCommandRecipeActivationResponse(
+        plugin_id=normalized_plugin_id,
+        command_recipes=disabled,
+    )
+
+
+def validate_plugin_component_activation(
+    plugin_id: str,
+    manifest_digest: str,
+    component_path: str,
+    component_digest: str,
+) -> None:
+    try:
+        plugin = get_plugin(plugin_id)
+    except (KeyError, ValueError) as exc:
+        raise PermissionError("Plugin command recipe source is not available.") from exc
+    if plugin.trust_status != "trusted" or plugin.manifest_digest != manifest_digest:
+        raise PermissionError("Plugin command recipe source is not currently trusted.")
+    if plugin.trusted_manifest_digest != manifest_digest:
+        raise PermissionError("Plugin command recipe source trust digest has drifted.")
+    raw_component = _read_plugin_component_bytes(plugin.plugin_id, component_path)
+    if sha256(raw_component).hexdigest() != component_digest:
+        raise PermissionError("Plugin command recipe component digest has drifted.")
+
+
 def _plugin_view_from_manifest_path(manifest_path: Path) -> PluginDiscoveryView:
     raw_manifest = _read_manifest_bytes(manifest_path)
     digest = sha256(raw_manifest).hexdigest()
@@ -243,6 +394,7 @@ def _plugin_view_from_manifest_path(manifest_path: Path) -> PluginDiscoveryView:
         description=manifest.description,
         source=manifest.source,
         components=manifest.components,
+        command_recipes=manifest.command_recipes,
         manifest_path=_relative_plugin_path(manifest_path),
         manifest_digest=digest,
         manifest_size_bytes=len(raw_manifest),
@@ -290,6 +442,135 @@ def _read_manifest_bytes(manifest_path: Path) -> bytes:
     if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
         raise ValueError("Plugin manifest is invalid.")
     return raw_manifest
+
+
+def _trusted_plugin_for_activation(plugin_id: str) -> PluginDiscoveryView:
+    plugin = get_plugin(plugin_id)
+    if plugin.trust_status != "trusted":
+        raise PermissionError("Plugin must be trusted at the current manifest digest.")
+    if plugin.trusted_manifest_digest != plugin.manifest_digest:
+        raise PermissionError("Plugin trust digest has drifted.")
+    return plugin
+
+
+def _load_plugin_command_recipe_components(
+    plugin: PluginDiscoveryView,
+) -> list[tuple[CommandRecipeRequest, str, str]]:
+    loaded: list[tuple[CommandRecipeRequest, str, str]] = []
+    seen_recipe_ids: set[str] = set()
+    for component in plugin.command_recipes:
+        raw_component = _read_plugin_component_bytes(plugin.plugin_id, component.path)
+        try:
+            payload = json.loads(raw_component.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Plugin command recipe component is invalid.") from exc
+        try:
+            recipe = CommandRecipeRequest.model_validate(payload)
+        except ValueError as exc:
+            raise ValueError("Plugin command recipe component is invalid.") from exc
+        if recipe.id is None:
+            raise ValueError("Plugin command recipe components require stable recipe ids.")
+        if recipe.id in seen_recipe_ids:
+            raise ValueError(f"Duplicate plugin command recipe id: {recipe.id}")
+        seen_recipe_ids.add(recipe.id)
+        loaded.append((recipe, component.path, sha256(raw_component).hexdigest()))
+    return loaded
+
+
+def _read_plugin_component_bytes(plugin_id: str, component_path: str) -> bytes:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    normalized_component_path = _normalize_component_path(component_path)
+    plugin_dir = _plugins_dir() / normalized_plugin_id
+    if plugin_dir.is_symlink() or not plugin_dir.is_dir():
+        raise ValueError("Plugin directory is invalid.")
+    try:
+        resolved_plugin_dir = plugin_dir.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Plugin directory is invalid.") from exc
+    candidate = plugin_dir.joinpath(*normalized_component_path.split("/"))
+    _reject_symlinked_component_path(plugin_dir, normalized_component_path)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Plugin command recipe component is invalid.") from exc
+    try:
+        resolved.relative_to(resolved_plugin_dir)
+    except ValueError as exc:
+        raise ValueError(
+            "Plugin command recipe component is outside the plugin directory."
+        ) from exc
+    if candidate.is_symlink():
+        raise ValueError("Plugin command recipe component is invalid.")
+    try:
+        pre_open_stat = os.stat(resolved, follow_symlinks=False)
+    except OSError as exc:
+        raise ValueError("Plugin command recipe component is invalid.") from exc
+    if not S_ISREG(pre_open_stat.st_mode):
+        raise ValueError("Plugin command recipe component is invalid.")
+    if pre_open_stat.st_size > PLUGIN_COMPONENT_MAX_BYTES:
+        raise ValueError("Plugin command recipe component is too large.")
+    raw_component = _read_bounded_component(resolved, pre_open_stat)
+    if len(raw_component) > PLUGIN_COMPONENT_MAX_BYTES:
+        raise ValueError("Plugin command recipe component is too large.")
+    try:
+        post_read_resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Plugin command recipe component is invalid.") from exc
+    if post_read_resolved != resolved or not post_read_resolved.is_file():
+        raise ValueError("Plugin command recipe component is invalid.")
+    _reject_symlinked_component_path(plugin_dir, normalized_component_path)
+    return raw_component
+
+
+def _read_bounded_component(component_path: Path, expected_stat: os.stat_result) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(component_path, flags)
+    except OSError as exc:
+        raise ValueError("Plugin command recipe component is invalid.") from exc
+    try:
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1
+            opened_stat = os.fstat(stream.fileno())
+            if not S_ISREG(opened_stat.st_mode):
+                raise ValueError("Plugin command recipe component is invalid.")
+            if opened_stat.st_size > PLUGIN_COMPONENT_MAX_BYTES:
+                raise ValueError("Plugin command recipe component is too large.")
+            if not _same_file_snapshot(opened_stat, expected_stat):
+                raise ValueError("Plugin command recipe component is invalid.")
+            raw_component = stream.read(PLUGIN_COMPONENT_MAX_BYTES + 1)
+            try:
+                post_read_stat = os.stat(component_path, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("Plugin command recipe component is invalid.") from exc
+            if not _same_file_snapshot(opened_stat, post_read_stat):
+                raise ValueError("Plugin command recipe component is invalid.")
+            return raw_component
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _reject_symlinked_component_path(plugin_dir: Path, component_path: str) -> None:
+    current = plugin_dir
+    for part in component_path.split("/"):
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Plugin command recipe component is invalid.")
+
+
+def _normalize_component_path(value: str) -> str:
+    stripped = value.strip().replace("\\", "/")
+    if not stripped or redact_sensitive_values(stripped) != stripped:
+        raise ValueError("Plugin component paths must use safe relative paths.")
+    posix_path = PurePosixPath(stripped)
+    windows_path = PureWindowsPath(stripped)
+    if posix_path.is_absolute() or windows_path.is_absolute() or windows_path.drive:
+        raise ValueError("Plugin component paths must be relative.")
+    parts = [part for part in posix_path.parts if part not in {"", "."}]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError("Plugin component paths must stay inside the plugin directory.")
+    return "/".join(parts)
 
 
 def _read_bounded_manifest(manifest_path: Path, expected_stat: os.stat_result) -> bytes:
@@ -366,5 +647,31 @@ def _record_plugin_trust_event(
             "status": record.status,
             "reason": redact_sensitive_values(record.reason),
             "decided_by": redact_sensitive_values(record.decided_by),
+        },
+    )
+
+
+def _record_plugin_activation_event(
+    message: str,
+    *,
+    plugin_id: str,
+    manifest_digest: str,
+    actor: str | None,
+    command_recipes: list[PluginCommandRecipeActivationView],
+) -> None:
+    event_log.record(
+        LogEventType.tool,
+        message,
+        actor=actor or "system",
+        subject_id=plugin_id,
+        metadata={
+            "plugin_id": plugin_id,
+            "manifest_digest": manifest_digest,
+            "command_recipe_ids": [recipe.recipe_id for recipe in command_recipes],
+            "component_paths": [
+                redact_sensitive_values(recipe.component_path) for recipe in command_recipes
+            ],
+            "component_digests": [recipe.component_digest for recipe in command_recipes],
+            "statuses": [recipe.status for recipe in command_recipes],
         },
     )

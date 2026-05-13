@@ -160,6 +160,27 @@ Managed settings can also pin plugin trust to exact manifest digests through `ma
 }
 ```
 
+Managed settings can also publish inert plugin component records through `managed_plugin_component_records`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, are returned by `GET /plugins/{plugin_id}/components` with `source: "managed"`, shadow same-id local `plugin-components.json` rows, never persist to local plugin component state, and make local component install/disable routes read-only for the managed plugin id. The list route reports managed records as `stale` when the plugin manifest digest changes and `drifted` when the referenced component bytes are missing, resized, or digest-mismatched:
+
+```json
+{
+  "settings": {
+    "managed_plugin_component_records": [
+      {
+        "plugin_id": "example-plugin",
+        "component_type": "tools",
+        "name": "Reviewed scanner metadata",
+        "manifest_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "component_path": "tools/scanner.json",
+        "component_digest": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "component_size_bytes": 2048,
+        "status": "installed"
+      }
+    ]
+  }
+}
+```
+
 Example protected request in production mode:
 
 ```powershell
@@ -197,7 +218,7 @@ SQLAlchemy-backed metadata and tool registry services use SQLite at `DGENTIC_ROO
 
 Local vault credential references can be re-encrypted after a Fernet key change through `POST /credentials/references/local-vault/rotate-key` with a principal that has the `credentials` capability. The request supplies `current_vault_key` and `new_vault_key`; the response returns only `rotated_count`, `skipped_count`, and `rotated_at`. The operation rotates every persisted `local_vault` record in one transaction, skips environment and external-process references, fails without partial writes on wrong keys or malformed ciphertext, and does not expose keys, plaintext, or ciphertext in API responses or audit metadata.
 
-Plugin manifests can be discovered through `GET /plugins`, inspected through `GET /plugins/{plugin_id}`, and explicitly trusted or blocked through `PATCH /plugins/{plugin_id}/trust`. DGentic reads only direct manifests at `DGENTIC_ROOT_DIR/plugins/[plugin_id]/dgentic-plugin.json`, computes a SHA-256 digest over the raw manifest bytes, returns redacted safe metadata, persists trust records in `plugin-trust.json`, and marks trust `stale` when the manifest changes. Discovery rejects symlinked, out-of-root, oversized, malformed, or id-mismatched manifests. Trusted current manifests can preview inert `agent_blueprints`, `skills`, `tools`, and `docs` component references through `POST /plugins/{plugin_id}/components/preview`; this returns type/name/path/digest/size metadata only and does not parse, import, index, install, load, or execute referenced content. `POST /plugins/{plugin_id}/components/install` persists the same inert provenance metadata to `plugin-components.json`, `GET /plugins/{plugin_id}/components` lists installed or disabled records, and `POST /plugins/{plugin_id}/components/disable` disables them without deleting history. Trusted current manifests can also activate declarative command recipe and hook-policy JSON components, but activation only reads bounded JSON files, records manifest/component digest provenance, and still executes through the normal CLI or hook-policy contracts; DGentic does not import plugin code, run plugin scripts, or load plugin hooks/tools/agents/skills in this slice.
+Plugin manifests can be discovered through `GET /plugins`, inspected through `GET /plugins/{plugin_id}`, and explicitly trusted or blocked through `PATCH /plugins/{plugin_id}/trust`. DGentic reads only direct manifests at `DGENTIC_ROOT_DIR/plugins/[plugin_id]/dgentic-plugin.json`, computes a SHA-256 digest over the raw manifest bytes, returns redacted safe metadata, persists trust records in `plugin-trust.json`, and marks trust `stale` when the manifest changes. Discovery rejects symlinked, out-of-root, oversized, malformed, or id-mismatched manifests. Trusted current manifests can preview inert `agent_blueprints`, `skills`, `tools`, and `docs` component references through `POST /plugins/{plugin_id}/components/preview`; this returns type/name/path/digest/size metadata only and does not parse, import, index, install, load, or execute referenced content. `POST /plugins/{plugin_id}/components/install` persists the same inert provenance metadata to `plugin-components.json`, `GET /plugins/{plugin_id}/components` lists local plus deployment-managed installed or disabled records, and `POST /plugins/{plugin_id}/components/disable` disables local records without deleting history. Managed component records from `DGENTIC_MANAGED_SETTINGS_FILE` are read-only, never persisted locally, filter local spoof rows that claim `source: "managed"`, shadow local rows with the same computed component id, and surface `stale` or `drifted` provenance status. Trusted current manifests can also activate declarative command recipe and hook-policy JSON components, but activation only reads bounded JSON files, records manifest/component digest provenance, and still executes through the normal CLI or hook-policy contracts; DGentic does not import plugin code, run plugin scripts, or load plugin hooks/tools/agents/skills in this slice.
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/tasks/plan `

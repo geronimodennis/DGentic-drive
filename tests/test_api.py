@@ -4208,6 +4208,227 @@ def test_plugin_reference_component_preview_blocks_drift_and_duplicate_reference
     get_settings.cache_clear()
 
 
+def test_managed_plugin_component_records_list_read_only_and_do_not_persist(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "managed-component-plugin",
+        "tools/scanner.json",
+        {"name": "Scanner"},
+    )
+    _write_plugin_manifest(
+        root_dir,
+        "managed-component-plugin",
+        {
+            "plugin_id": "managed-component-plugin",
+            "name": "Managed component plugin",
+            "version": "1.0.0",
+            "tools": [{"path": "tools/scanner.json", "name": "Scanner"}],
+        },
+    )
+    manifest_digest = (
+        root_dir / "plugins" / "managed-component-plugin" / "dgentic-plugin.json"
+    ).read_bytes()
+    component_bytes = (
+        root_dir / "plugins" / "managed-component-plugin" / "tools" / "scanner.json"
+    ).read_bytes()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_plugin_component_records": [
+                        {
+                            "plugin_id": "managed-component-plugin",
+                            "component_type": "tools",
+                            "name": "Managed scanner",
+                            "manifest_digest": sha256(manifest_digest).hexdigest(),
+                            "component_path": "tools/scanner.json",
+                            "component_digest": sha256(component_bytes).hexdigest(),
+                            "component_size_bytes": len(component_bytes),
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    list_response = client.get("/plugins/managed-component-plugin/components")
+    untrusted_install_response = client.post("/plugins/managed-component-plugin/components/install")
+    trust_response = client.patch(
+        "/plugins/managed-component-plugin/trust",
+        json={"status": "trusted", "reason": "Reviewed local manifest."},
+    )
+    trusted_install_response = client.post("/plugins/managed-component-plugin/components/install")
+    disable_response = client.post("/plugins/managed-component-plugin/components/disable")
+
+    assert list_response.status_code == 200
+    components = list_response.json()["components"]
+    assert len(components) == 1
+    assert components[0]["source"] == "managed"
+    assert components[0]["status"] == "installed"
+    assert components[0]["name"] == "Managed scanner"
+    assert components[0]["component_path"] == "tools/scanner.json"
+    assert untrusted_install_response.status_code == 403
+    assert "Managed plugin component records cannot be modified" in untrusted_install_response.text
+    assert trust_response.status_code == 200
+    assert trusted_install_response.status_code == 403
+    assert "Managed plugin component records cannot be modified" in trusted_install_response.text
+    assert disable_response.status_code == 403
+    assert "Managed plugin component records cannot be modified" in disable_response.text
+    assert not (data_dir / "plugin-components.json").exists()
+    get_settings.cache_clear()
+
+
+def test_managed_plugin_component_records_shadow_local_and_report_drift(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+    _write_plugin_component(
+        root_dir,
+        "managed-shadow-plugin",
+        "docs/runbook.json",
+        {"name": "Runbook"},
+    )
+    manifest = {
+        "plugin_id": "managed-shadow-plugin",
+        "name": "Managed shadow plugin",
+        "version": "1.0.0",
+        "docs": [{"path": "docs/runbook.json", "name": "Runbook"}],
+    }
+    _write_plugin_manifest(root_dir, "managed-shadow-plugin", manifest)
+    manifest_digest = sha256(
+        (root_dir / "plugins" / "managed-shadow-plugin" / "dgentic-plugin.json").read_bytes()
+    ).hexdigest()
+    component_path = root_dir / "plugins" / "managed-shadow-plugin" / "docs" / "runbook.json"
+    component_bytes = component_path.read_bytes()
+    component_digest = sha256(component_bytes).hexdigest()
+    component_id_seed = b"managed-shadow-plugin\0docs\0docs/runbook.json"
+    component_id = f"managed-shadow-plugin.component-{sha256(component_id_seed).hexdigest()[:16]}"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "plugin-components.json").write_text(
+        json.dumps(
+            [
+                {
+                    "component_id": component_id,
+                    "plugin_id": "managed-shadow-plugin",
+                    "component_type": "docs",
+                    "name": "Local runbook",
+                    "manifest_digest": manifest_digest,
+                    "component_path": "docs/runbook.json",
+                    "component_digest": component_digest,
+                    "component_size_bytes": len(component_bytes),
+                    "status": "disabled",
+                    "source": "plugin",
+                },
+                {
+                    "component_id": "managed-shadow-plugin.component-spoofed",
+                    "plugin_id": "managed-shadow-plugin",
+                    "component_type": "tools",
+                    "name": "Spoofed managed component",
+                    "manifest_digest": manifest_digest,
+                    "component_path": "tools/spoofed.json",
+                    "component_digest": "a" * 64,
+                    "component_size_bytes": 1,
+                    "status": "installed",
+                    "source": "managed",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_plugin_component_records": [
+                        {
+                            "plugin_id": "managed-shadow-plugin",
+                            "component_type": "docs",
+                            "name": "Managed runbook",
+                            "manifest_digest": manifest_digest,
+                            "component_path": "docs/runbook.json",
+                            "component_digest": component_digest,
+                            "component_size_bytes": len(component_bytes),
+                        },
+                        {
+                            "plugin_id": "managed-shadow-plugin",
+                            "component_type": "skills",
+                            "name": "Drifted skill",
+                            "manifest_digest": manifest_digest,
+                            "component_path": "docs/runbook.json",
+                            "component_digest": "b" * 64,
+                            "component_size_bytes": len(component_bytes),
+                        },
+                        {
+                            "plugin_id": "managed-shadow-plugin",
+                            "component_type": "tools",
+                            "name": "Resized tool",
+                            "manifest_digest": manifest_digest,
+                            "component_path": "docs/runbook.json",
+                            "component_digest": component_digest,
+                            "component_size_bytes": len(component_bytes) + 1,
+                        },
+                        {
+                            "plugin_id": "managed-shadow-plugin",
+                            "component_type": "agent_blueprints",
+                            "name": "Missing blueprint",
+                            "manifest_digest": manifest_digest,
+                            "component_path": "docs/missing.json",
+                            "component_digest": "c" * 64,
+                            "component_size_bytes": 1,
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    first_list_response = client.get("/plugins/managed-shadow-plugin/components")
+    manifest["version"] = "1.0.1"
+    _write_plugin_manifest(root_dir, "managed-shadow-plugin", manifest)
+    stale_list_response = client.get("/plugins/managed-shadow-plugin/components")
+
+    assert first_list_response.status_code == 200
+    first_components = first_list_response.json()["components"]
+    assert [(item["name"], item["source"], item["status"]) for item in first_components] == [
+        ("Managed runbook", "managed", "installed"),
+        ("Drifted skill", "managed", "drifted"),
+        ("Resized tool", "managed", "drifted"),
+        ("Missing blueprint", "managed", "drifted"),
+    ]
+    assert all(item["name"] != "Local runbook" for item in first_components)
+    assert all(item["name"] != "Spoofed managed component" for item in first_components)
+    assert stale_list_response.status_code == 200
+    assert {item["status"] for item in stale_list_response.json()["components"]} == {"stale"}
+    persisted = json.loads((data_dir / "plugin-components.json").read_text(encoding="utf-8"))
+    assert {item["name"] for item in persisted} == {"Local runbook", "Spoofed managed component"}
+    get_settings.cache_clear()
+
+
 def test_managed_command_recipes_api_exposes_runtime_paths_without_local_persistence(
     tmp_path,
     monkeypatch,

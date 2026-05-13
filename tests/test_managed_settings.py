@@ -14,6 +14,7 @@ from dgentic.settings import (
     managed_cli_policy_rules,
     managed_command_recipes,
     managed_hook_policy_rules,
+    managed_plugin_component_records,
     managed_plugin_trust_records,
     managed_policy_locks,
     require_managed_policy_surface_mutable,
@@ -183,6 +184,71 @@ def test_managed_plugin_trust_records_apply_only_from_managed_settings(
     assert records[0].decided_by == "platform-security"
 
 
+def test_managed_plugin_component_records_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_PLUGIN_COMPONENT_RECORDS",
+        json.dumps(
+            [
+                {
+                    "plugin_id": "env-plugin",
+                    "component_type": "tools",
+                    "name": "Environment component",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ]
+        ),
+    )
+
+    assert managed_plugin_component_records() == ()
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_plugin_component_records": [
+                    {
+                        "plugin_id": "managed-plugin",
+                        "component_type": "tools",
+                        "name": "Managed scanner",
+                        "manifest_digest": "c" * 64,
+                        "component_path": "tools/scanner.json",
+                        "component_digest": "d" * 64,
+                        "component_size_bytes": 42,
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    records = managed_plugin_component_records()
+
+    assert json.loads(settings.managed_plugin_component_records)[0]["plugin_id"] == (
+        "managed-plugin"
+    )
+    assert fields["managed_plugin_component_records"].source == "managed"
+    assert view.managed_fields == ["managed_plugin_component_records"]
+    assert len(records) == 1
+    assert records[0].component_id.startswith("managed-plugin.component-")
+    assert records[0].plugin_id == "managed-plugin"
+    assert records[0].component_type == "tools"
+    assert records[0].name == "Managed scanner"
+    assert records[0].component_path == "tools/scanner.json"
+    assert records[0].source == "managed"
+    assert records[0].installed_by == "managed"
+
+
 @pytest.mark.parametrize(
     ("records_payload", "error_match"),
     [
@@ -238,6 +304,161 @@ def test_managed_plugin_trust_records_fail_closed(
     managed_path, _raw_payload = _write_managed_settings(
         tmp_path,
         {"settings": {"managed_plugin_trust_records": records_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match=error_match):
+        get_settings()
+
+
+@pytest.mark.parametrize(
+    ("records_payload", "error_match"),
+    [
+        ({"plugin_id": "not-a-list"}, "must be a list"),
+        (
+            [{"plugin_id": "bad.unknown", "unknown": True}],
+            "Unknown managed plugin component field",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "bad plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "plugin_id is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "unknown",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "type is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "not-a-digest",
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "manifest_digest is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "../scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "path is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": -1,
+                }
+            ],
+            "size is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                    "status": "ready",
+                }
+            ],
+            "status is invalid",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                },
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools\\scanner.json",
+                    "component_digest": "c" * 64,
+                    "component_size_bytes": 42,
+                },
+            ],
+            "Duplicate managed plugin component id",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "DGENTIC_PLUGIN_ID": "managed-plugin-shadow",
+                    "component_type": "tools",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "Duplicate managed plugin component field",
+        ),
+        (
+            [
+                {
+                    "plugin_id": "managed-plugin",
+                    "component_type": "tools",
+                    "name": "TOKEN=component-secret",
+                    "manifest_digest": "a" * 64,
+                    "component_path": "tools/scanner.json",
+                    "component_digest": "b" * 64,
+                    "component_size_bytes": 42,
+                }
+            ],
+            "secret-shaped",
+        ),
+    ],
+)
+def test_managed_plugin_component_records_fail_closed(
+    tmp_path,
+    monkeypatch,
+    records_payload,
+    error_match: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_plugin_component_records": records_payload}},
     )
     monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
 

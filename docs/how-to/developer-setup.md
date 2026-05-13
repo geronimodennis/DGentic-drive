@@ -133,6 +133,8 @@ The same managed file can publish deployment-owned plugin trust records with `ma
 
 Managed files can also publish deployment-owned command recipes with `managed_command_recipes`. These records use the normal command recipe schema, appear from `GET /cli/recipes` and `GET /cli/recipes/{recipe_id}` with `source: "managed"`, and execute, preview, request approvals, and start runs through the existing CLI runtime and approval contracts. They are only honored from `DGENTIC_MANAGED_SETTINGS_FILE`, are validated fail-closed for duplicate normalized fields, duplicate normalized ids, unsafe templates, and secret-shaped text, are never written to `command-recipes.json`, and cannot be created, patched, or shadowed by local or plugin recipe mutation routes.
 
+Managed files can publish deployment-owned inert plugin component records with `managed_plugin_component_records`. Each record pins a plugin id, component type, relative component path, manifest digest, component digest, component size, and optional `installed` or `disabled` status. Managed component records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, appear from `GET /plugins/{plugin_id}/components` with `source: "managed"`, shadow matching local `plugin-components.json` rows, reject local component install/disable mutation for that plugin, never write managed rows to `plugin-components.json`, and report `stale` when the manifest digest changes or `drifted` when the referenced component bytes no longer match.
+
 Rotate persisted local vault ciphertext after changing the operator-managed Fernet key:
 
 ```powershell

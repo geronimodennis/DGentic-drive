@@ -4,6 +4,40 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009ao Managed Plugin Component Records
+
+Status: completed for the scoped managed plugin component record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks, and direct git/PR workflow runners beyond approval-bound CLI execution.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM/PO selected managed plugin component records after BL-009an because deployment-owned inert component provenance was the next bounded managed policy-source control before any future executable plugin loading.
+- Completed: Architect/Security scoped records as read-only settings-file data with computed component ids, no local persistence, managed-over-local overlay, local spoof filtering, and `stale`/`drifted` provenance reporting.
+- Completed: Developer added `managed_plugin_component_records` parsing, managed source attribution, managed overlay behavior in component listing, local spoof filtering, install/disable read-only enforcement for managed plugin ids, and stale/drifted managed status checks for manifest and component provenance.
+- Completed: QA added managed-settings and API coverage for managed-only loading, fail-closed parser validation, list/source behavior, no local persistence, managed shadowing, read-only install/disable rejection, local managed-source spoof filtering, stale manifest reporting, digest drift, size drift, and missing component drift.
+- Completed: Reviewer/QA scout identified the missing size/missing-file drift coverage and install read-only precedence risk; Developer and QA fixed both before final validation.
+- Completed: PM updated README, architecture, usage, developer setup, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `DGENTIC_MANAGED_SETTINGS_FILE` can declare `managed_plugin_component_records` with plugin id, component type, component path, manifest digest, component digest, component size, optional name, and optional `installed` or `disabled` status.
+- Implemented in this slice: `GET /plugins/{plugin_id}/components` lists source-attributed managed component records ahead of local component records and filters locally persisted rows that spoof `source: "managed"`.
+- Implemented in this slice: managed component records shadow local records with the same computed component id, never write to `plugin-components.json`, and make component install/disable mutation read-only for managed plugin ids.
+- Implemented in this slice: managed component list status reports `stale` when the plugin manifest digest no longer matches and `drifted` when the component is missing, resized, or digest-mismatched.
+- Still out of scope after this slice: plugin hook-code/tool/agent/skill loading governance, managed KMS, first-class secret-manager adapters, full web retrieval/fetch runtime, OS-level/non-Python egress isolation, direct git/PR runners, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused managed component settings gate: `python -m pytest -q tests\test_managed_settings.py -k "managed_plugin_component" --maxfail=1 -x` passed with 12 tests and 42 deselected.
+- Focused managed/reference component API gate: `python -m pytest -q tests\test_api.py -k "managed_plugin_component or plugin_reference_component" --maxfail=1 -x` passed with 4 tests and 195 deselected.
+- Combined managed/reference component and lock gate: `python -m pytest -q tests\test_managed_settings.py tests\test_api.py -k "managed_plugin_component or plugin_reference_component or managed_policy_locks" --maxfail=1 -x` passed with 18 tests and 235 deselected.
+- Focused auth/plugin capability gate: `python -m pytest -q tests\test_auth.py -k "plugin" --maxfail=1 -x` passed with 12 tests and 107 deselected.
+- Affected suite gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_api.py tests\test_auth.py --maxfail=1 -x` with 372 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,211 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009an Managed Command Recipes
 
 Status: completed for the scoped managed command recipe slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, full web retrieval/fetch runtime beyond the guard contract, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, broader managed policy-source controls beyond CLI/hook/command-recipe/plugin-trust policy records and coarse surface locks, managed plugin component records if needed before executable plugin loading, and direct git/PR workflow runners beyond approval-bound CLI execution.

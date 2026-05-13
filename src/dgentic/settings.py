@@ -32,6 +32,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "managed_command_recipes",
         "managed_hook_policy_rules",
         "managed_policy_locks",
+        "managed_plugin_component_records",
         "managed_plugin_trust_records",
         "max_filesystem_bytes",
         "network_domain_policy",
@@ -55,6 +56,7 @@ _JSON_STRING_SETTINGS_FIELDS = frozenset(
         "managed_command_recipes",
         "managed_hook_policy_rules",
         "managed_policy_locks",
+        "managed_plugin_component_records",
         "managed_plugin_trust_records",
         "network_domain_policy",
         "provider_pricing_catalog",
@@ -108,8 +110,10 @@ _MANAGED_HOOK_POLICY_RULE_ALLOWED_FIELDS = frozenset(
     }
 )
 _MANAGED_PLUGIN_TRUST_RECORD_MAX_COUNT = 100
+_MANAGED_PLUGIN_COMPONENT_RECORD_MAX_COUNT = 200
 _MANAGED_PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _MANAGED_PLUGIN_DIGEST_RE = re.compile(r"^[a-fA-F0-9]{64}$")
+_MANAGED_PLUGIN_COMPONENT_TYPES = frozenset({"agent_blueprints", "skills", "tools", "docs"})
 _MANAGED_PLUGIN_TRUST_ALLOWED_FIELDS = frozenset(
     {
         "plugin_id",
@@ -117,6 +121,18 @@ _MANAGED_PLUGIN_TRUST_ALLOWED_FIELDS = frozenset(
         "status",
         "reason",
         "decided_by",
+    }
+)
+_MANAGED_PLUGIN_COMPONENT_ALLOWED_FIELDS = frozenset(
+    {
+        "plugin_id",
+        "component_type",
+        "name",
+        "manifest_digest",
+        "component_path",
+        "component_digest",
+        "component_size_bytes",
+        "status",
     }
 )
 _MANAGED_RULE_TIMESTAMP = datetime(1970, 1, 1, tzinfo=UTC)
@@ -164,6 +180,7 @@ class Settings(BaseSettings):
     managed_command_recipes: str = ""
     managed_hook_policy_rules: str = ""
     managed_policy_locks: str = ""
+    managed_plugin_component_records: str = ""
     managed_plugin_trust_records: str = ""
     max_filesystem_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -328,6 +345,13 @@ def managed_plugin_trust_records() -> tuple[ManagedPluginTrustRecord, ...]:
     return _parse_managed_plugin_trust_records(get_settings().managed_plugin_trust_records)
 
 
+def managed_plugin_component_records():
+    metadata = get_settings_source_metadata()
+    if metadata.sources.get("managed_plugin_component_records") != "managed":
+        return tuple()
+    return _parse_managed_plugin_component_records(get_settings().managed_plugin_component_records)
+
+
 def require_managed_policy_surface_mutable(surface: str) -> None:
     normalized = _normalize_managed_policy_lock_surface(surface)
     if normalized in managed_policy_locks():
@@ -431,6 +455,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
             _parse_managed_command_recipes(value)
         if key == "managed_hook_policy_rules":
             _parse_managed_hook_policy_rules(value)
+        if key == "managed_plugin_component_records":
+            _parse_managed_plugin_component_records(value)
         if key == "managed_plugin_trust_records":
             _parse_managed_plugin_trust_records(value)
         if key == "managed_policy_locks":
@@ -746,6 +772,110 @@ def _parse_managed_plugin_trust_records(
                 status=status,
                 reason=redact_sensitive_values(reason.strip()),
                 decided_by=redact_sensitive_values(decided_by.strip()) or "managed",
+            )
+        )
+    return tuple(records)
+
+
+def _parse_managed_plugin_component_records(raw_value: str):
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError("managed_plugin_component_records must be valid JSON.") from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_plugin_component_records must be a list.")
+    if len(parsed) > _MANAGED_PLUGIN_COMPONENT_RECORD_MAX_COUNT:
+        raise ManagedSettingsError("managed_plugin_component_records declares too many records.")
+
+    from dgentic.plugins import (
+        PluginReferenceComponentRecord,
+        _normalize_component_path,
+        _plugin_reference_component_id,
+    )
+
+    records: list[PluginReferenceComponentRecord] = []
+    seen_component_ids: set[str] = set()
+    for raw_record in parsed:
+        if not isinstance(raw_record, dict):
+            raise ManagedSettingsError("managed_plugin_component_records entries must be objects.")
+        normalized_record: dict[str, Any] = {}
+        for raw_key, value in raw_record.items():
+            key = _normalize_managed_settings_key(str(raw_key))
+            if key in normalized_record:
+                raise ManagedSettingsError(f"Duplicate managed plugin component field: {key}")
+            normalized_record[key] = value
+        unknown_fields = sorted(set(normalized_record) - _MANAGED_PLUGIN_COMPONENT_ALLOWED_FIELDS)
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed plugin component field: {unknown_fields[0]}"
+            )
+        if redact_metadata(normalized_record) != normalized_record:
+            raise ManagedSettingsError(
+                "Managed plugin component record contains secret-shaped text."
+            )
+
+        plugin_id = normalized_record.get("plugin_id")
+        component_type = normalized_record.get("component_type")
+        manifest_digest = normalized_record.get("manifest_digest")
+        component_path = normalized_record.get("component_path")
+        component_digest = normalized_record.get("component_digest")
+        component_size_bytes = normalized_record.get("component_size_bytes")
+        status = normalized_record.get("status", "installed")
+        name = normalized_record.get("name", "")
+
+        if not isinstance(plugin_id, str) or not _MANAGED_PLUGIN_ID_RE.fullmatch(plugin_id):
+            raise ManagedSettingsError("Managed plugin component plugin_id is invalid.")
+        if redact_sensitive_values(plugin_id) != plugin_id:
+            raise ManagedSettingsError("Managed plugin component plugin_id is invalid.")
+        if component_type not in _MANAGED_PLUGIN_COMPONENT_TYPES:
+            raise ManagedSettingsError("Managed plugin component type is invalid.")
+        if not isinstance(manifest_digest, str) or not _MANAGED_PLUGIN_DIGEST_RE.fullmatch(
+            manifest_digest
+        ):
+            raise ManagedSettingsError("Managed plugin component manifest_digest is invalid.")
+        if not isinstance(component_digest, str) or not _MANAGED_PLUGIN_DIGEST_RE.fullmatch(
+            component_digest
+        ):
+            raise ManagedSettingsError("Managed plugin component component_digest is invalid.")
+        if not isinstance(component_path, str):
+            raise ManagedSettingsError("Managed plugin component path is invalid.")
+        try:
+            normalized_path = _normalize_component_path(component_path)
+        except ValueError as exc:
+            raise ManagedSettingsError("Managed plugin component path is invalid.") from exc
+        if not isinstance(component_size_bytes, int) or component_size_bytes < 0:
+            raise ManagedSettingsError("Managed plugin component size is invalid.")
+        if status not in {"installed", "disabled"}:
+            raise ManagedSettingsError("Managed plugin component status is invalid.")
+        if not isinstance(name, str):
+            raise ManagedSettingsError("Managed plugin component name is invalid.")
+
+        component_id = _plugin_reference_component_id(
+            plugin_id,
+            component_type,
+            normalized_path,
+        )
+        if component_id in seen_component_ids:
+            raise ManagedSettingsError(f"Duplicate managed plugin component id: {component_id}")
+        seen_component_ids.add(component_id)
+        records.append(
+            PluginReferenceComponentRecord(
+                component_id=component_id,
+                plugin_id=plugin_id,
+                component_type=component_type,
+                name=redact_sensitive_values(name.strip()),
+                manifest_digest=manifest_digest.lower(),
+                component_path=normalized_path,
+                component_digest=component_digest.lower(),
+                component_size_bytes=component_size_bytes,
+                status=status,
+                installed_by="managed",
+                source="managed",
+                created_at=_MANAGED_RULE_TIMESTAMP,
+                updated_at=_MANAGED_RULE_TIMESTAMP,
             )
         )
     return tuple(records)

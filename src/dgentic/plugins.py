@@ -24,7 +24,12 @@ from dgentic.hook_policy import (
 )
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import HookPolicyRuleRequest, LogEventType
-from dgentic.settings import ManagedPluginTrustRecord, get_settings, managed_plugin_trust_records
+from dgentic.settings import (
+    ManagedPluginTrustRecord,
+    get_settings,
+    managed_plugin_component_records,
+    managed_plugin_trust_records,
+)
 from dgentic.storage import JsonCollection
 
 PLUGIN_MANIFEST_NAME = "dgentic-plugin.json"
@@ -34,7 +39,7 @@ PLUGIN_HOOK_POLICY_MAX_RULES = 50
 PLUGIN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$"
 PluginTrustDecision = Literal["trusted", "blocked"]
 PluginTrustStatus = Literal["trusted", "blocked", "untrusted", "stale"]
-PluginActivationStatus = Literal["ready", "installed", "disabled"]
+PluginActivationStatus = Literal["ready", "installed", "disabled", "stale", "drifted"]
 PluginReferenceComponentType = Literal["agent_blueprints", "skills", "tools", "docs"]
 
 
@@ -256,6 +261,7 @@ class PluginReferenceComponentRecord(BaseModel):
     component_digest: str = Field(min_length=64, max_length=64)
     component_size_bytes: int = Field(ge=0)
     status: Literal["installed", "disabled"] = "installed"
+    source: Literal["plugin", "managed"] = "plugin"
     installed_by: str = Field(default="system", max_length=120)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -286,7 +292,8 @@ class PluginReferenceComponentActivationView(BaseModel):
     component_digest: str
     component_size_bytes: int = Field(ge=0)
     manifest_digest: str
-    status: Literal["installed", "disabled"]
+    status: PluginActivationStatus
+    source: Literal["plugin", "managed"] = "plugin"
 
 
 class PluginReferenceComponentActivationResponse(BaseModel):
@@ -614,6 +621,7 @@ def install_plugin_reference_components(
     *,
     actor: str | None = None,
 ) -> PluginReferenceComponentActivationResponse:
+    _ensure_plugin_reference_components_mutable(plugin_id)
     plugin = _trusted_plugin_for_activation(plugin_id)
     components = _load_plugin_reference_components(plugin)
     now = datetime.now(UTC)
@@ -642,6 +650,8 @@ def install_plugin_reference_components(
         saved_by_id: dict[str, PluginReferenceComponentRecord] = {}
         updated_items: list[PluginReferenceComponentRecord] = []
         for item in items:
+            if item.source == "managed":
+                continue
             replacement = records_by_id.pop(item.component_id, None)
             if replacement is None:
                 updated_items.append(item)
@@ -677,6 +687,7 @@ def disable_plugin_reference_components(
     actor: str | None = None,
 ) -> PluginReferenceComponentActivationResponse:
     normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    _ensure_plugin_reference_components_mutable(normalized_plugin_id)
     now = datetime.now(UTC)
     disabled: list[PluginReferenceComponentRecord] = []
 
@@ -685,7 +696,9 @@ def disable_plugin_reference_components(
     ) -> tuple[list[PluginReferenceComponentRecord], list[PluginReferenceComponentRecord]]:
         updated_items: list[PluginReferenceComponentRecord] = []
         for item in items:
-            if item.plugin_id == normalized_plugin_id:
+            if item.source == "managed":
+                continue
+            if item.plugin_id == normalized_plugin_id and item.source == "plugin":
                 updated = item.model_copy(
                     update={
                         "status": "disabled",
@@ -716,15 +729,21 @@ def disable_plugin_reference_components(
 
 def list_plugin_reference_components(plugin_id: str) -> PluginReferenceComponentActivationResponse:
     normalized_plugin_id = _normalize_plugin_id(plugin_id)
-    records = [
+    managed_records = _managed_plugin_component_records(normalized_plugin_id)
+    managed_ids = {record.component_id for record in managed_records}
+    local_records = [
         record
         for record in _plugin_reference_components.list()
         if record.plugin_id == normalized_plugin_id
+        and record.source != "managed"
+        and record.component_id not in managed_ids
     ]
     return PluginReferenceComponentActivationResponse(
         plugin_id=normalized_plugin_id,
         manifest_digest="",
-        components=[_plugin_reference_record_view(record) for record in records],
+        components=[
+            _plugin_reference_record_view(record) for record in [*managed_records, *local_records]
+        ],
     )
 
 
@@ -739,8 +758,28 @@ def _plugin_reference_record_view(
         component_digest=record.component_digest,
         component_size_bytes=record.component_size_bytes,
         manifest_digest=record.manifest_digest,
-        status=record.status,
+        status=_plugin_reference_record_status(record),
+        source=record.source,
     )
+
+
+def _plugin_reference_record_status(
+    record: PluginReferenceComponentRecord,
+) -> PluginActivationStatus:
+    if record.source != "managed":
+        return record.status
+    try:
+        plugin = get_plugin(record.plugin_id)
+        if plugin.manifest_digest != record.manifest_digest:
+            return "stale"
+        raw_component = _read_plugin_component_bytes(record.plugin_id, record.component_path)
+    except (KeyError, ValueError):
+        return "drifted"
+    if len(raw_component) != record.component_size_bytes:
+        return "drifted"
+    if sha256(raw_component).hexdigest() != record.component_digest:
+        return "drifted"
+    return record.status
 
 
 def _preview_reference_component_view(
@@ -897,6 +936,23 @@ def _managed_plugin_trust_record(plugin_id: str) -> ManagedPluginTrustRecord | N
         ),
         None,
     )
+
+
+def _managed_plugin_component_records(plugin_id: str) -> list[PluginReferenceComponentRecord]:
+    normalized_plugin_id = _normalize_plugin_id(plugin_id)
+    return [
+        record
+        for record in managed_plugin_component_records()
+        if record.plugin_id == normalized_plugin_id
+    ]
+
+
+def _ensure_plugin_reference_components_mutable(plugin_id: str) -> None:
+    if _managed_plugin_component_records(plugin_id):
+        raise PermissionError(
+            "Managed plugin component records cannot be modified through "
+            "the local plugin component API."
+        )
 
 
 def _load_plugin_command_recipe_components(

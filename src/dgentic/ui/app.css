@@ -354,6 +354,26 @@ textarea {
   min-width: 0;
 }
 
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.policy-grid section {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.policy-grid h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
 .input-action input {
   flex: 1 1 auto;
 }
@@ -591,6 +611,7 @@ textarea {
   .two-column,
   .settings-grid,
   .workspace-layout,
+  .policy-grid,
   .decision-form {
     grid-template-columns: 1fr;
   }

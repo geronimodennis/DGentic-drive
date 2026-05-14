@@ -23,6 +23,7 @@
           <a href="#approvals">Approvals</a>
           <a href="#git">Git</a>
           <a href="#cli-runs">CLI Runs</a>
+          <a href="#policy">Policy</a>
           <a href="#settings">Settings</a>
           <a href="#activity">Activity</a>
         </nav>
@@ -239,6 +240,36 @@
             <div class="workspace-layout">
               <div id="cliRunList" class="compact-list"></div>
               <div id="cliRunOutput" class="output-region"></div>
+            </div>
+          </article>
+
+          <article id="policy" class="panel wide-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Policy</p>
+                <h2>Rules And Plugins</h2>
+              </div>
+              <button id="loadPolicyButton" type="button" class="icon-button" title="Reload policy surfaces" aria-label="Reload policy surfaces">
+                R
+              </button>
+            </div>
+            <div class="policy-grid">
+              <section>
+                <h3>CLI Rules</h3>
+                <div id="cliPolicyList" class="compact-list"></div>
+              </section>
+              <section>
+                <h3>Recipes</h3>
+                <div id="recipeList" class="compact-list"></div>
+              </section>
+              <section>
+                <h3>Hooks</h3>
+                <div id="hookPolicyList" class="compact-list"></div>
+              </section>
+              <section>
+                <h3>Plugins</h3>
+                <div id="pluginList" class="compact-list"></div>
+              </section>
             </div>
           </article>
 

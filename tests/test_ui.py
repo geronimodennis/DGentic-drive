@@ -15,6 +15,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "DGentic Control" in response.text
     assert "Workspace" in response.text
     assert "CLI Runs" in response.text
+    assert "Rules And Plugins" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -35,10 +36,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/cli/runs"' in script_response.text
     assert "api(`/cli/runs/${encodeURIComponent(runId)}/output`)" in script_response.text
     assert "api(`/cli/approvals/${encodeURIComponent(approvalId)}/execute`" in script_response.text
+    assert 'api("/cli/policy/rules")' in script_response.text
+    assert 'api("/cli/recipes")' in script_response.text
+    assert 'api("/guardrails/hooks/rules")' in script_response.text
+    assert 'api("/plugins")' in script_response.text
     assert "rootDir" not in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".workspace-layout" in style_response.text
+    assert ".policy-grid" in style_response.text
     assert ".approval-list" in style_response.text
 
 

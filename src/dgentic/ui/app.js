@@ -135,6 +135,7 @@ async function refreshDashboard() {
     loadApprovals(),
     loadProviders(),
     loadCliRuns(),
+    loadPolicySurfaces(),
     loadSettings(),
     loadLogs(),
   ]);
@@ -624,6 +625,60 @@ async function loadCliRunOutput(runId) {
   }
 }
 
+async function loadPolicySurfaces() {
+  const [cliRules, recipes, hooks, plugins] = await Promise.all([
+    safeLoad("CLI rules", () => api("/cli/policy/rules")),
+    safeLoad("recipes", () => api("/cli/recipes")),
+    safeLoad("hooks", () => api("/guardrails/hooks/rules")),
+    safeLoad("plugins", () => api("/plugins")),
+  ]);
+  renderPolicyList(qs("#cliPolicyList"), cliRules, (rule) => ({
+    title: rule.name || rule.id,
+    meta: `${rule.source || "local"} - ${rule.permission_mode || rule.risk || "policy"} - ${
+      rule.match_type || "-"
+    }`,
+    status: rule.enabled === false ? "blocked" : "ok",
+  }));
+  renderPolicyList(qs("#recipeList"), recipes, (recipe) => ({
+    title: recipe.name || recipe.id,
+    meta: `${recipe.source || "local"} - ${(recipe.tags || []).join(", ") || "recipe"}`,
+    status: "ok",
+  }));
+  renderPolicyList(qs("#hookPolicyList"), hooks, (hook) => ({
+    title: hook.name || hook.id,
+    meta: `${hook.source || "local"} - ${hook.surface || "-"} - ${hook.effect || "-"}`,
+    status: hook.enabled === false ? "blocked" : "ok",
+  }));
+  const pluginItems = plugins.ok ? plugins.data.plugins || [] : [];
+  renderPolicyList(qs("#pluginList"), { ...plugins, data: pluginItems }, (plugin) => ({
+    title: plugin.plugin_id || plugin.id || plugin.name,
+    meta: `${plugin.trust_status || plugin.status || "unknown"} - ${
+      plugin.trust_source || "local"
+    }`,
+    status: plugin.trust_status === "trusted" ? "ok" : "pending",
+  }));
+}
+
+function renderPolicyList(target, result, mapper) {
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  if (!result.data.length) {
+    target.append(statusBox("No records", "Nothing configured for this surface.", "pending"));
+    return;
+  }
+  for (const record of result.data.slice(0, 8)) {
+    const mapped = mapper(record);
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", mapped.title || "record"));
+    item.append(make("div", "item-meta", mapped.meta || ""));
+    item.append(statusChip(mapped.status || "ok"));
+    target.append(item);
+  }
+}
+
 async function loadLogs() {
   const eventType = qs("#logFilter").value;
   const suffix = eventType ? `?event_type=${encodeURIComponent(eventType)}` : "";
@@ -670,6 +725,7 @@ function bindEvents() {
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
+  qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
   for (const button of qsa(".segmented-control button")) {

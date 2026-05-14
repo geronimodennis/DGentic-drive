@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010d Read-Only Policy And Plugin Visibility
+
+Status: completed for the scoped read-only policy/plugin visibility slice; Sprint 16 remains active for editable settings/policy surfaces, project add/open and rootDir switching, AI-change review, richer approval filtering, memory/tool reliability dashboards, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Developer added a Policy dashboard section for CLI policy rules, command recipes, hook policy rules, and plugin trust/discovery state.
+- Completed: QA expanded UI static tests to assert read-only policy/plugin endpoint wiring and stylesheet coverage.
+- Completed: PM updated README, architecture, setup, usage, backlog, project status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` reads `GET /cli/policy/rules`, `GET /cli/recipes`, `GET /guardrails/hooks/rules`, and `GET /plugins` and renders bounded record summaries.
+- Implemented in this slice: the policy section is read-only and does not add mutation controls, preserving existing backend capability gates and managed policy lock behavior.
+- Still out of scope after this slice: editable policy/settings forms, plugin component install/disable controls, command recipe preview/execute UX, richer filtering/search, and end-to-end browser policy scenario tests.
+
+Validation:
+- Focused UI tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Focused lint/format/diff hygiene passed: `python -m ruff check tests\test_ui.py src\dgentic\main.py`, `python -m ruff format --check tests\test_ui.py src\dgentic\main.py`, and `git diff --check`.
+- Browser smoke passed in the Codex in-app browser against `http://127.0.0.1:8020/ui/`: policy section, CLI rules, and plugins panels rendered, and console error count was 0.
+- Full lint/format/regression gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `python -m pytest -q --maxfail=1 -x` with 1,314 tests and 2 skipped.
+
 ### Sprint 16 BL-010c CLI Approval Execution And Run Output UI
 
 Status: completed for the scoped CLI approval execution and run output visibility slice; Sprint 16 remains active for richer approval filtering, non-CLI execution UX, project add/open and rootDir switching, AI-change review, policy/settings editors, plugin and command-recipe views, and broader browser validation.

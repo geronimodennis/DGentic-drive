@@ -72,6 +72,17 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderApprovalSummary" in script_response.text
     assert "renderApprovalReviewSummary" in script_response.text
     assert "approvalReviewPairs" in script_response.text
+    assert "renderApprovalExecutionControls" in script_response.text
+    assert "renderBoundExecutionRequestPanel" in script_response.text
+    assert "boundExecutionRequestScaffold" in script_response.text
+    assert "filesystemBoundExecutionScaffold" in script_response.text
+    assert "networkBoundExecutionScaffold" in script_response.text
+    assert "providerBoundExecutionScaffold" in script_response.text
+    assert "toolBoundExecutionScaffold" in script_response.text
+    assert "copyBoundExecutionPayload" in script_response.text
+    assert "Bound execution request" in script_response.text
+    assert "Payload scaffold" in script_response.text
+    assert "Copy Payload" in script_response.text
     assert "renderReviewWarnings" in script_response.text
     assert "reviewValue" in script_response.text
     assert "Raw review" in script_response.text
@@ -79,6 +90,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "direct_execute_available" in script_response.text
     assert "review_warnings" in script_response.text
     assert "workflow_binding" in script_response.text
+    assert '"/filesystem/delete"' in script_response.text
+    assert '"/filesystem/move"' in script_response.text
+    assert '"/filesystem/copy"' in script_response.text
+    assert '"/filesystem/rename"' in script_response.text
+    assert '"/web-retrieval/fetch"' in script_response.text
+    assert '"/web-retrieval/network/authorize"' in script_response.text
+    assert '"/providers/generate"' in script_response.text
+    assert '"/providers/generate/stream"' in script_response.text
+    assert "/tools/${encodeURIComponent" in script_response.text
     assert "api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`)" in (
         script_response.text
     )
@@ -261,6 +281,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".approval-filter-row" in style_response.text
     assert ".approval-summary-grid" in style_response.text
     assert ".approval-review-summary" in style_response.text
+    assert ".bound-execution-panel" in style_response.text
     assert ".review-warning-list" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text

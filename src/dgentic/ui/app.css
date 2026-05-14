@@ -865,6 +865,7 @@ textarea {
 .json-details,
 .chip-list,
 .approval-review-summary,
+.bound-execution-panel,
 .git-diff-review,
 .git-diff-section,
 .git-review-summary {
@@ -895,6 +896,7 @@ textarea {
 .changed-paths,
 .chip-list,
 .approval-review-summary,
+.bound-execution-panel,
 .git-diff-review,
 .git-diff-review-output,
 .git-diff-section,

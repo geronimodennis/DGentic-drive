@@ -1710,7 +1710,14 @@ function renderApprovalReview(item) {
     decideApproval(submitter.dataset.decision, reason.value.trim());
   });
   target.append(form);
-  if (item.source.key === "cli" && item.approval.status === "approved") {
+  renderApprovalExecutionControls(target, item);
+}
+
+function renderApprovalExecutionControls(target, item) {
+  if (item.approval.status !== "approved") {
+    return;
+  }
+  if (item.source.key === "cli") {
     const canExecute = item.review.direct_execute_available !== false;
     const executeButton = make("button", "primary-button", "Execute approved command");
     executeButton.type = "button";
@@ -1726,6 +1733,187 @@ function renderApprovalReview(item) {
         ),
       );
     }
+    return;
+  }
+  renderBoundExecutionRequestPanel(target, item);
+}
+
+function renderBoundExecutionRequestPanel(target, item) {
+  const scaffold = boundExecutionRequestScaffold(item);
+  if (!scaffold) {
+    return;
+  }
+  const panel = make("div", "bound-execution-panel");
+  panel.append(statusBox("Bound execution request", `${scaffold.method} ${scaffold.endpoint}`, "pending"));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Source", item.source.label);
+  appendKeyValue(grid, "Approval", item.approval.id);
+  appendKeyValue(grid, "Direct execution", item.review.direct_execute_available ? "Available" : "Not available");
+  appendKeyValue(grid, "Requires bound request", item.review.requires_bound_execution_request ? "Yes" : "No");
+  panel.append(grid);
+
+  if (scaffold.notes.length) {
+    const notes = make("div", "review-warning-list");
+    notes.append(make("div", "item-title", "Execution notes"));
+    for (const note of scaffold.notes) {
+      const row = make("div", "finding-row");
+      row.append(statusChip("pending"), make("span", "", note));
+      notes.append(row);
+    }
+    panel.append(notes);
+  }
+
+  const details = make("details", "json-details");
+  details.open = true;
+  details.append(make("summary", "", "Payload scaffold"));
+  details.append(jsonBlock(scaffold.payload));
+  const buttons = make("div", "recipe-action-buttons");
+  const copyButton = make("button", "link-button", "Copy Payload");
+  copyButton.type = "button";
+  copyButton.addEventListener("click", () => copyBoundExecutionPayload(scaffold));
+  buttons.append(copyButton);
+  panel.append(details, buttons);
+  target.append(panel);
+}
+
+function addApprovalContextFields(payload, review) {
+  for (const key of ["requested_by", "agent_id", "agent_role", "task_id"]) {
+    if (review[key]) {
+      payload[key] = review[key];
+    }
+  }
+  return payload;
+}
+
+function boundExecutionRequestScaffold(item) {
+  const review = item.review || {};
+  const basePayload = addApprovalContextFields({ approval_id: item.approval.id }, review);
+  if (item.source.key === "filesystem") {
+    return filesystemBoundExecutionScaffold(review, basePayload);
+  }
+  if (item.source.key === "network") {
+    return networkBoundExecutionScaffold(review, basePayload);
+  }
+  if (item.source.key === "provider") {
+    return providerBoundExecutionScaffold(review, basePayload);
+  }
+  if (item.source.key === "tool") {
+    return toolBoundExecutionScaffold(review, basePayload);
+  }
+  return null;
+}
+
+function filesystemBoundExecutionScaffold(review, basePayload) {
+  const endpoints = {
+    read: "/filesystem/read",
+    write: "/filesystem/write",
+    binary_read: "/filesystem/read-binary",
+    binary_write: "/filesystem/write-binary",
+    delete: "/filesystem/delete",
+    move: "/filesystem/move",
+    copy: "/filesystem/copy",
+    rename: "/filesystem/rename",
+    metadata: "/filesystem/metadata",
+    list: "/filesystem/list",
+  };
+  const action = review.action || "read";
+  const payload = { ...basePayload, path: review.path || "." };
+  const notes = [];
+  if (action === "write") {
+    payload.content = "<original approved content>";
+    payload.create_parent_dirs = review.create_parent_dirs !== false;
+    notes.push("Write approvals require the original approved content; it is not stored in the review.");
+  } else if (action === "binary_write") {
+    payload.content_base64 = "<original approved base64 content>";
+    payload.create_parent_dirs = review.create_parent_dirs !== false;
+    notes.push("Binary write approvals require the original approved base64 content; it is not stored in the review.");
+  } else if (action === "delete") {
+    payload.recursive = Boolean(review.recursive);
+  } else if (action === "move") {
+    payload.target_path = review.target_path || "<approved target path>";
+    payload.overwrite = Boolean(review.overwrite);
+  } else if (action === "copy") {
+    payload.target_path = review.target_path || "<approved target path>";
+    payload.overwrite = Boolean(review.overwrite);
+    payload.recursive = Boolean(review.recursive);
+  } else if (action === "rename") {
+    payload.new_name = review.target_path ? String(review.target_path).split(/[\\/]/).pop() : "<approved new name>";
+    payload.overwrite = Boolean(review.overwrite);
+  }
+  return {
+    method: "POST",
+    endpoint: endpoints[action] || "/filesystem/read",
+    payload,
+    notes,
+  };
+}
+
+function networkBoundExecutionScaffold(review, basePayload) {
+  const webRetrieval = review.surface === "web_retrieval" || review.action === "fetch";
+  return {
+    method: "POST",
+    endpoint: webRetrieval ? "/web-retrieval/fetch" : "/web-retrieval/network/authorize",
+    payload: {
+      ...basePayload,
+      url: review.url || "<approved URL>",
+      timeout_seconds: 30,
+      max_response_bytes: 65536,
+    },
+    notes: webRetrieval
+      ? ["Web retrieval approvals are consumed by the fetch request."]
+      : ["Provider and tool network approvals are consumed through provider/tool execution as network_approval_id."],
+  };
+}
+
+function providerBoundExecutionScaffold(review, basePayload) {
+  const messages = review.review_messages?.length
+    ? review.review_messages.map((message) => ({
+        role: message.role || "user",
+        content: "<original approved message content>",
+      }))
+    : [{ role: "user", content: "<original approved message content>" }];
+  const options = {};
+  for (const key of review.option_keys || []) {
+    options[key] = "<original approved option value>";
+  }
+  return {
+    method: "POST",
+    endpoint: review.stream ? "/providers/generate/stream" : "/providers/generate",
+    payload: {
+      ...basePayload,
+      provider_id: review.provider_id || "<provider id>",
+      model: review.model || "<model>",
+      messages,
+      stream: Boolean(review.stream),
+      temperature: review.temperature ?? undefined,
+      max_tokens: review.max_tokens ?? undefined,
+      options,
+      timeout_seconds: review.timeout_seconds || 30,
+    },
+    notes: ["Provider approvals require the original approved message and option values; reviews expose safe metadata only."],
+  };
+}
+
+function toolBoundExecutionScaffold(review, basePayload) {
+  return {
+    method: "POST",
+    endpoint: `/tools/${encodeURIComponent(review.tool_name || "<tool>")}/execute`,
+    payload: {
+      ...basePayload,
+      payload: review.review_payload || {},
+      timeout_seconds: review.timeout_seconds || 30,
+    },
+    notes: ["Tool approvals require the exact approved payload; redacted review payloads may need original values restored."],
+  };
+}
+
+async function copyBoundExecutionPayload(scaffold) {
+  const text = JSON.stringify({ method: scaffold.method, endpoint: scaffold.endpoint, payload: scaffold.payload }, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Bound payload copied.");
+  } catch (_error) {
+    showToast("Copy unavailable in this browser context.");
   }
 }
 

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010y Non-CLI Bound Execution Handoff UI
+
+Status: completed for the scoped non-CLI bound execution handoff UI slice; Sprint 16 remains active for full chat workflows beyond the task-plan cards, accept/reject AI-change artifact workflows, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected non-CLI approval execution UX as the next bounded Sprint 16 approval-dashboard slice after BL-010x.
+- Completed: Explorer confirmed filesystem, network, provider, and tool approvals require normal bound execution requests rather than CLI-style direct approval execute routes.
+- Completed: Developer added dashboard approval execution controls that preserve CLI direct execution and render bound execution request panels for approved non-CLI reviews.
+- Completed: Developer added filesystem, network, provider, and tool payload scaffold builders with approval context, known safe review fields, endpoint selection, notes for original-value requirements, and copy support.
+- Completed: QA extended static UI coverage for the bound execution helpers, endpoint scaffolds, copy affordance, and CSS hook.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` shows the correct bound execution endpoint and safe payload scaffold for approved filesystem, network, provider, and tool approvals without bypassing backend digest/request binding.
+- Still out of scope after this slice: browser-side full request editors, direct non-CLI execution submission from the dashboard, full chat UX, accept/reject AI-change artifacts, broader editable settings/policy surfaces, end-to-end approval scenarios, and broader browser/responsive validation.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49718`: `/ui/` served and `/ui/app.js` included the bound execution scaffold helpers, endpoint targets, and copy affordance.
+
 ### Sprint 16 BL-010x Richer Task Plan And Run UI
 
 Status: completed for the scoped richer task plan/run UI slice; Sprint 16 remains active for full chat workflows beyond the task-plan cards, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

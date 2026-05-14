@@ -33,7 +33,10 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
     assert "Rules And Plugins" in response.text
+    assert "policyReviewSummary" in response.text
+    assert "Review Summary" in response.text
     assert "recipeActionPanel" in response.text
+    assert "settingsOutput" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -52,6 +55,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "approvalSourceLabel" in script_response.text
     assert "renderApprovalSummary" in script_response.text
     assert "approvalScopeMetric" in script_response.text
+    assert "latestSettingsView" in script_response.text
+    assert "renderSettingsReview" in script_response.text
+    assert "renderSettingsGroups" in script_response.text
+    assert "settingsGroupName" in script_response.text
+    assert "parseSettingList" in script_response.text
     assert "headers.Authorization" in script_response.text
     assert 'api("/filesystem/list"' in script_response.text
     assert 'api("/filesystem/read"' in script_response.text
@@ -140,7 +148,14 @@ def test_web_ui_static_assets_are_served() -> None:
     )
     assert "executions/${encodeURIComponent(executionId)}/cancel`" in script_response.text
     assert "renderGitCheckpoint" in script_response.text
+    assert "renderGitReviewSummary" in script_response.text
+    assert "AI change review" in script_response.text
+    assert "review_evidence_count" in script_response.text
     assert "checkpoint-grid" in script_response.text
+    assert "policyReviewSummary" in script_response.text
+    assert "renderPolicyReviewSummary" in script_response.text
+    assert "appendPolicyReviewCard" in script_response.text
+    assert "managed_policy_locks" in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".workspace-layout" in style_response.text
@@ -166,6 +181,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".recipe-parameter-grid" in style_response.text
     assert ".recipe-action-buttons" in style_response.text
     assert ".approval-list" in style_response.text
+    assert ".settings-review-summary" in style_response.text
+    assert ".settings-group-list" in style_response.text
+    assert ".setting-source-row" in style_response.text
+    assert ".policy-review-section" in style_response.text
+    assert ".git-review-summary" in style_response.text
 
 
 def test_web_ui_is_public_while_api_routes_remain_protected(tmp_path, monkeypatch) -> None:

@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010q Settings, Policy, And Git Review Summary UI
+
+Status: completed for the scoped read-only review-summary slice; Sprint 16 remains active for full chat workflows, full Codex-style AI-change diff review, editable settings and policy workflows, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a read-only settings, policy, and Git review summary slice because the existing `/settings/effective`, policy list, plugin list, recipe list, and Git checkpoint contracts already expose safe metadata.
+- Completed: Explorer confirmed the UI can deepen settings/policy review and Git checkpoint review without backend endpoint expansion, while full raw diff review still needs a future backend diff contract.
+- Completed: Developer grouped effective settings into runtime, security, policy-source, provider, memory/tool, execution-limit, and other sections with source, redaction, managed-field, managed-digest, and policy-lock summaries.
+- Completed: Developer added a policy review summary for CLI rules, command recipes, hook policies, plugins, managed locks, and disabled records using existing list endpoints.
+- Completed: Developer added a compact AI-change metadata summary to Git checkpoints using readiness, diff stats, changed-path count, evidence-line count, checkpoint digest, and action metadata already available to the UI.
+- Completed: QA extended UI static contract tests for the new settings, policy, and Git review helpers, markup ids, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can review effective settings by domain, see managed settings and policy-lock summaries, see policy surface counts by source/status, and read a Git checkpoint AI-change metadata summary without exposing raw diffs or adding backend API scope.
+- Still out of scope after this slice: full patch/diff review, accept/reject AI-change workflows, editable policy/settings forms, richer reviewer audit affordances, non-CLI execute UX, and browser end-to-end scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Live UI smoke passed against a temporary FastAPI server on `127.0.0.1:56938`: `/ui/` served the policy review summary markup and `/ui/app.js` served the settings and Git review helper code.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010p Command Recipe Action UI
 
 Status: completed for the scoped command recipe action UI slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

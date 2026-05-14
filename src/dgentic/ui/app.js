@@ -22,6 +22,8 @@ let activeRootSource = "";
 let activeProjectId = "";
 let selectedOrchestrationId = "";
 let taskGraphBuilderTasks = [];
+let latestSettingsView = null;
+let latestPolicyReviewResults = null;
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -164,6 +166,61 @@ function settingText(setting, fallback = "-") {
     return JSON.stringify(setting.value);
   }
   return String(setting.value ?? fallback);
+}
+
+function settingValueText(value, fallback = "-") {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function parseSettingList(setting) {
+  if (!setting) {
+    return [];
+  }
+  const value = setting.value;
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  const text = value.trim();
+  if (!text) {
+    return [];
+  }
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch (_error) {
+      return [text];
+    }
+  }
+  return text
+    .split(/[,\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function sourceCounts(settings) {
+  const counts = {};
+  for (const setting of settings || []) {
+    const source = setting.source || "unknown";
+    counts[source] = (counts[source] || 0) + 1;
+  }
+  return counts;
+}
+
+function compactCounts(counts) {
+  const entries = Object.entries(counts || {});
+  return entries.length ? entries.map(([key, value]) => `${key}: ${value}`).join(" | ") : "-";
 }
 
 function appendKeyValue(target, label, value, chipValue = "") {
@@ -1570,6 +1627,7 @@ async function createGitCheckpoint(event) {
   target.append(statusBox("Checking repository", payload.action, "running"));
   try {
     const checkpoint = await api("/cli/git/checkpoints", { method: "POST", body: payload });
+    checkpoint.review_evidence_count = payload.test_evidence.length;
     renderGitCheckpoint(checkpoint);
   } catch (error) {
     clear(target);
@@ -1599,6 +1657,7 @@ function renderGitCheckpoint(checkpoint) {
   appendKeyValue(grid, "Diff", checkpoint.diff_stat?.summary || "No tracked diff changes.");
   target.append(grid);
 
+  renderGitReviewSummary(target, checkpoint);
   renderFindings(target, "Blockers", checkpoint.blockers || [], "blocked");
   renderFindings(target, "Warnings", checkpoint.warnings || [], "pending");
   renderChangedPaths(target, checkpoint);
@@ -1607,6 +1666,33 @@ function renderGitCheckpoint(checkpoint) {
   details.append(make("summary", "", "Raw checkpoint"));
   details.append(jsonBlock(checkpoint));
   target.append(details);
+}
+
+function renderGitReviewSummary(target, checkpoint) {
+  const box = make("div", "git-review-summary");
+  box.append(make("div", "item-title", "AI change review"));
+  const grid = make("div", "checkpoint-grid");
+  const diffStat = checkpoint.diff_stat || {};
+  const pathCount = (checkpoint.changed_paths || []).length;
+  const pathSuffix = checkpoint.changed_paths_truncated ? "+" : "";
+  const evidenceCount =
+    checkpoint.review_evidence_count === undefined ? "-" : String(checkpoint.review_evidence_count);
+  appendKeyValue(grid, "Readiness", checkpoint.ready ? "Ready" : "Blocked", checkpoint.ready ? "ready" : "blocked");
+  appendKeyValue(
+    grid,
+    "Diff stat",
+    `${diffStat.files_changed || 0} files | +${diffStat.insertions || 0} / -${diffStat.deletions || 0}`,
+  );
+  appendKeyValue(grid, "Review paths", `${pathCount}${pathSuffix}`);
+  appendKeyValue(grid, "Evidence lines", evidenceCount);
+  appendKeyValue(
+    grid,
+    "Checkpoint digest",
+    checkpoint.checkpoint_digest ? checkpoint.checkpoint_digest.slice(0, 16) : "-",
+  );
+  appendKeyValue(grid, "Action", checkpoint.action || "-");
+  box.append(grid);
+  target.append(box);
 }
 
 function renderFindings(target, title, findings, state) {
@@ -1804,25 +1890,173 @@ async function loadSettings() {
   const target = qs("#settingsOutput");
   clear(target);
   if (!result.ok) {
+    latestSettingsView = null;
     target.append(statusBox("Settings unavailable", result.error, "blocked"));
     renderProjectContext(null, result.error);
+    renderPolicyReviewSummary();
     return;
   }
+  latestSettingsView = result.data;
   renderProjectContext(result.data);
-  const settings = result.data.settings || [];
-  for (const setting of settings.slice(0, 24)) {
-    const item = make("div", "setting-item");
-    item.append(make("strong", "", setting.name || "setting"));
-    const value =
-      setting.value && typeof setting.value === "object"
-        ? JSON.stringify(setting.value)
-        : String(setting.value);
-    item.append(make("code", "", `${setting.source || "runtime"}: ${value}`));
-    if (setting.redacted) {
-      item.append(statusChip("redacted"));
-    }
-    target.append(item);
+  renderSettingsReview(result.data, target);
+  renderPolicyReviewSummary();
+}
+
+function renderSettingsReview(settingsView, target) {
+  const settings = settingsView.settings || [];
+  const settingMap = new Map(settings.map((setting) => [setting.name, setting]));
+  const managedLocks = parseSettingList(settingMap.get("managed_policy_locks"));
+  const redactedCount = settings.filter((setting) => setting.redacted).length;
+  const summary = make("div", "settings-review-summary");
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(
+    grid,
+    "Managed settings",
+    settingsView.managed_settings_enabled ? "Enabled" : "Disabled",
+    settingsView.managed_settings_enabled ? "managed" : "default",
+  );
+  appendKeyValue(grid, "Managed fields", String(settingsView.managed_fields?.length || 0));
+  appendKeyValue(grid, "Policy locks", managedLocks.length ? String(managedLocks.length) : "None");
+  appendKeyValue(grid, "Redacted values", String(redactedCount));
+  appendKeyValue(grid, "Sources", compactCounts(sourceCounts(settings)));
+  appendKeyValue(
+    grid,
+    "Managed digest",
+    settingsView.managed_settings_digest ? settingsView.managed_settings_digest.slice(0, 16) : "-",
+  );
+  summary.append(grid);
+  if (settingsView.managed_settings_file) {
+    summary.append(statusBox("Managed file", compactPath(settingsView.managed_settings_file), "managed"));
   }
+  renderChipList(summary, "Managed fields", settingsView.managed_fields || [], "managed");
+  renderChipList(summary, "Policy locks", managedLocks, "locked");
+  target.append(summary);
+  renderSettingsGroups(target, settings);
+}
+
+function renderChipList(target, title, values, chipClass) {
+  if (!values.length) {
+    return;
+  }
+  const box = make("div", "chip-list");
+  box.append(make("div", "item-title", title));
+  const row = make("div", "chip-row");
+  for (const value of values.slice(0, 24)) {
+    row.append(statusChip(value, chipClass));
+  }
+  if (values.length > 24) {
+    row.append(statusChip(`+${values.length - 24} more`, chipClass));
+  }
+  box.append(row);
+  target.append(box);
+}
+
+function settingsGroupName(name) {
+  const value = String(name || "").toLowerCase();
+  if (["app_name", "environment", "root_dir", "data_dir", "database_url"].includes(value)) {
+    return "Runtime";
+  }
+  if (
+    value.includes("auth") ||
+    value.includes("token") ||
+    value.includes("credential") ||
+    value.includes("secret") ||
+    value.includes("vault") ||
+    value.includes("approval_digest")
+  ) {
+    return "Security";
+  }
+  if (
+    value.includes("managed") ||
+    value.includes("policy") ||
+    value.includes("hook") ||
+    value.includes("plugin") ||
+    value.includes("network_domain") ||
+    value.includes("command_recipe")
+  ) {
+    return "Policy Sources";
+  }
+  if (
+    value.includes("provider") ||
+    value.includes("ollama") ||
+    value.includes("lm_studio") ||
+    value.includes("openai") ||
+    value.includes("model") ||
+    value.includes("routing") ||
+    value.includes("cost") ||
+    value.includes("price")
+  ) {
+    return "Providers";
+  }
+  if (
+    value.includes("memory") ||
+    value.includes("retrieval") ||
+    value.includes("embedding") ||
+    value.includes("tool") ||
+    value.includes("localmcp")
+  ) {
+    return "Memory And Tools";
+  }
+  if (
+    value.includes("cli") ||
+    value.includes("command") ||
+    value.includes("filesystem") ||
+    value.includes("timeout") ||
+    value.includes("process") ||
+    value.includes("output") ||
+    value.includes("web_retrieval")
+  ) {
+    return "Execution Limits";
+  }
+  return "Other";
+}
+
+function renderSettingsGroups(target, settings) {
+  const groupOrder = [
+    "Runtime",
+    "Security",
+    "Policy Sources",
+    "Providers",
+    "Memory And Tools",
+    "Execution Limits",
+    "Other",
+  ];
+  const groups = new Map(groupOrder.map((group) => [group, []]));
+  for (const setting of settings) {
+    groups.get(settingsGroupName(setting.name)).push(setting);
+  }
+  const wrapper = make("div", "settings-groups");
+  for (const group of groupOrder) {
+    const records = groups.get(group);
+    if (!records.length) {
+      continue;
+    }
+    const details = make("details", "settings-group");
+    if (["Runtime", "Security", "Policy Sources"].includes(group)) {
+      details.open = true;
+    }
+    details.append(make("summary", "", `${group} (${records.length})`));
+    const list = make("div", "settings-group-list");
+    for (const setting of records) {
+      list.append(renderSettingItem(setting));
+    }
+    details.append(list);
+    wrapper.append(details);
+  }
+  target.append(wrapper);
+}
+
+function renderSettingItem(setting) {
+  const item = make("div", "setting-item");
+  item.append(make("strong", "", setting.name || "setting"));
+  const meta = make("div", "setting-source-row");
+  meta.append(statusChip(setting.source || "runtime"));
+  if (setting.redacted) {
+    meta.append(statusChip("redacted"));
+  }
+  item.append(meta);
+  item.append(make("code", "", settingValueText(setting.value)));
+  return item;
 }
 
 function renderProjectContext(settingsView, error = "") {
@@ -2061,6 +2295,7 @@ async function loadPolicySurfaces() {
     safeLoad("hooks", () => api("/guardrails/hooks/rules")),
     safeLoad("plugins", () => api("/plugins")),
   ]);
+  renderPolicyReviewSummary(cliRules, recipes, hooks, plugins);
   renderPolicyList(qs("#cliPolicyList"), cliRules, (rule) => ({
     title: rule.name || rule.id,
     meta: `${rule.source || "local"} - ${rule.permission_mode || rule.risk || "policy"} - ${
@@ -2082,6 +2317,84 @@ async function loadPolicySurfaces() {
     }`,
     status: plugin.trust_status === "trusted" ? "ok" : "pending",
   }));
+}
+
+function resultList(result, nestedKey = "") {
+  if (!result?.ok) {
+    return [];
+  }
+  if (Array.isArray(result.data)) {
+    return result.data;
+  }
+  if (nestedKey && Array.isArray(result.data?.[nestedKey])) {
+    return result.data[nestedKey];
+  }
+  return [];
+}
+
+function countBy(records, getter) {
+  const counts = {};
+  for (const record of records || []) {
+    const key = getter(record) || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function disabledCount(records) {
+  return (records || []).filter((record) => record.enabled === false || record.status === "disabled").length;
+}
+
+function renderPolicyReviewSummary(cliRules, recipes, hooks, plugins) {
+  if (arguments.length) {
+    latestPolicyReviewResults = { cliRules, recipes, hooks, plugins };
+  } else if (latestPolicyReviewResults) {
+    ({ cliRules, recipes, hooks, plugins } = latestPolicyReviewResults);
+  }
+  const target = qs("#policyReviewSummary");
+  if (!target) {
+    return;
+  }
+  clear(target);
+  if (!latestPolicyReviewResults) {
+    target.append(statusBox("Policy review", "Waiting for policy surfaces.", "pending"));
+    return;
+  }
+
+  const cliRecords = resultList(cliRules);
+  const recipeRecords = resultList(recipes);
+  const hookRecords = resultList(hooks);
+  const pluginRecords = resultList(plugins, "plugins");
+  const locks = parseSettingList(settingByName(latestSettingsView, "managed_policy_locks"));
+  appendPolicyReviewCard(target, "CLI rules", cliRules, cliRecords, "source");
+  appendPolicyReviewCard(target, "Recipes", recipes, recipeRecords, "source");
+  appendPolicyReviewCard(target, "Hook policies", hooks, hookRecords, "source");
+  appendPolicyReviewCard(target, "Plugins", plugins, pluginRecords, "trust_source");
+  appendKeyValue(target, "Managed locks", locks.length ? String(locks.length) : "None", locks.length ? "locked" : "");
+  appendKeyValue(
+    target,
+    "Disabled records",
+    String(disabledCount(cliRecords) + disabledCount(recipeRecords) + disabledCount(hookRecords)),
+  );
+  renderChipList(target, "Locked surfaces", locks, "locked");
+}
+
+function appendPolicyReviewCard(target, label, result, records, sourceField) {
+  if (!result?.ok) {
+    target.append(statusBox(label, result?.error || "Unavailable", "blocked"));
+    return;
+  }
+  const detailParts = [`total: ${records.length}`];
+  const counts = countBy(records, (record) => record[sourceField] || record.source || "local");
+  const sourceText = compactCounts(counts);
+  if (sourceText !== "-") {
+    detailParts.push(sourceText);
+  }
+  const disabled = disabledCount(records);
+  if (disabled) {
+    detailParts.push(`disabled: ${disabled}`);
+  }
+  appendKeyValue(target, label, detailParts.join(" | "), records.length ? "ok" : "pending");
 }
 
 function renderPolicyList(target, result, mapper) {

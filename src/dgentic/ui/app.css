@@ -726,6 +726,52 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.settings-review-summary,
+.settings-groups,
+.settings-group-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-review-summary,
+.settings-groups {
+  grid-column: 1 / -1;
+}
+
+.settings-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: white;
+}
+
+.settings-group summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.settings-group-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.setting-source-row,
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.checkpoint-grid > .chip-list {
+  grid-column: 1 / -1;
+}
+
+.policy-review-section {
+  grid-column: 1 / -1;
+}
+
 .approval-summary-grid,
 .context-grid,
 .checkpoint-grid {
@@ -737,7 +783,9 @@ textarea {
 .info-pair,
 .finding-list,
 .changed-paths,
-.json-details {
+.json-details,
+.chip-list,
+.git-review-summary {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -762,7 +810,9 @@ textarea {
 }
 
 .finding-list,
-.changed-paths {
+.changed-paths,
+.chip-list,
+.git-review-summary {
   display: grid;
   gap: 8px;
 }
@@ -880,6 +930,7 @@ textarea {
   .builder-row,
   .recipe-parameter-grid,
   .settings-grid,
+  .settings-group-list,
   .approval-summary-grid,
   .agent-brief-grid,
   .context-grid,

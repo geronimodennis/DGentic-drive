@@ -2,7 +2,7 @@
 
 Date created: 2026-05-07
 
-DGentic is currently in backend MVP development. This guide explains how to use the repository now and how the platform is expected to be used as implementation continues.
+DGentic is currently in backend MVP development with an initial same-origin web dashboard. This guide explains how to use the repository now and how the platform is expected to be used as implementation continues.
 
 ## Use The Repository Today
 
@@ -50,6 +50,14 @@ Current useful API checks:
 ```powershell
 curl http://127.0.0.1:8000/health
 ```
+
+Open the first Sprint 16 dashboard shell after starting the backend:
+
+```text
+http://127.0.0.1:8000/ui/
+```
+
+The dashboard provides health, task planning, orchestration summary, unified approval review and approve/deny actions, Git workflow checkpoint visibility, provider/tool summary, effective settings, and log polling. In development, auth is off unless explicitly enabled. In staging and production, enter a bearer token in the dashboard session control before loading protected API data.
 
 In local development, API authentication is off by default. In `staging` and `production`, protected routes require bearer tokens. Operators can bootstrap with `DGENTIC_AUTH_TOKENS`, such as `admin-token=admin;task-token=tasks`, then create persisted operator profiles, operator groups, and generated tokens through the auth APIs. Operator records live in `operators.json`, operator group records live in `operator-groups.json`, persisted token records live in `auth-tokens.json` under `DGENTIC_DATA_DIR`, stored tokens use salted PBKDF2 hashes instead of raw token values, and the raw token is returned only in the create or rotate response. New persisted tokens must target an active operator and cannot exceed that operator's current effective capabilities from direct assignments plus active group-inherited capabilities. Operator display/role metadata, operator group display/description metadata, generated-token labels, credential-reference labels, plugin trust reasons, and hook policy reasons are redacted for common secret-shaped values before responses, audit metadata, and new or mutated JSON state. Plugin discovery, trust, and inert component preview routes require `tools`, plugin command recipe activation requires `tools` plus `cli` or `admin`, and plugin hook-policy activation requires `tools` plus `hooks` or `admin`. Hook policy rule routes require `hooks`. CLI approval creation, approved-command execution, git workflow checkpoints, and git commit/push/PR approval creation require `cli`; CLI approval list, review, approve, and deny routes require `approvals`. The effective-settings endpoint requires `admin` when authentication is enabled. When authentication is enabled, startup fails closed if no usable environment token or active persisted token is configured.
 

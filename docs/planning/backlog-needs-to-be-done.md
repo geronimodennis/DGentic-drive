@@ -424,10 +424,14 @@ Current implementation status:
 Feature group: Interface ecosystem.
 
 User value:
-- Users need a usable cross-platform interface for task submission, sub-agent status, approvals, action logs, provider activity, memory, tools, settings, and runtime health instead of calling backend APIs directly.
+- Users need a usable cross-platform interface for task submission, project/workspace management, sub-agent status, approvals, action logs, provider activity, memory, tools, settings, and runtime health instead of calling backend APIs directly.
 
 Needs to be done:
 - Build the web frontend shell for chat/task workflows, sub-agent progress, and rich output rendering.
+- Add a project/workspace management line in the chat interface for adding a project or opening an existing project folder as the active `rootDir`.
+- Add a project file explorer for the active `rootDir`, using existing guarded filesystem contracts and preserving root-boundary protections.
+- Add an in-browser code editor for safe file viewing and editing inside the active project.
+- Add an AI-change review surface, similar in spirit to Codex, that lets users inspect pending AI file edits, diffs, and affected paths before accepting or rejecting changes.
 - Add interactive approval UI for CLI, filesystem, tool, provider, and network approval-required actions.
 - Add settings UI for auth/session connection, providers, routing, filesystem boundaries, CLI policy, memory, tools, and agent blueprints.
 - Add settings and dashboard surfaces for DGentic-native plugin bundles, command recipes, hook-style safety rules, managed policy sources, and git workflow checkpoints inspired by the Claude Code study.
@@ -437,6 +441,9 @@ Needs to be done:
 
 Acceptance criteria:
 - A user can submit a task, inspect plan/progress, review approval-required actions, and view action logs through the UI.
+- A user can add a new project or open an existing folder as the active project `rootDir`, and the UI clearly shows the current project context.
+- A user can browse the active project files, open files in a code editor, and keep all read/write operations constrained to the active `rootDir`.
+- A user can review AI-proposed file changes in a diff/change-review view before accepting, rejecting, or requesting follow-up work.
 - Approval UI displays safe review metadata without secret values and records reviewer decisions.
 - Settings and dashboard views cover the core backend surfaces needed for MVP operation.
 - Plugin, command recipe, hook policy, and managed-settings views expose effective policy state without leaking secrets or permitting unaudited enablement.
@@ -448,7 +455,8 @@ Definition of Done:
 - PM confirms the root README not-yet-implemented entries for web frontend/dashboard and interactive approval UI can move to implemented or partially implemented status.
 
 Current implementation status:
-- Not yet implemented: web frontend/dashboard and interactive approval UI.
+- Partially implemented: BL-010a same-origin web dashboard shell served at `/ui/`, including bearer-token session control, runtime health cards, task planning, orchestration summary, unified approval inbox for CLI/filesystem/network/provider/tool approvals with safe review plus approve/deny decisions, Git checkpoint visibility, provider/tool summary, effective settings view, log polling, focused static-serving/auth-boundary tests, and browser smoke validation.
+- Remaining: richer chat/task execution workflows, project add/open flow, active `rootDir` project context display, project file explorer, code editor, AI-change diff/review surface, sub-agent graph/detail visualization, direct approved-action execution UX, policy/settings editors for providers, routing, filesystem, CLI rules, memory, tools, command recipes, plugins, hook policies, and managed settings, memory/tool reliability drilldowns, broader responsive/browser QA, and end-to-end approval scenario tests.
 
 ### BL-011: VS Code Extension And Dedicated CLI Client
 
@@ -730,6 +738,7 @@ Current Sprint 15 status:
 - Completed checkpoint: BL-009at direct git PR runner is implemented and focused-validation clean. This slice covers `POST /cli/git/pr-runs`, fresh ready PR checkpoint digest revalidation, already-pushed and current-with-upstream gates, bounded single-line non-secret title/body/base validation, shell-free constrained `gh pr create` argv execution with checkpoint-derived `--head`, explicit GitHub CLI token environment requirements, isolated `GH_CONFIG_DIR`, no caller-supplied remote/head/flag/template/reviewer payload, no CLI approval creation, strict sanitized PR URL extraction, safe title/body/URL digest metadata, no raw stdout/stderr/token/remote URL exposure, and `cli` capability enforcement with authenticated requester binding.
 - Completed checkpoint: BL-009au HashiCorp Vault KV v2 credential adapter is implemented and focused-validation clean. This slice covers `secret_manager` credential references, `credential_secret_manager_adapters`, `credential_secret_manager_allowed_base_urls`, local and managed secret-manager reference metadata, Vault KV v2 GET resolution at provider/runtime transport time, explicit base-URL allowlist checks, deny/approval-required network-policy blocking before token lookup, proxy/redirect-disabled Vault HTTP transport, sanitized environment token lookup, bounded response reads, KV field validation, no raw Vault token/secret persistence, and provider approval preservation on pre-transport credential failures.
 - Completed checkpoint: BL-009av managed network-domain policy rule records are implemented and focused-validation clean. This slice covers `managed_network_domain_policy_rules` in `DGENTIC_MANAGED_SETTINGS_FILE`, managed-only loading, fail-closed validation for stable ids, domains, modes, priorities, enabled flags, unknown fields, duplicates, and secret-shaped text, managed-before-local network policy evaluation, safe `matched_rule_id`/`matched_rule_source` decision metadata, canonical effective-policy approval drift binding, generated-tool subprocess handoff without managed ids/reasons, provider/runtime enforcement, and generic network guardrail URL/reason redaction.
+- Closed safe checkpoint: Sprint 15 backend security MVP is closed at BL-009av so user-facing Sprint 16 and Sprint 17 work can start. Remaining Sprint 15 items stay on the backlog as deferred backend security follow-ups, not cancelled scope.
 - Remaining after BL-009av: richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, additional secret-manager adapters beyond HashiCorp Vault KV v2, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and managed policy-source controls beyond credential/CLI/hook/network/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.
 - Claude Code study incorporation: remaining Sprint 15 security work should also shape managed-settings precedence, plugin installation governance, command recipe contracts, and guarded git/PR workflow automation rather than treating these as UI-only features.
 
@@ -747,6 +756,10 @@ Goal:
 
 Stories:
 - BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Current Sprint 16 status:
+- Active: BL-010a same-origin dashboard shell is implemented and validation-clean. This slice provides the first user-facing UI surface for task planning, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs while preserving backend approval/auth boundaries.
+- Remaining: deepen the UI into richer chat/task execution workflows, project add/open and active `rootDir` selection, project file explorer, code editor, Codex-style AI-change review, sub-agent progress detail, policy/settings editors, command recipe and plugin views, memory/tool reliability dashboards, direct approved-action execution UX, and broader browser/responsive validation.
 
 Exit criteria:
 - Users can submit tasks, inspect plan/sub-agent progress, review approvals, and view action logs through the web UI.
@@ -818,10 +831,10 @@ Safe stopping rule:
 
 ## Not-Yet-Implemented Coverage Map
 
-- Web frontend/dashboard: BL-010, Sprint 16.
+- Web frontend/dashboard: BL-010, Sprint 16. BL-010a same-origin `/ui/` dashboard shell is implemented; richer dashboard, chat, project add/open, file explorer, code editor, AI-change review, settings, policy, memory/tool, and responsive/browser coverage remains.
 - VS Code extension: BL-011, Sprint 17.
 - Dedicated CLI client interface: BL-011, Sprint 17.
-- Interactive approval UI: BL-010, Sprint 16.
+- Interactive approval UI: BL-010, Sprint 16. BL-010a unified approval inbox with review plus approve/deny actions is implemented; direct execute flows, richer filtering/detail, and end-to-end approval scenario coverage remains.
 - Production deployment infrastructure and CI/CD pipeline: BL-012, Sprint 18.
 - Provider-specific external AI adapters beyond the generic OpenAI-compatible adapter: BL-013, Sprint 19.
 - Full production identity management, secret management, encrypted credential storage, and token rotation: BL-009, Sprint 15. Persisted operator profiles, persisted operator groups with capability inheritance, generated token lifecycle APIs, identity/token/credential/plugin-trust metadata redaction, operator-supplied local encrypted vault references with supplied-key rotation, generic external-process credential adapter plumbing, first-class HashiCorp Vault KV v2 credential adapters, plugin manifest trust controls, managed plugin trust records, managed command recipes, managed plugin component records, plugin command recipe activation governance, inert plugin reference component records, backend hook-policy records, bound filesystem approval records, managed settings precedence foundation, managed policy surface locks, managed CLI, hook-policy, network-domain, and command-recipe precedence, command recipe execution contracts, read-only git workflow safety checkpoints, checkpoint-bound git commit/push/PR approval creation, direct checkpoint-bound local git commit/configured-upstream push/GitHub PR creation execution, and active-task verification for caller-supplied orchestration agent context are complete; richer identity workflows beyond operator groups, managed KMS integration, additional secret-manager adapters beyond HashiCorp Vault KV v2, plugin hook/tool/agent/skill loading governance beyond inert records, and broader managed policy-source controls remain.

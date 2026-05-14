@@ -1,0 +1,499 @@
+const TOKEN_KEY = "dgentic.ui.token";
+
+const approvalSources = [
+  { key: "cli", label: "CLI", base: "/cli/approvals" },
+  { key: "filesystem", label: "Filesystem", base: "/filesystem/approvals" },
+  { key: "network", label: "Network", base: "/network/approvals" },
+  { key: "provider", label: "Provider", base: "/providers/approvals" },
+  { key: "tool", label: "Tool", base: "/tools/approvals" },
+];
+
+let approvalStatus = "pending";
+let selectedApproval = null;
+let toastTimer = null;
+
+function qs(selector) {
+  return document.querySelector(selector);
+}
+
+function qsa(selector) {
+  return Array.from(document.querySelectorAll(selector));
+}
+
+function clear(node) {
+  node.replaceChildren();
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) {
+    node.className = className;
+  }
+  if (text !== undefined) {
+    node.textContent = text;
+  }
+  return node;
+}
+
+function getToken() {
+  return sessionStorage.getItem(TOKEN_KEY) || "";
+}
+
+function requestHeaders(hasBody) {
+  const headers = {
+    Accept: "application/json",
+  };
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (hasBody) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
+}
+
+async function api(path, options = {}) {
+  const hasBody = Object.prototype.hasOwnProperty.call(options, "body");
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    headers: requestHeaders(hasBody),
+    body: hasBody ? JSON.stringify(options.body) : undefined,
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (_error) {
+      payload = text;
+    }
+  }
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" ? payload.detail : payload;
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+  return payload;
+}
+
+async function safeLoad(label, loader) {
+  try {
+    return { ok: true, data: await loader() };
+  } catch (error) {
+    return { ok: false, label, error: error.message };
+  }
+}
+
+function splitLines(value) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function jsonBlock(value) {
+  const pre = make("pre");
+  pre.textContent = JSON.stringify(value, null, 2);
+  return pre;
+}
+
+function statusChip(value, extraClass = "") {
+  const normalized = String(value || "unknown").toLowerCase();
+  return make("span", `status-chip ${normalized} ${extraClass}`.trim(), normalized);
+}
+
+function showToast(message) {
+  const toast = qs("#toast");
+  toast.textContent = message;
+  toast.classList.add("visible");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 3600);
+}
+
+function statusBox(title, detail, state = "") {
+  const box = make("div", "status-box");
+  const heading = make("div", "item-title", title);
+  const body = make("div", "item-meta", detail);
+  box.append(heading, body);
+  if (state) {
+    box.append(statusChip(state));
+  }
+  return box;
+}
+
+function setMetric(selector, value) {
+  qs(selector).textContent = value;
+}
+
+async function refreshDashboard() {
+  await Promise.all([
+    loadHealth(),
+    loadTasks(),
+    loadApprovals(),
+    loadProviders(),
+    loadSettings(),
+    loadLogs(),
+  ]);
+}
+
+async function loadHealth() {
+  const result = await safeLoad("health", () => api("/health"));
+  if (!result.ok) {
+    setMetric("#serviceMetric", "-");
+    setMetric("#healthMetric", result.error);
+    return;
+  }
+  setMetric("#serviceMetric", result.data.service || "DGentic");
+  setMetric("#healthMetric", result.data.status || "ok");
+  qs("#environmentLabel").textContent = result.data.environment || "Control";
+}
+
+async function loadTasks() {
+  const [plans, runs, summary, orchestrations] = await Promise.all([
+    safeLoad("plans", () => api("/tasks/plans")),
+    safeLoad("runs", () => api("/tasks/runs")),
+    safeLoad("orchestration summary", () => api("/tasks/orchestrations/operations/summary")),
+    safeLoad("orchestrations", () => api("/tasks/orchestrations")),
+  ]);
+
+  const planCount = plans.ok ? plans.data.length : "-";
+  const runCount = runs.ok ? runs.data.length : "-";
+  setMetric("#plansMetric", String(planCount));
+  setMetric("#runsMetric", `Runs: ${runCount}`);
+
+  renderTaskOutput(plans, runs);
+  renderOrchestrationSummary(summary, orchestrations);
+}
+
+function renderTaskOutput(plans, runs) {
+  const target = qs("#taskOutput");
+  clear(target);
+  if (!plans.ok && !runs.ok) {
+    target.append(statusBox("Tasks unavailable", `${plans.error}; ${runs.error}`, "blocked"));
+    return;
+  }
+
+  const latestPlans = plans.ok ? plans.data.slice(-4).reverse() : [];
+  if (!latestPlans.length) {
+    target.append(statusBox("No task plans", "Create a plan to start the queue.", "pending"));
+  }
+  for (const plan of latestPlans) {
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", plan.objective || plan.id));
+    item.append(make("div", "item-meta", `${plan.id} - ${plan.status} - ${plan.steps?.length || 0} steps`));
+    item.append(statusChip(plan.status));
+    target.append(item);
+  }
+}
+
+function renderOrchestrationSummary(summary, orchestrations) {
+  const target = qs("#orchestrationSummary");
+  clear(target);
+  if (!summary.ok) {
+    target.append(statusBox("Summary unavailable", summary.error, "blocked"));
+  } else {
+    const counts = summary.data.run_status_counts || {};
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", `${summary.data.total_runs || 0} orchestration runs`));
+    item.append(make("div", "item-meta", Object.entries(counts).map(([key, value]) => `${key}: ${value}`).join(" | ") || "No status counts"));
+    target.append(item);
+  }
+
+  if (!orchestrations.ok) {
+    target.append(statusBox("Runs unavailable", orchestrations.error, "blocked"));
+    return;
+  }
+  for (const run of orchestrations.data.slice(-5).reverse()) {
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", run.objective || run.id));
+    item.append(make("div", "item-meta", `${run.id} - tasks: ${run.tasks?.length || 0}`));
+    item.append(statusChip(run.status));
+    target.append(item);
+  }
+}
+
+async function createTaskPlan(event) {
+  event.preventDefault();
+  const objective = qs("#objectiveInput").value.trim();
+  if (!objective) {
+    showToast("Objective is required.");
+    return;
+  }
+  const payload = {
+    objective,
+    constraints: splitLines(qs("#constraintsInput").value),
+    acceptance_criteria: splitLines(qs("#acceptanceInput").value),
+    priority: qs("#priorityInput").value,
+  };
+  const target = qs("#taskOutput");
+  clear(target);
+  target.append(statusBox("Creating plan", "Submitting task objective.", "running"));
+  try {
+    const plan = await api("/tasks/plan", { method: "POST", body: payload });
+    clear(target);
+    target.append(statusBox("Plan created", `${plan.id} - ${plan.steps?.length || 0} steps`, "ready"));
+    target.append(jsonBlock(plan));
+    qs("#taskForm").reset();
+    await loadTasks();
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Plan failed", error.message, "failed"));
+  }
+}
+
+async function loadApprovals() {
+  const loads = approvalSources.map(async (source) => {
+    const suffix = approvalStatus ? `?status=${encodeURIComponent(approvalStatus)}` : "";
+    const result = await safeLoad(source.label, () => api(`${source.base}${suffix}`));
+    return { source, ...result };
+  });
+  const results = await Promise.all(loads);
+  const approvals = [];
+  const errors = [];
+  for (const result of results) {
+    if (result.ok) {
+      for (const approval of result.data) {
+        approvals.push({ source: result.source, approval });
+      }
+    } else {
+      errors.push(result);
+    }
+  }
+  setMetric("#approvalsMetric", String(approvals.length));
+  renderApprovalList(approvals, errors);
+}
+
+function approvalTitle(item) {
+  const approval = item.approval;
+  return (
+    approval.command ||
+    approval.path ||
+    approval.url ||
+    approval.provider_id ||
+    approval.tool_name ||
+    approval.name ||
+    approval.id
+  );
+}
+
+function approvalMeta(item) {
+  const approval = item.approval;
+  const bits = [item.source.label, approval.requested_by, approval.created_at].filter(Boolean);
+  return bits.join(" - ");
+}
+
+function renderApprovalList(items, errors) {
+  const target = qs("#approvalList");
+  clear(target);
+  for (const error of errors) {
+    target.append(statusBox(`${error.source.label} unavailable`, error.error, "blocked"));
+  }
+  if (!items.length && !errors.length) {
+    target.append(statusBox("Inbox clear", "No approvals match the current filter.", "ok"));
+    return;
+  }
+  for (const item of items) {
+    const row = make("div", "approval-item");
+    const copy = make("div");
+    copy.append(make("div", "item-title", approvalTitle(item)));
+    copy.append(make("div", "item-meta", approvalMeta(item)));
+    copy.append(statusChip(item.approval.status));
+    const button = make("button", "link-button", "Review");
+    button.type = "button";
+    button.addEventListener("click", () => reviewApproval(item));
+    row.append(copy, button);
+    target.append(row);
+  }
+}
+
+async function reviewApproval(item) {
+  selectedApproval = item;
+  const target = qs("#approvalReview");
+  clear(target);
+  target.append(statusBox("Loading review", `${item.source.label} ${item.approval.id}`, "running"));
+  try {
+    const review = await api(`${item.source.base}/${encodeURIComponent(item.approval.id)}/review`);
+    selectedApproval = { ...item, review };
+    renderApprovalReview(selectedApproval);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Review unavailable", error.message, "blocked"));
+  }
+}
+
+function renderApprovalReview(item) {
+  const target = qs("#approvalReview");
+  clear(target);
+  const header = statusBox(`${item.source.label} review`, item.approval.id, item.approval.status);
+  target.append(header, jsonBlock(item.review));
+
+  const form = make("form", "decision-form");
+  const reason = make("input");
+  reason.type = "text";
+  reason.placeholder = "Reason";
+  const approve = make("button", "success-button", "Approve");
+  approve.type = "submit";
+  approve.dataset.decision = "approve";
+  const deny = make("button", "danger-button", "Deny");
+  deny.type = "submit";
+  deny.dataset.decision = "deny";
+  form.append(reason, approve, deny);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const submitter = event.submitter;
+    decideApproval(submitter.dataset.decision, reason.value.trim());
+  });
+  target.append(form);
+}
+
+async function decideApproval(decision, reason) {
+  if (!selectedApproval) {
+    return;
+  }
+  const { source, approval } = selectedApproval;
+  try {
+    const result = await api(`${source.base}/${encodeURIComponent(approval.id)}/${decision}`, {
+      method: "POST",
+      body: reason ? { reason } : {},
+    });
+    const verb = decision === "approve" ? "approved" : "denied";
+    showToast(`${source.label} approval ${verb}.`);
+    selectedApproval = { source, approval: result };
+    renderApprovalReview({ source, approval: result, review: result });
+    await loadApprovals();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function createGitCheckpoint(event) {
+  event.preventDefault();
+  const payload = {
+    action: qs("#gitActionInput").value,
+    test_evidence: splitLines(qs("#gitEvidenceInput").value),
+  };
+  const cwd = qs("#gitCwdInput").value.trim();
+  if (cwd) {
+    payload.cwd = cwd;
+  }
+  const target = qs("#gitOutput");
+  clear(target);
+  target.append(statusBox("Checking repository", payload.action, "running"));
+  try {
+    const checkpoint = await api("/cli/git/checkpoints", { method: "POST", body: payload });
+    clear(target);
+    target.append(statusBox(checkpoint.ready ? "Ready" : "Blocked", checkpoint.branch, checkpoint.ready ? "ready" : "blocked"));
+    target.append(jsonBlock(checkpoint));
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Checkpoint failed", error.message, "failed"));
+  }
+}
+
+async function loadSettings() {
+  const result = await safeLoad("settings", () => api("/settings/effective"));
+  const target = qs("#settingsOutput");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Settings unavailable", result.error, "blocked"));
+    return;
+  }
+  const settings = result.data.settings || [];
+  for (const setting of settings.slice(0, 24)) {
+    const item = make("div", "setting-item");
+    item.append(make("strong", "", setting.name || "setting"));
+    const value =
+      setting.value && typeof setting.value === "object"
+        ? JSON.stringify(setting.value)
+        : String(setting.value);
+    item.append(make("code", "", `${setting.source || "runtime"}: ${value}`));
+    if (setting.redacted) {
+      item.append(statusChip("redacted"));
+    }
+    target.append(item);
+  }
+}
+
+async function loadProviders() {
+  const [providers, tools, runs] = await Promise.all([
+    safeLoad("providers", () => api("/providers")),
+    safeLoad("tools", () => api("/tools")),
+    safeLoad("cli runs", () => api("/cli/runs")),
+  ]);
+  setMetric("#providersMetric", providers.ok ? String(providers.data.length) : "-");
+  setMetric("#toolsMetric", `Tools: ${tools.ok ? tools.data.length : "-"}`);
+
+  const target = qs("#providerList");
+  clear(target);
+  if (!providers.ok) {
+    target.append(statusBox("Providers unavailable", providers.error, "blocked"));
+  } else if (!providers.data.length) {
+    target.append(statusBox("No providers", "Provider catalog is empty.", "pending"));
+  } else {
+    for (const provider of providers.data) {
+      const item = make("div", "list-item");
+      item.append(make("div", "item-title", provider.name || provider.id));
+      item.append(make("div", "item-meta", `${provider.kind} - ${provider.permission_mode}`));
+      item.append(statusChip(provider.enabled ? "ok" : "blocked"));
+      target.append(item);
+    }
+  }
+  if (runs.ok && runs.data.length) {
+    const latest = runs.data[runs.data.length - 1];
+    target.append(statusBox("Latest CLI run", `${latest.id} - ${latest.status}`, latest.status));
+  }
+}
+
+async function loadLogs() {
+  const eventType = qs("#logFilter").value;
+  const suffix = eventType ? `?event_type=${encodeURIComponent(eventType)}` : "";
+  const result = await safeLoad("logs", () => api(`/logs${suffix}`));
+  const target = qs("#logList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Logs unavailable", result.error, "blocked"));
+    return;
+  }
+  const events = result.data.slice(-30).reverse();
+  if (!events.length) {
+    target.append(statusBox("No events", "The log stream is empty.", "pending"));
+    return;
+  }
+  for (const event of events) {
+    const item = make("div", "log-item");
+    item.append(make("div", "log-message", event.message || event.event_type));
+    item.append(make("div", "log-meta", `${event.event_type} - ${event.actor} - ${event.created_at}`));
+    target.append(item);
+  }
+}
+
+function bindEvents() {
+  qs("#tokenInput").value = getToken();
+  qs("#saveTokenButton").addEventListener("click", () => {
+    sessionStorage.setItem(TOKEN_KEY, qs("#tokenInput").value.trim());
+    showToast("Token saved for this browser session.");
+    refreshDashboard();
+  });
+  qs("#clearTokenButton").addEventListener("click", () => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    qs("#tokenInput").value = "";
+    showToast("Token cleared.");
+    refreshDashboard();
+  });
+  qs("#refreshButton").addEventListener("click", refreshDashboard);
+  qs("#loadTasksButton").addEventListener("click", loadTasks);
+  qs("#taskForm").addEventListener("submit", createTaskPlan);
+  qs("#gitForm").addEventListener("submit", createGitCheckpoint);
+  qs("#logFilter").addEventListener("change", loadLogs);
+  for (const button of qsa(".segmented-control button")) {
+    button.addEventListener("click", () => {
+      approvalStatus = button.dataset.status;
+      qsa(".segmented-control button").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      loadApprovals();
+    });
+  }
+}
+
+bindEvents();
+refreshDashboard();

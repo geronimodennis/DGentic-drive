@@ -49,6 +49,12 @@ Or use the installed command after package installation:
 dgentic-server --host 127.0.0.1 --port 8000
 ```
 
+Open the dashboard:
+
+```text
+http://127.0.0.1:8000/ui/
+```
+
 Run tests:
 
 ```powershell
@@ -133,25 +139,26 @@ When implementation changes behavior, update the README plus the relevant docume
 
 ### Runtime Usage
 
-Current backend MVP usage is through the HTTP API. The human-facing chat/web UI is planned for Sprint 16, and the dedicated CLI plus VS Code extension are planned for Sprint 17. As those interfaces land, DGentic should be used through one or more supported interfaces:
+Current MVP usage is through the HTTP API plus the first same-origin web dashboard at `/ui/`. Deeper web UI coverage remains active in Sprint 16, and the dedicated CLI plus VS Code extension are planned for Sprint 17. As those interfaces land, DGentic should be used through one or more supported interfaces:
 
 1. Start the DGentic backend orchestrator.
 2. Configure local model runtimes such as Ollama or LM Studio.
 3. Add external provider credentials through the secure settings layer.
 4. Set the workspace `rootDir` for guarded file and CLI access.
-5. Submit a task through the current API, then through the chat interface, dedicated CLI, or VS Code extension as those clients are implemented.
+5. Submit a task through the current API or `/ui/`, then through the dedicated CLI or VS Code extension as those clients are implemented.
 6. Review the orchestrator plan, approve restricted actions, and inspect sub-agent progress.
 7. Export or persist the session summary, created tools, and memory updates.
 
 ## Current Status
 
-Status: backend MVP sprint surface active; Sprint 15 production identity, secrets, and network guardrails is in progress, with BL-009a through BL-009av implemented.
+Status: backend MVP sprint surface active; Sprint 15 is closed at the BL-009av safe checkpoint with deeper backend security work deferred, and Sprint 16 cross-platform UI/dashboard work has started with BL-010a implemented.
 
 README status policy: keep this section updated after every sprint, release, or meaningful implementation change. Always list implemented features, partially implemented features, and features that are not yet implemented.
 
 ### Implemented
 
 - Core FastAPI backend application, Pydantic schemas, health checks, and backend test baseline.
+- Same-origin static web dashboard served from `/ui/`, with a bearer-token session control, runtime health cards, task planning form, orchestration summary, unified approval inbox using safe review/approve/deny endpoints, Git checkpoint panel, provider/tool summary, effective settings view, and event log polling.
 - Deterministic task planning and execution run APIs with local JSON persistence.
 - Guardrail policy checks for filesystem, command, and outbound network domain access.
 - Guarded filesystem operations inside `rootDir`, including UTF-8 text read/write, base64 binary read/write, directory listing, metadata, single-use bound approval IDs for approval-required delete/move/copy/rename and hook-forced approval-required reads/writes, production/staging rejection of the old `approved: true` bypass, protected state-file blocking, symlink escape blocking, size limits through `DGENTIC_MAX_FILESYSTEM_BYTES`, and filesystem audit events.
@@ -183,8 +190,10 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Partially Implemented
 
-- CLI integration: approvals, single-use bound approval IDs, policy rules, status polling, chunked output polling, supervision metadata, stale-running reconciliation, cancellation, conservative post-restart orphan termination for single-worker restart recovery, context-aware rules, matched policy review metadata, safe approval review API contracts, workflow-bound approval metadata for git commit/push/PR revalidation, environment controls with startup/preload injection override blocking, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, bare executable workspace/PATH trust checks, POSIX execution parity for simple `cmd /c` wrappers, cwd-aware approval policy evaluation, reviewer routes split to the `approvals` capability when auth is enabled, broader Windows/POSIX wrapper parsing regressions, command-name escape decoding, launcher payload inspection, protected state-file escape checks, read-only path operand boundary checks, explicit executable path boundary checks, command-specific path argument hardening for configured-safe `git`, `npm`, `pnpm`, `yarn`, and `uv` directory flags, mutating-git and GitHub CLI downgrade protection for configured-safe rules, read-only git workflow checkpoints, direct checkpoint-bound local commit/configured-upstream push/GitHub PR creation execution, checkpoint-bound git commit/push/PR approval creation, and nested shell startup hardening checks exist; full process adoption/resumable output after restart, production multi-worker lease semantics, full shell emulation/OS sandboxing, and the interactive approval UI remain.
-- Filesystem runtime: text/binary read/write, directory listing, metadata, approval-gated delete/move/copy/rename, single-use bound filesystem approval records, root/state boundary checks, symlink escape checks, size limits, and audit logs exist; interactive filesystem approval UI, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain.
+- Web frontend/dashboard: the first FastAPI-served `/ui/` dashboard shell exists for health, task planning, orchestration summaries, unified approvals, Git checkpoints, providers/tools, effective settings, logs, and browser smoke coverage; deeper chat workflows, project add/open, active `rootDir` workspace context, project file explorer, code editor, Codex-style AI-change review, richer sub-agent visualization, policy editors, plugin/command-recipe views, memory/tool reliability drilldowns, and broader responsive/browser QA remain in Sprint 16.
+- Interactive approval UI: the `/ui/` approval inbox can list CLI, filesystem, network, provider, and tool approvals, load safe review metadata, and submit approve/deny decisions through the existing backend approval APIs; follow-up work remains for direct execute flows, richer filtering, reviewer audit affordances, and end-to-end approval scenario tests.
+- CLI integration: approvals, single-use bound approval IDs, policy rules, status polling, chunked output polling, supervision metadata, stale-running reconciliation, cancellation, conservative post-restart orphan termination for single-worker restart recovery, context-aware rules, matched policy review metadata, safe approval review API contracts, workflow-bound approval metadata for git commit/push/PR revalidation, environment controls with startup/preload injection override blocking, top-level `cmd` AutoRun and PowerShell profile/prompt suppression, bare executable workspace/PATH trust checks, POSIX execution parity for simple `cmd /c` wrappers, cwd-aware approval policy evaluation, reviewer routes split to the `approvals` capability when auth is enabled, broader Windows/POSIX wrapper parsing regressions, command-name escape decoding, launcher payload inspection, protected state-file escape checks, read-only path operand boundary checks, explicit executable path boundary checks, command-specific path argument hardening for configured-safe `git`, `npm`, `pnpm`, `yarn`, and `uv` directory flags, mutating-git and GitHub CLI downgrade protection for configured-safe rules, read-only git workflow checkpoints, direct checkpoint-bound local commit/configured-upstream push/GitHub PR creation execution, checkpoint-bound git commit/push/PR approval creation, and nested shell startup hardening checks exist; full process adoption/resumable output after restart, production multi-worker lease semantics, full shell emulation/OS sandboxing, direct execute UI flows, and richer CLI run output views remain.
+- Filesystem runtime: text/binary read/write, directory listing, metadata, approval-gated delete/move/copy/rename, single-use bound filesystem approval records, root/state boundary checks, symlink escape checks, size limits, and audit logs exist; deeper filesystem-specific approval detail views, persisted configurable filesystem policy rules, deeper platform-specific locked-file handling, and OS-level filesystem isolation remain.
 - Provider system: Sprint 12 scoped productionization is complete for Ollama, LM Studio, and the disabled-by-default OpenAI-compatible external adapter. Runtime calls have endpoint allowlist enforcement, network/domain policy enforcement, bound network approval records for approval-required provider domains, redirect blocking, bounded request and response payload validation, bounded retry/backoff and in-process circuit breakers for retry-exhausted generation failures, normalized usage/cost metadata, safe provider telemetry, NDJSON streaming, single-use bound provider approvals outside development/test mode, persisted and managed credential references backed by environment variables, local encrypted vault ciphertext, shell-free external-process adapters, or explicit-allowlisted HashiCorp Vault KV v2 adapters, local vault key rotation, deferred API-key/header resolution until transport-eligible execution, advisory provider/model pricing, and exact eligible role-to-provider/model routes. Durable multi-worker circuit state, provider-specific billing reconciliation, managed KMS integration, additional external secret-manager adapters beyond HashiCorp Vault KV v2, and named provider-specific adapters remain future follow-up work.
 - Memory and retrieval: memory record storage, text/tag search, SQLAlchemy metadata index services, metadata CRUD routes, deterministic semantic retrieval fallback, SQLite vector backend abstraction, stored vector retrieval, additive retrieval attribution/score reasons, lifecycle metadata, preview/apply lifecycle APIs, deterministic metadata-description compression, and retrieval API tests exist; pgvector integration, scheduled lifecycle/compression jobs, full-content or LLM summarization, broader performance validation, and deeper provenance/scoring policy remain later production-hardening work.
 - Tool runtime: local tool generation, execution, governance, reliability tracking, runtime reliability policy automation, generated-tool SQL registry auto-registration, registry duplicate preflight checks, explicit same-name version migration with SQL reliability reset, deprecated registry exclusion, permission conflict fail-closed checks, bound approval records for approval-required tool execution outside development/test mode, orchestration-bound active task checks when tool agent context is supplied, output/log redaction for tool execution, local-only dependency import isolation, configured Python socket network policy guardrail for common generated-tool egress, single-use generated-tool network approval consumption for approval-required socket host/port targets, process-group launch and timeout cleanup hardening, usage tracking, and registry routes exist; full OS/filesystem/network sandbox isolation, parallel multi-version SQL registry rows, and production package/dependency lifecycle management remain.
@@ -193,10 +202,8 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Not Yet Implemented
 
-- Web frontend/dashboard: planned for Sprint 16.
 - VS Code extension: planned for Sprint 17.
 - Dedicated CLI client interface: planned for Sprint 17.
-- Interactive approval UI: planned for Sprint 16.
 - Remaining backend Git expansion is not cancelled or downsized. Existing Sprint 15 Git checkpoints, approvals, direct commit/push/PR runners, and safe audit contracts stay implemented; deeper Git work such as branch cleanup, PR labels/reviewers/assignees/projects/templates, remote fetch freshness, rollback/revert workflows, allowed remote/branch policies, and richer Git observability is sequenced after the Sprint 16 UI and Sprint 17 VS Code/CLI surfaces unless it directly blocks those user-facing flows.
 - DGentic-native plugin bundles beyond manifest discovery/trust and declarative command recipe plus hook-policy activation, and managed policy-source controls beyond credential/CLI/hook/network/command-recipe/plugin-trust/plugin-component records and coarse surface locks: planned across remaining Sprint 15 security follow-ups plus Sprint 16 UI, Sprint 17 CLI/VS Code, and Sprint 18 CI/observability work after the Claude Code repository study.
 - Production deployment infrastructure and CI/CD pipeline: planned for Sprint 18.

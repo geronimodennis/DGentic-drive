@@ -2,7 +2,7 @@
 
 Date created: 2026-05-07
 
-This guide explains how to run the current DGentic backend foundation.
+This guide explains how to run the current DGentic backend foundation and first web dashboard.
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ Invoke-RestMethod `
   -Body '{"label":"rotated task automation","capabilities":["tasks","logs"]}'
 ```
 
-Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json`. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. Filesystem approval creation and bound filesystem execution use the `filesystem` capability, while filesystem approval list, review, approve, and deny routes use the separate `approvals` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
+Capability groups currently include `admin`, `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, and `logs`. The `admin` capability can access all protected route groups, and operator group management is protected by the `auth` capability. Public routes remain `GET /`, `GET /health`, `/docs`, `/redoc`, `/openapi.json`, and the static `/ui/` dashboard shell. The dashboard stores any entered bearer token only in the browser session and uses it for protected API calls. Plugin discovery and trust routes use the `tools` capability. Hook policy rule routes use the `hooks` capability. Filesystem approval creation and bound filesystem execution use the `filesystem` capability, while filesystem approval list, review, approve, and deny routes use the separate `approvals` capability. CLI approval creation and approved-command execution use the `cli` capability; CLI approval list, review, approve, and deny routes use the separate `approvals` capability.
 
 ## Configure Managed Settings
 
@@ -215,7 +215,10 @@ dgentic-server --host 127.0.0.1 --port 8000
 Then open:
 
 - `http://127.0.0.1:8000/health`
+- `http://127.0.0.1:8000/ui/`
 - `http://127.0.0.1:8000/docs`
+
+The `/ui/` dashboard is served by the same FastAPI process. In local development it can call the API without a token unless auth is explicitly enabled. In staging or production, open the dashboard, enter a bearer token with the needed capabilities, and use the UI surfaces for task planning, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs.
 
 ## Create A Task Plan
 

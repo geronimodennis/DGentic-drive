@@ -19,6 +19,10 @@ dgentic/
   src/
     dgentic/
       api/
+      ui/
+        index.html
+        app.css
+        app.js
       agents.py
       auth.py
       command_recipes.py
@@ -71,7 +75,8 @@ Python backend package for the DGentic orchestrator API.
 
 Current modules:
 
-- `main.py`: FastAPI app factory and application instance.
+- `main.py`: FastAPI app factory, application instance, and same-origin static `/ui/` dashboard mount.
+- `ui/`: Static Sprint 16 dashboard shell served by FastAPI. It provides browser-session bearer-token handling, health cards, task planning, orchestration summary, unified approval inbox, Git checkpoint visibility, provider/tool summary, effective settings, and event log polling while relying on the existing backend API capability gates for protected data and actions.
 - `auth.py`: Production/staging bearer-token authentication, route and method-aware capability mapping, persisted operator identity records with direct capability assignments, assigned operator groups, computed effective capabilities, and active/inactive status, persisted operator group records with active/inactive capability bundles, persisted generated bearer-token records with salted PBKDF2 hashes, rotation/revocation/expiry helpers, operator-id actor binding, direct plus group-inherited capability checks for token issuance/authentication, startup fail-closed configuration validation, CLI approval reviewer capability separation, and secret-shaped metadata redaction for operator display/role fields, operator group display/description fields, and generated-token labels before responses, auth audit metadata, and new or mutated JSON persistence.
 - `api/routes.py`: HTTP routes for health checks, persisted operator/auth-token and credential-reference management, tasks, orchestration runs and detached orchestration execution polling, filesystem/command/network guardrails, hook policy rules, filesystem approvals, CLI policy and approvals, git workflow checkpoints, direct commit/push/PR runs, commit/push/PR approval creation, provider approvals, providers, routing, owner-scoped orchestration agent reads, memory, tools, plugin discovery/trust/component previews, sessions, and logs. Authenticated principals are bound into requester/audit actors for direct execution and mutation routes when auth is enabled. Managed policy locks can make selected mutation routes fail closed while keeping read/preview/evaluation routes available.
 - `api/memory_routes.py`: SQLAlchemy-backed metadata index, retrieval, and tool registry routes under `/api/v1`, including service-authored orchestration shared-memory metadata protections and owner/admin read scoping when auth is enabled.
@@ -125,6 +130,8 @@ Recent direct git PR runner tests cover successful constrained `gh pr create` in
 
 Recent web retrieval runtime tests cover explicit-policy fetch requirements, allow/audit success through mocked transport, denial and missing approval before transport, approval-required single-use execution, wrong/reused approval rejection, active-task context checks, URL credential and fragment rejection, redirect blocking, text-like content enforcement, bounded truncation, and response/log redaction.
 
+Recent web UI tests cover `/ui/` static entrypoint and asset serving plus the auth-enabled boundary where the dashboard shell remains loadable while protected API routes still require a bearer token.
+
 ### `localmcp/`
 
 Location for generated reusable tools. DGentic-created tools live under:
@@ -176,7 +183,7 @@ The `plugins/[plugin_name]/dgentic-plugin.json` manifest location now has a back
 
 Authentication:
 
-- `GET /`, `GET /health`, `/docs`, `/redoc`, and `/openapi.json` are public.
+- `GET /`, `GET /health`, `/docs`, `/redoc`, `/openapi.json`, and the static `/ui/` dashboard assets are public.
 - Development mode is auth-off by default.
 - Staging and production modes are auth-on by default unless `DGENTIC_AUTH_ENABLED=false` is explicitly set.
 - Protected route groups require bearer tokens configured through `DGENTIC_AUTH_TOKENS` or persisted generated bearer tokens assigned to active operator profiles, using effective capabilities from the operator's direct assignments plus active operator groups. Capability names include `auth`, `credentials`, `tasks`, `filesystem`, `cli`, `providers`, `approvals`, `network`, `hooks`, `agents`, `memory`, `tools`, `sessions`, `logs`, or `admin`.
@@ -188,6 +195,7 @@ Current endpoints:
 
 - `GET /`: Service health response.
 - `GET /health`: Service health response.
+- `GET /ui/`: Serves the static Sprint 16 dashboard shell. The shell itself is public, but all protected API calls it makes still require an entered bearer token when auth is enabled.
 - `POST /auth/operator-groups`: Creates a persisted operator group with assigned capabilities.
 - `GET /auth/operator-groups`: Lists persisted operator groups.
 - `GET /auth/operator-groups/{group_id}`: Retrieves one persisted operator group.

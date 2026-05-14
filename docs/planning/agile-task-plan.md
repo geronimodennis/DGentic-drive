@@ -340,19 +340,26 @@ Tasks:
 
 ## Epic 8: User Interfaces
 
-### Story 8.1: Build Unified Chat Interface
+### Story 8.1: Build Unified Chat And Project Workspace Interface
 
-As a user, I want a chat interface that shows orchestrator reasoning, sub-agent progress, rich output, approvals, and action logs.
+As a user, I want a chat interface that shows orchestrator reasoning, project context, sub-agent progress, rich output, approvals, file changes, and action logs.
 
 Acceptance criteria:
 - Chat supports Markdown, code, and LaTeX rendering.
+- Users can add a project or open an existing project folder as the active `rootDir`.
+- Users can browse the active project through a file explorer.
+- Users can open and edit project files in a code editor while preserving root-boundary protections.
+- Users can review AI-proposed file changes with a Codex-style diff/change-review surface before accepting or rejecting them.
 - Sub-agent progress is visible.
 - Approval-required actions can be reviewed in context.
 - Action logs are available without overwhelming the main conversation.
 
 Tasks:
-- Design chat layout and state model.
+- Design chat, project workspace, and review-panel layout and state model.
 - Implement task submission flow.
+- Implement project add/open and active project context display.
+- Implement root-bound file explorer and code editor views.
+- Implement AI-change diff/review flow for pending file edits.
 - Add approval and log panels.
 
 ### Story 8.2: Build Configuration Settings

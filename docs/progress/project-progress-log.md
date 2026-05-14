@@ -6,6 +6,35 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010a Same-Origin Web Dashboard Shell
+
+Status: completed for the scoped first Sprint 16 dashboard slice; Sprint 16 remains active for richer chat/task execution workflows, sub-agent progress detail, policy/settings editors, plugin and command-recipe views, memory/tool reliability dashboards, direct approved-action execution UX, and broader responsive/browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM confirmed Sprint 15 is closed at the BL-009av safe backend security checkpoint, preserving remaining Sprint 15 backend security and Git expansion items as deferred follow-ups rather than cancelled scope.
+- Completed: Architect mapped existing FastAPI contracts for auth, health, task planning, orchestration, approvals, logs, settings, providers/tools, memory, and Git workflow checkpoints.
+- Completed: QA mapped the Python-only test strategy and confirmed no existing frontend toolchain was present.
+- Completed: Developer added a same-origin static `/ui/` dashboard mount to the FastAPI app and implemented the first dashboard shell under `src/dgentic/ui/`.
+- Completed: QA added focused `/ui/` static-serving and auth-boundary tests.
+- Completed: PM updated README, architecture, setup, usage, backlog, project status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `GET /ui/` serves a static browser dashboard from the FastAPI process without introducing a separate frontend build chain.
+- Implemented in this slice: the dashboard includes bearer-token session entry, runtime health metrics, task plan creation, task/run history, orchestration operations summary, provider/tool summaries, effective settings, event log polling, and a Git workflow checkpoint panel.
+- Implemented in this slice: the unified approval inbox loads CLI, filesystem, network, provider, and tool approval queues, opens the existing safe review endpoints, and submits approve or deny decisions through the existing backend approval APIs.
+- Implemented in this slice: the dashboard shell is public so operators can load it in production, while protected API data and actions still require the existing bearer-token capability gates.
+- Still out of scope after this slice: direct approved-action execution buttons, richer filtering and detail views, editable settings/policy surfaces, plugin/command-recipe/hook-policy dashboards, memory/tool reliability drilldowns, full chat UI, VS Code extension, dedicated CLI client, and broad cross-browser/mobile regression coverage.
+
+Validation:
+- Focused UI static-serving and auth-boundary tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Focused UI/API smoke passed: `python -m pytest -q tests\test_ui.py tests\test_api.py -k "health or task_plan or logs or effective_settings" --maxfail=1 -x` with 14 tests and 199 deselected.
+- Browser smoke passed in the Codex in-app browser against `http://127.0.0.1:8020/ui/`: dashboard title and main controls rendered, the approval inbox was present, and console error count was 0.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,314 tests and 2 skipped.
+
 ### Documentation Source-Of-Truth Cleanup
 
 Status: completed for the scoped documentation navigation cleanup. Planned features were not removed or downsized.
@@ -28,6 +57,15 @@ Completed:
 - Clarified that the human-facing chat/web UI is not implemented yet and remains planned for Sprint 16.
 - Clarified that current backend MVP task submission is through the HTTP API, with dedicated CLI and VS Code clients planned for Sprint 17.
 - Preserved the chat interface as a planned feature rather than removing it from the roadmap.
+
+### Sprint 16 Project Workspace UI Requirement
+
+Status: added to the Sprint 16 roadmap.
+
+Completed:
+- Added project/workspace management to the chat interface scope, including adding a project or opening an existing folder as the active `rootDir`.
+- Added project file explorer, in-browser code editor, and Codex-style AI-change diff/review requirements to BL-010 and Story 8.1.
+- Preserved the existing BL-010a dashboard shell scope while making the richer project workspace UI the next Sprint 16 direction.
 
 ## 2026-05-13
 

@@ -6,18 +6,18 @@ Use this page as the current PM control panel. It does not replace the backlog o
 
 ## Current Sprint
 
-- Active sprint: Sprint 15, Production Identity, Secrets, And Network Guardrails.
-- Latest stable implementation checkpoint: BL-009a through BL-009av are implemented and validated.
-- Latest completed slice: BL-009av, Managed Network-Domain Policy Rule Records.
-- Current objective: stop Sprint 15 only at a safe validated checkpoint, then move primary delivery focus to user-facing Sprint 16 UI work and Sprint 17 VS Code/CLI work.
+- Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
+- Latest stable implementation checkpoint: BL-010a same-origin web dashboard shell is implemented and focused-validation clean.
+- Latest completed slice: BL-010a, FastAPI-served `/ui/` dashboard for task planning, approvals, Git checkpoints, settings, providers/tools, and logs.
+- Current objective: deepen the Sprint 16 user-facing UI while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
-1. Close the remaining Sprint 15 security work at the safest checkpoint.
-2. Start Sprint 16: cross-platform web UI, approval dashboard, settings, and user-facing Git workflow visibility.
-3. Start Sprint 17: VS Code extension and dedicated CLI client, including safe Git workflow commands.
-4. Continue Sprint 18: deployment, CI/CD, observability, rollback, and Git workflow telemetry.
-5. Continue Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.
+1. Continue Sprint 16: richer task/chat UI, project add/open, active `rootDir` workspace context, file explorer, code editor, Codex-style AI-change review, approval dashboard, settings, plugin/command-recipe views, and Git workflow visibility.
+2. Start Sprint 17: VS Code extension and dedicated CLI client, including safe Git workflow commands.
+3. Continue Sprint 18: deployment, CI/CD, observability, rollback, and Git workflow telemetry.
+4. Continue Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.
+5. Return to deferred Sprint 15/backend Git hardening when it directly enables user-facing flows or after Sprint 16/17 surfaces are stable.
 
 ## Safe Stopping Rule For Git
 
@@ -45,6 +45,8 @@ Remaining Git roadmap:
 
 ## Remaining Sprint 15 Follow-Ups
 
+Sprint 15 is closed at the BL-009av safe backend security checkpoint. These items remain deferred follow-ups, not cancelled scope:
+
 - Richer production identity workflows beyond persisted operators and operator groups.
 - Managed KMS integration beyond supplied-key local vault rotation.
 - Additional secret-manager adapters beyond HashiCorp Vault KV v2.
@@ -54,8 +56,8 @@ Remaining Git roadmap:
 
 ## Sprint Placement
 
-- Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation.
-- Sprint 16: cross-platform UI and approval dashboard, including Git checkpoint, approval, run history, blocker, and freshness surfaces.
+- Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a implemented.
 - Sprint 17: VS Code extension and dedicated CLI client, including Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

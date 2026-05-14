@@ -621,6 +621,26 @@ textarea {
   margin-top: 10px;
 }
 
+.agent-tree {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+  min-width: 0;
+}
+
+.agent-node {
+  display: grid;
+  gap: 5px;
+  margin-left: calc(var(--depth, 0) * 18px);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: white;
+}
+
 .review-panel pre,
 .output-region pre {
   overflow: auto;

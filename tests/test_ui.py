@@ -77,6 +77,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'safeLoad("agents", () => api("/agents"))' in script_response.text
     assert "Array.isArray(agentsResult.data)" in script_response.text
     assert "renderOrchestrationDetail" in script_response.text
+    assert "renderAgentHierarchy" in script_response.text
+    assert "agent.parent_agent_id" in script_response.text
+    assert "agent-tree" in script_response.text
+    assert "agent-node" in script_response.text
     assert "renderTaskAgentBrief" in script_response.text
     assert "agent-brief-grid" in script_response.text
     assert "renderTaskUpdateForm" in script_response.text
@@ -117,6 +121,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-card" in style_response.text
     assert ".agent-brief" in style_response.text
     assert ".agent-brief-grid" in style_response.text
+    assert ".agent-tree" in style_response.text
+    assert ".agent-node" in style_response.text
     assert ".orchestration-form" in style_response.text
     assert ".approval-filter-row" in style_response.text
     assert ".approval-summary-grid" in style_response.text

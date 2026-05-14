@@ -517,6 +517,7 @@ function renderOrchestrationDetail(run, executionsResult, loadingExecutions = fa
   target.append(grid);
 
   renderOrchestrationTasks(target, run, run.tasks || [], agentsResult);
+  renderAgentHierarchy(target, run, agentsResult);
   renderOrchestrationBlockers(target, run, run.blockers || []);
   renderOrchestrationFollowUps(target, run.follow_ups || []);
   renderOrchestrationCloseout(target, run);
@@ -712,6 +713,73 @@ function renderTaskAgentBrief(target, task, agentsResult) {
     detail.append(context);
   }
   target.append(detail);
+}
+
+function renderAgentHierarchy(target, run, agentsResult) {
+  const taskAgentIds = new Set((run.tasks || []).map((task) => task.agent_id).filter(Boolean));
+  if (!taskAgentIds.size) {
+    return;
+  }
+  const box = make("div", "agent-tree");
+  box.append(make("div", "item-title", "Agent Graph"));
+  if (!agentsResult) {
+    box.append(make("div", "item-meta", "Agent graph loading."));
+    target.append(box);
+    return;
+  }
+  if (!agentsResult.ok) {
+    box.append(statusBox("Agent graph unavailable", agentsResult.error, "blocked"));
+    target.append(box);
+    return;
+  }
+  const agents = Array.isArray(agentsResult.data) ? agentsResult.data : [];
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const included = new Set(Array.from(taskAgentIds).filter((agentId) => agentsById.has(agentId)));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const agent of agents) {
+      if (agent.parent_agent_id && included.has(agent.parent_agent_id) && !included.has(agent.id)) {
+        included.add(agent.id);
+        changed = true;
+      }
+    }
+  }
+  if (!included.size) {
+    box.append(statusBox("Agent graph unavailable", "No visible agents match this run.", "pending"));
+    target.append(box);
+    return;
+  }
+  const tasksByAgentId = new Map((run.tasks || []).filter((task) => task.agent_id).map((task) => [task.agent_id, task]));
+  const childrenByParentId = new Map();
+  for (const agentId of included) {
+    const agent = agentsById.get(agentId);
+    const parentId = agent.parent_agent_id && included.has(agent.parent_agent_id) ? agent.parent_agent_id : "";
+    if (!childrenByParentId.has(parentId)) {
+      childrenByParentId.set(parentId, []);
+    }
+    childrenByParentId.get(parentId).push(agent);
+  }
+  const appendAgentNode = (container, agent, depth = 0) => {
+    const node = make("div", "agent-node");
+    node.style.setProperty("--depth", String(depth));
+    const row = make("div", "task-title-row");
+    row.append(make("strong", "", agent.id), statusChip(agent.status));
+    node.append(row);
+    const task = tasksByAgentId.get(agent.id);
+    node.append(make("div", "item-meta", `${agent.role || task?.role || "-"} - task: ${task?.id || agent.task_id || "-"}`));
+    if (agent.task) {
+      node.append(make("div", "item-meta", agent.task));
+    }
+    container.append(node);
+    for (const child of childrenByParentId.get(agent.id) || []) {
+      appendAgentNode(container, child, depth + 1);
+    }
+  };
+  for (const root of childrenByParentId.get("") || []) {
+    appendAgentNode(box, root);
+  }
+  target.append(box);
 }
 
 function renderOrchestrationBlockers(target, run, blockers) {

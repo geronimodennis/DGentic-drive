@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010m Sub-Agent Graph Visibility
+
+Status: completed for the scoped sub-agent graph visibility slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected deeper sub-agent graph visibility as the next compact Sprint 16 slice because BL-010j already loads visible agent records and agent briefs include `parent_agent_id`.
+- Completed: Developer added a compact parent-child agent graph for the selected orchestration run, deriving descendants client-side from the visible `/agents` list without adding backend endpoints.
+- Completed: Developer preserved fail-soft behavior when the current token lacks the `agents` capability or visible agent records do not include the selected run's task agents.
+- Completed: QA extended UI static contract tests for the graph renderer, parent-agent linkage, and graph CSS hooks.
+- Completed: PM updated README, project status, planning, architecture, setup, and usage docs.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` orchestration detail now renders a compact agent graph for task-linked agents and their visible child agents, including status, role, task id, and brief text.
+- Still out of scope after this slice: interactive graph navigation, per-agent child endpoint drilldowns, graph filtering, and browser end-to-end graph scenario automation.
+
+Validation:
+- Focused UI static tests passed: `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010l Orchestration Creation UI
 
 Status: completed for the scoped orchestration creation UI slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

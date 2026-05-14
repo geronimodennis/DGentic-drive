@@ -455,8 +455,8 @@ Definition of Done:
 - PM confirms the root README not-yet-implemented entries for web frontend/dashboard and interactive approval UI can move to implemented or partially implemented status.
 
 Current implementation status:
-- Partially implemented: BL-010a same-origin web dashboard shell served at `/ui/`, including bearer-token session control, runtime health cards, task planning, orchestration summary, unified approval inbox for CLI/filesystem/network/provider/tool approvals with safe review plus approve/deny decisions, Git checkpoint visibility, provider/tool summary, effective settings view, log polling, focused static-serving/auth-boundary tests, and browser smoke validation.
-- Remaining: richer chat/task execution workflows, project add/open flow, active `rootDir` project context display, project file explorer, code editor, AI-change diff/review surface, sub-agent graph/detail visualization, direct approved-action execution UX, policy/settings editors for providers, routing, filesystem, CLI rules, memory, tools, command recipes, plugins, hook policies, and managed settings, memory/tool reliability drilldowns, broader responsive/browser QA, and end-to-end approval scenario tests.
+- Partially implemented: BL-010a same-origin web dashboard shell served at `/ui/`, including bearer-token session control, runtime health cards, task planning, orchestration summary, unified approval inbox for CLI/filesystem/network/provider/tool approvals with safe review plus approve/deny decisions, Git checkpoint visibility, provider/tool summary, effective settings view, log polling, focused static-serving/auth-boundary tests, and browser smoke validation. BL-010b adds a current configured `rootDir` workspace file browser and text editor using existing guarded `/filesystem/list`, `/filesystem/read`, and `/filesystem/write` APIs without introducing rootDir switching.
+- Remaining: richer chat/task execution workflows, project add/open flow, active `rootDir` project context display and switching, AI-change diff/review surface, sub-agent graph/detail visualization, direct approved-action execution UX, policy/settings editors for providers, routing, filesystem, CLI rules, memory, tools, command recipes, plugins, hook policies, and managed settings, memory/tool reliability drilldowns, broader responsive/browser QA, and end-to-end approval scenario tests.
 
 ### BL-011: VS Code Extension And Dedicated CLI Client
 
@@ -766,8 +766,8 @@ Stories:
 - BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
 
 Current Sprint 16 status:
-- Active: BL-010a same-origin dashboard shell is implemented and validation-clean. This slice provides the first user-facing UI surface for task planning, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs while preserving backend approval/auth boundaries.
-- Remaining: deepen the UI into richer chat/task execution workflows, project add/open and active `rootDir` selection, project file explorer, code editor, Codex-style AI-change review, sub-agent progress detail, policy/settings editors, command recipe and plugin views, memory/tool reliability dashboards, direct approved-action execution UX, and broader browser/responsive validation.
+- Active: BL-010a same-origin dashboard shell and BL-010b current-root workspace file browser/editor are implemented and validation-clean. These slices provide the first user-facing UI surface for task planning, workspace file browsing/editing inside the configured `rootDir`, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs while preserving backend approval/auth/filesystem boundaries.
+- Remaining: deepen the UI into richer chat/task execution workflows, project add/open and active `rootDir` selection, Codex-style AI-change review, sub-agent progress detail, policy/settings editors, command recipe and plugin views, memory/tool reliability dashboards, direct approved-action execution UX, and broader browser/responsive validation.
 
 Exit criteria:
 - Users can submit tasks, inspect plan/sub-agent progress, review approvals, and view action logs through the web UI.
@@ -840,7 +840,7 @@ Safe stopping rule:
 
 ## Not-Yet-Implemented Coverage Map
 
-- Web frontend/dashboard: BL-010, Sprint 16. BL-010a same-origin `/ui/` dashboard shell is implemented; richer dashboard, chat, project add/open, file explorer, code editor, AI-change review, settings, policy, memory/tool, and responsive/browser coverage remains.
+- Web frontend/dashboard: BL-010, Sprint 16. BL-010a same-origin `/ui/` dashboard shell and BL-010b current-root workspace file browser/editor are implemented; richer dashboard, chat, project add/open/rootDir switching, AI-change review, settings, policy, memory/tool, and responsive/browser coverage remains.
 - VS Code extension: BL-011, Sprint 17.
 - Dedicated CLI client interface: BL-011, Sprint 17.
 - Interactive approval UI: BL-010, Sprint 16. BL-010a unified approval inbox with review plus approve/deny actions is implemented; direct execute flows, richer filtering/detail, and end-to-end approval scenario coverage remains.

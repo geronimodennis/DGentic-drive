@@ -10,6 +10,8 @@ const approvalSources = [
 
 let approvalStatus = "pending";
 let selectedApproval = null;
+let workspacePath = ".";
+let openFilePath = "";
 let toastTimer = null;
 
 function qs(selector) {
@@ -129,11 +131,112 @@ async function refreshDashboard() {
   await Promise.all([
     loadHealth(),
     loadTasks(),
+    loadWorkspace(),
     loadApprovals(),
     loadProviders(),
     loadSettings(),
     loadLogs(),
   ]);
+}
+
+function parentPath(path) {
+  const parts = String(path || ".")
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((part) => part && part !== ".");
+  parts.pop();
+  return parts.join("/") || ".";
+}
+
+function entryPath(entry) {
+  return String(entry.path || entry.name || ".");
+}
+
+function fileMeta(entry) {
+  const size = entry.size_bytes === null || entry.size_bytes === undefined ? "-" : entry.size_bytes;
+  const modified = entry.modified_at ? new Date(entry.modified_at).toLocaleString() : "-";
+  return `${entry.type} - ${size} bytes - ${modified}`;
+}
+
+async function loadWorkspace(path = workspacePath) {
+  workspacePath = path || ".";
+  qs("#workspacePathInput").value = workspacePath;
+  const target = qs("#workspaceList");
+  clear(target);
+  target.append(statusBox("Loading workspace", workspacePath, "running"));
+  const result = await safeLoad("workspace", () =>
+    api("/filesystem/list", { method: "POST", body: { path: workspacePath } }),
+  );
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Workspace unavailable", result.error, "blocked"));
+    return;
+  }
+  const entries = [...(result.data.entries || [])].sort((left, right) => {
+    if (left.type !== right.type) {
+      return left.type === "directory" ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+  if (!entries.length) {
+    target.append(statusBox("Empty folder", result.data.path || workspacePath, "pending"));
+    return;
+  }
+  for (const entry of entries) {
+    const row = make("button", "file-row");
+    row.type = "button";
+    const copy = make("div");
+    copy.append(make("strong", "", entry.name));
+    copy.append(make("div", "item-meta", fileMeta(entry)));
+    row.append(copy, statusChip(entry.type));
+    if (entry.type === "directory") {
+      row.addEventListener("click", () => loadWorkspace(entryPath(entry)));
+    } else if (entry.type === "file") {
+      row.addEventListener("click", () => openWorkspaceFile(entryPath(entry)));
+    } else {
+      row.disabled = true;
+    }
+    target.append(row);
+  }
+}
+
+async function openWorkspaceFile(path) {
+  const target = qs("#workspaceStatus");
+  clear(target);
+  target.append(statusBox("Opening file", path, "running"));
+  try {
+    const response = await api("/filesystem/read", { method: "POST", body: { path } });
+    openFilePath = String(response.path || path);
+    qs("#workspaceEditorTitle").textContent = openFilePath;
+    qs("#workspaceEditor").value = response.content || "";
+    clear(target);
+    target.append(statusBox("File loaded", `${response.bytes_read} bytes`, "ok"));
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Open failed", error.message, "failed"));
+  }
+}
+
+async function saveWorkspaceFile() {
+  const target = qs("#workspaceStatus");
+  clear(target);
+  if (!openFilePath) {
+    target.append(statusBox("No file open", "Open a file before saving.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Saving file", openFilePath, "running"));
+  try {
+    const response = await api("/filesystem/write", {
+      method: "POST",
+      body: { path: openFilePath, content: qs("#workspaceEditor").value },
+    });
+    clear(target);
+    target.append(statusBox("File saved", `${response.bytes_written} bytes`, "ok"));
+    await loadWorkspace(workspacePath);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Save failed", error.message, "failed"));
+  }
 }
 
 async function loadHealth() {
@@ -483,6 +586,12 @@ function bindEvents() {
   qs("#refreshButton").addEventListener("click", refreshDashboard);
   qs("#loadTasksButton").addEventListener("click", loadTasks);
   qs("#taskForm").addEventListener("submit", createTaskPlan);
+  qs("#workspaceForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadWorkspace(qs("#workspacePathInput").value.trim() || ".");
+  });
+  qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
+  qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
   for (const button of qsa(".segmented-control button")) {

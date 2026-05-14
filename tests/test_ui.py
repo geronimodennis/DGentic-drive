@@ -13,6 +13,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "DGentic Control" in response.text
+    assert "Workspace" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -26,8 +27,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert script_response.status_code == 200
     assert "const TOKEN_KEY" in script_response.text
     assert "approvalSources" in script_response.text
+    assert "headers.Authorization" in script_response.text
+    assert 'api("/filesystem/list"' in script_response.text
+    assert 'api("/filesystem/read"' in script_response.text
+    assert 'api("/filesystem/write"' in script_response.text
+    assert "rootDir" not in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
+    assert ".workspace-layout" in style_response.text
     assert ".approval-list" in style_response.text
 
 

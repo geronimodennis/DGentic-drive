@@ -185,7 +185,8 @@ textarea {
 .button-row,
 .form-footer,
 .panel-header,
-.approval-actions {
+.approval-actions,
+.input-action {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -195,6 +196,10 @@ textarea {
 .panel-header,
 .form-footer {
   justify-content: space-between;
+}
+
+.compact-header {
+  align-items: center;
 }
 
 .primary-button,
@@ -299,7 +304,8 @@ textarea {
 }
 
 .task-form,
-.stacked-form {
+.stacked-form,
+.workspace-path-form {
   display: grid;
   gap: 12px;
 }
@@ -339,6 +345,64 @@ textarea {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.input-action input {
+  flex: 1 1 auto;
+}
+
+.file-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 360px;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+  text-align: left;
+}
+
+.file-row:hover,
+.file-row:focus-visible {
+  border-color: #93c5fd;
+  outline: none;
+}
+
+.file-row strong {
+  overflow-wrap: anywhere;
+}
+
+.editor-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+#workspaceEditor {
+  min-height: 360px;
+  font-family:
+    "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  tab-size: 2;
 }
 
 .list-item,
@@ -526,8 +590,14 @@ textarea {
   .content-grid,
   .two-column,
   .settings-grid,
+  .workspace-layout,
   .decision-form {
     grid-template-columns: 1fr;
+  }
+
+  .input-action {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .approval-item {

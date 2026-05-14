@@ -218,7 +218,7 @@ Then open:
 - `http://127.0.0.1:8000/ui/`
 - `http://127.0.0.1:8000/docs`
 
-The `/ui/` dashboard is served by the same FastAPI process. In local development it can call the API without a token unless auth is explicitly enabled. In staging or production, open the dashboard, enter a bearer token with the needed capabilities, and use the UI surfaces for task planning, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs.
+The `/ui/` dashboard is served by the same FastAPI process. In local development it can call the API without a token unless auth is explicitly enabled. In staging or production, open the dashboard, enter a bearer token with the needed capabilities, and use the UI surfaces for task planning, current-root workspace file browsing/editing, orchestration summary, approval review/decisions, Git checkpoints, provider/tool summaries, effective settings, and logs. The workspace panel uses the backend's currently configured `DGENTIC_ROOT_DIR`; selecting or switching root directories from the browser remains later Sprint 16 work.
 
 ## Create A Task Plan
 

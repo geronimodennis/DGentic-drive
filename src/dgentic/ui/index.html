@@ -19,6 +19,7 @@
         <nav class="nav-list" aria-label="Dashboard sections">
           <a href="#overview">Overview</a>
           <a href="#tasks">Tasks</a>
+          <a href="#workspace">Workspace</a>
           <a href="#approvals">Approvals</a>
           <a href="#git">Git</a>
           <a href="#settings">Settings</a>
@@ -126,6 +127,45 @@
               </div>
             </div>
             <div id="orchestrationSummary" class="compact-list"></div>
+          </article>
+
+          <article id="workspace" class="panel wide-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Workspace</p>
+                <h2>Files</h2>
+              </div>
+              <button id="workspaceParentButton" type="button" class="icon-button" title="Open parent folder" aria-label="Open parent folder">
+                U
+              </button>
+            </div>
+            <form id="workspaceForm" class="workspace-path-form">
+              <label for="workspacePathInput">Path</label>
+              <div class="input-action">
+                <input id="workspacePathInput" type="text" value=".">
+                <button type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">O</span>
+                  Open
+                </button>
+              </div>
+            </form>
+            <div class="workspace-layout">
+              <div id="workspaceList" class="file-list"></div>
+              <div class="editor-panel">
+                <div class="panel-header compact-header">
+                  <div>
+                    <p class="eyebrow">Editor</p>
+                    <h2 id="workspaceEditorTitle">No file open</h2>
+                  </div>
+                  <button id="workspaceSaveButton" type="button" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">S</span>
+                    Save
+                  </button>
+                </div>
+                <textarea id="workspaceEditor" rows="18" spellcheck="false"></textarea>
+                <div id="workspaceStatus" class="output-region"></div>
+              </div>
+            </div>
           </article>
 
           <article id="approvals" class="panel wide-panel">

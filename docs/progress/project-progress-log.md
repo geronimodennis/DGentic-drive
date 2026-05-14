@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010b Current-Root Workspace Browser And Editor
+
+Status: completed for the scoped current-root workspace UI slice; Sprint 16 remains active for project add/open and rootDir switching, AI-change diff review, richer task/chat execution, policy/settings editors, plugin and command-recipe views, direct approved-action execution UX, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Architect confirmed the existing filesystem API contracts for list, read, and write against the configured backend `rootDir`.
+- Completed: Developer added a workspace panel to `/ui/` with path navigation, parent navigation, directory listing, text-file opening, and text-file saving through existing guarded filesystem APIs.
+- Completed: QA expanded UI static tests to assert filesystem endpoint wiring, bearer-token header wiring, and no browser-side `rootDir` switching field.
+- Completed: PM updated README, architecture, setup, usage, backlog, project status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can list directories with `POST /filesystem/list`, open text files with `POST /filesystem/read`, and save text files with `POST /filesystem/write`.
+- Implemented in this slice: workspace requests rely on the same bearer-token session header logic as the rest of the dashboard and therefore preserve existing `filesystem` capability gates when auth is enabled.
+- Implemented in this slice: the UI works against the backend's configured `DGENTIC_ROOT_DIR` only; rootDir/project switching is intentionally deferred to a dedicated backend contract.
+- Still out of scope after this slice: project add/open, active rootDir switching, binary editing, diff/change review, approval-id entry for approval-required filesystem hooks, and Monaco-style editor integration.
+
+Validation:
+- Focused UI tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Focused lint/format/diff hygiene passed: `python -m ruff check tests\test_ui.py src\dgentic\main.py`, `python -m ruff format --check tests\test_ui.py src\dgentic\main.py`, and `git diff --check`.
+- Browser smoke passed in the Codex in-app browser against `http://127.0.0.1:8020/ui/`: workspace controls rendered, the current repository listed 17 file rows including `README.md`, and console error count was 0.
+- Full lint/format/regression gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `python -m pytest -q --maxfail=1 -x` with 1,314 tests and 2 skipped.
+
 ### Sprint 16 BL-010a Same-Origin Web Dashboard Shell
 
 Status: completed for the scoped first Sprint 16 dashboard slice; Sprint 16 remains active for richer chat/task execution workflows, sub-agent progress detail, policy/settings editors, plugin and command-recipe views, memory/tool reliability dashboards, direct approved-action execution UX, and broader responsive/browser validation.

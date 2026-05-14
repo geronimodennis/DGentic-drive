@@ -128,6 +128,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderOrchestrationTaskBuilderPreview" in script_response.text
     assert "JSON.stringify(tasks, null, 2)" in script_response.text
     assert 'qs("#orchestrationTasksInput").value' in script_response.text
+    assert "runsForPlan" in script_response.text
+    assert "renderTaskPlanCard" in script_response.text
+    assert "renderTaskPlanSteps" in script_response.text
+    assert "renderTaskRunSummary" in script_response.text
+    assert "executeTaskPlan" in script_response.text
+    assert 'api("/tasks/execute", { method: "POST", body: plan })' in script_response.text
+    assert "Run Plan" in script_response.text
+    assert "task-plan-card" in script_response.text
+    assert "task-run-summary" in script_response.text
     assert "required_dod_evidence" in script_response.text
     assert "shared_memory_tags" in script_response.text
     assert "shared_memory_policy" in script_response.text
@@ -273,6 +282,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".git-diff-section" in style_response.text
     assert ".diff-patch" in style_response.text
     assert ".git-review-summary" in style_response.text
+    assert ".task-plan-card" in style_response.text
+    assert ".task-plan-header" in style_response.text
+    assert ".task-plan-actions" in style_response.text
+    assert ".task-step-list" in style_response.text
+    assert ".task-step-card" in style_response.text
+    assert ".task-run-summary" in style_response.text
 
 
 def test_web_ui_is_public_while_api_routes_remain_protected(tmp_path, monkeypatch) -> None:

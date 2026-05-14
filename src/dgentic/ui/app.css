@@ -439,6 +439,52 @@ textarea {
   background: var(--surface-soft);
 }
 
+.task-plan-card,
+.task-step-card,
+.task-run-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+  min-width: 0;
+}
+
+.task-plan-card {
+  background: white;
+}
+
+.task-plan-header,
+.task-step-title-row,
+.task-run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.task-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.task-plan-context,
+.task-step-list,
+.task-run-result-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-step-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .recipe-parameter-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1016,7 +1062,11 @@ textarea {
 
   .run-row,
   .task-title-row,
-  .execution-row {
+  .execution-row,
+  .task-plan-header,
+  .task-step-title-row,
+  .task-run-row,
+  .task-step-detail-grid {
     grid-template-columns: 1fr;
   }
 }

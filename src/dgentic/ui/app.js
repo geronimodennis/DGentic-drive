@@ -449,12 +449,137 @@ function renderTaskOutput(plans, runs) {
   if (!latestPlans.length) {
     target.append(statusBox("No task plans", "Create a plan to start the queue.", "pending"));
   }
+  if (!runs.ok) {
+    target.append(statusBox("Task runs unavailable", runs.error, "blocked"));
+  }
   for (const plan of latestPlans) {
-    const item = make("div", "list-item");
-    item.append(make("div", "item-title", plan.objective || plan.id));
-    item.append(make("div", "item-meta", `${plan.id} - ${plan.status} - ${plan.steps?.length || 0} steps`));
-    item.append(statusChip(plan.status));
-    target.append(item);
+    renderTaskPlanCard(target, plan, runsForPlan(plan, runs.ok ? runs.data : []));
+  }
+}
+
+function runsForPlan(plan, runs) {
+  return (runs || [])
+    .filter((run) => run.plan_id === plan.id)
+    .sort((left, right) => new Date(right.started_at || 0) - new Date(left.started_at || 0));
+}
+
+function renderTaskPlanCard(target, plan, relatedRuns) {
+  const card = make("div", "task-plan-card");
+  const header = make("div", "task-plan-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", plan.objective || plan.id));
+  copy.append(
+    make(
+      "div",
+      "item-meta",
+      `${plan.id} - ${formatTimestamp(plan.created_at)} - ${plan.steps?.length || 0} steps`,
+    ),
+  );
+  const actions = make("div", "task-plan-actions");
+  const runButton = make("button", "primary-button", "Run Plan");
+  runButton.type = "button";
+  runButton.disabled = !(plan.steps || []).length;
+  runButton.addEventListener("click", () => executeTaskPlan(plan));
+  actions.append(statusChip(plan.status), runButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  renderTaskPlanContext(card, plan);
+  renderTaskPlanSteps(card, plan);
+  renderTaskRunSummary(card, relatedRuns);
+  target.append(card);
+}
+
+function renderTaskPlanContext(target, plan) {
+  const constraints = plan.constraints || [];
+  const acceptance = plan.acceptance_criteria || [];
+  const questions = plan.clarification_questions || [];
+  if (!constraints.length && !acceptance.length && !questions.length) {
+    return;
+  }
+  const context = make("div", "task-plan-context");
+  renderChipList(context, "Constraints", constraints, "pending");
+  renderChipList(context, "Acceptance", acceptance, "ok");
+  renderChipList(context, "Questions", questions, "running");
+  target.append(context);
+}
+
+function renderTaskPlanSteps(target, plan) {
+  const steps = plan.steps || [];
+  const list = make("div", "task-step-list");
+  if (!steps.length) {
+    list.append(statusBox("No plan steps", "This draft has no executable steps.", "pending"));
+    target.append(list);
+    return;
+  }
+  for (const step of steps) {
+    const item = make("div", "task-step-card");
+    const titleRow = make("div", "task-step-title-row");
+    const title = make("div");
+    title.append(make("div", "item-title", step.title || step.id));
+    title.append(make("div", "item-meta", `${step.id} - ${step.agent_role || "orchestrator"}`));
+    titleRow.append(title, statusChip(step.status));
+    item.append(titleRow);
+    if (step.description) {
+      item.append(make("div", "item-meta", step.description));
+    }
+    const details = make("div", "task-step-detail-grid");
+    appendKeyValue(details, "Validation", step.validation || "-");
+    appendKeyValue(details, "Dependencies", (step.dependencies || []).join(", ") || "-");
+    appendKeyValue(details, "Tools", (step.tools || []).join(", ") || "-");
+    item.append(details);
+    list.append(item);
+  }
+  target.append(list);
+}
+
+function renderTaskRunSummary(target, relatedRuns) {
+  const panel = make("div", "task-run-summary");
+  if (!relatedRuns.length) {
+    panel.append(statusBox("No runs yet", "Run this plan to create deterministic execution evidence.", "pending"));
+    target.append(panel);
+    return;
+  }
+  for (const run of relatedRuns.slice(0, 3)) {
+    renderTaskRunResult(panel, run);
+  }
+  target.append(panel);
+}
+
+function renderTaskRunResult(target, run) {
+  const item = make("div", "task-run-row");
+  const copy = make("div");
+  const completed = run.completed_at ? ` - completed ${formatTimestamp(run.completed_at)}` : "";
+  copy.append(make("div", "item-title", run.id));
+  copy.append(make("div", "item-meta", `${run.results?.length || 0} step results${completed}`));
+  item.append(copy, statusChip(run.status));
+
+  const resultList = make("div", "task-run-result-list");
+  for (const result of (run.results || []).slice(0, 4)) {
+    const resultItem = make("div", "finding-row");
+    resultItem.append(statusChip(result.status));
+    resultItem.append(make("span", "", `${result.step_id}${result.error ? ` - ${result.error}` : ""}`));
+    resultList.append(resultItem);
+  }
+  target.append(item, resultList);
+}
+
+async function executeTaskPlan(plan) {
+  const target = qs("#taskOutput");
+  clear(target);
+  target.append(statusBox("Running plan", plan.id, "running"));
+  try {
+    const run = await api("/tasks/execute", { method: "POST", body: plan });
+    clear(target);
+    target.append(statusBox("Task plan executed", `${run.id} - ${run.results?.length || 0} step results`, run.status));
+    renderTaskRunResult(target, run);
+    target.append(jsonBlock(run));
+    await loadTasks();
+    showToast("Task plan executed.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Task execution failed", error.message, "failed"));
+    showToast(error.message);
   }
 }
 

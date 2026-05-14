@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010x Richer Task Plan And Run UI
+
+Status: completed for the scoped richer task plan/run UI slice; Sprint 16 remains active for full chat workflows beyond the task-plan cards, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected richer planner/run UI as the next user-facing Sprint 16 slice because the backend already exposes deterministic task planning, persisted plan/run listing, and `POST /tasks/execute`.
+- Completed: Developer replaced the simple recent-plan list with actionable plan cards showing objective metadata, context chips, step detail, and related deterministic run history.
+- Completed: Developer added a Run Plan action that posts the full `TaskPlan` to the existing `/tasks/execute` contract, refreshes task metrics and run history, and preserves safe text-only rendering through existing DOM helpers.
+- Completed: QA extended static UI coverage for the task-plan helpers, `/tasks/execute` endpoint wiring, Run Plan affordance, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can inspect recent deterministic task plans as actionable cards and execute a selected plan through the existing backend task-run contract, then show related run evidence.
+- Still out of scope after this slice: full chat UX, conversational task history, accept/reject AI-change artifacts, broader editable policy/settings surfaces, broader non-CLI approval execution UX, persistent/multi-worker project activation semantics, end-to-end approval scenarios, and broader browser/responsive validation.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49717`: `/ui/` served and `/ui/app.js` included the richer task plan/run helpers and `/tasks/execute` wiring.
+
 ### Sprint 16 BL-010w Checkpoint Review-To-Run Git Actions
 
 Status: completed for the scoped Git review-to-run UI slice; Sprint 16 remains active for full chat workflows, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

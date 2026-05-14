@@ -130,6 +130,45 @@
                 <h2>Orchestration</h2>
               </div>
             </div>
+            <details class="orchestration-form">
+              <summary>New run</summary>
+              <form id="orchestrationCreateForm" class="stacked-form">
+                <label>
+                  Objective
+                  <textarea id="orchestrationObjectiveInput" rows="3" required></textarea>
+                </label>
+                <label>
+                  Task Graph JSON
+                  <textarea id="orchestrationTasksInput" rows="10" spellcheck="false" required></textarea>
+                </label>
+                <div class="two-column">
+                  <label>
+                    DoD Evidence
+                    <textarea id="orchestrationEvidenceInput" rows="4">tests
+docs
+review</textarea>
+                  </label>
+                  <label>
+                    Shared Memory Tags
+                    <textarea id="orchestrationSharedTagsInput" rows="4"></textarea>
+                  </label>
+                </div>
+                <div class="form-footer">
+                  <label>
+                    Memory Policy
+                    <select id="orchestrationMemoryPolicyInput">
+                      <option value="owner">Owner</option>
+                      <option value="run">Run</option>
+                    </select>
+                  </label>
+                  <button type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">+</span>
+                    Create
+                  </button>
+                </div>
+              </form>
+              <div id="orchestrationCreateOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div id="orchestrationSummary" class="compact-list"></div>
             <div id="orchestrationDetail" class="orchestration-detail"></div>
           </article>

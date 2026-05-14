@@ -1087,6 +1087,50 @@ async function createTaskPlan(event) {
   }
 }
 
+async function createOrchestrationRun(event) {
+  event.preventDefault();
+  const objective = qs("#orchestrationObjectiveInput").value.trim();
+  const target = qs("#orchestrationCreateOutput");
+  if (!objective) {
+    showToast("Objective is required.");
+    return;
+  }
+  let tasks = [];
+  try {
+    tasks = JSON.parse(qs("#orchestrationTasksInput").value);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Task graph invalid", error.message, "failed"));
+    return;
+  }
+  if (!Array.isArray(tasks) || !tasks.length) {
+    clear(target);
+    target.append(statusBox("Task graph invalid", "Tasks must be a non-empty JSON array.", "failed"));
+    return;
+  }
+  const payload = {
+    objective,
+    tasks,
+    required_dod_evidence: splitLines(qs("#orchestrationEvidenceInput").value),
+    shared_memory_tags: splitLines(qs("#orchestrationSharedTagsInput").value),
+    shared_memory_policy: qs("#orchestrationMemoryPolicyInput").value,
+  };
+  clear(target);
+  target.append(statusBox("Creating orchestration", objective, "running"));
+  try {
+    const run = await api("/tasks/orchestrations", { method: "POST", body: payload });
+    selectedOrchestrationId = run.id;
+    clear(target);
+    target.append(statusBox("Orchestration created", run.id, run.status));
+    qs("#orchestrationCreateForm").reset();
+    await loadTasks();
+    await loadOrchestrationDetail(run.id, run);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Orchestration create failed", error.message, "failed"));
+  }
+}
+
 async function loadApprovals() {
   const selectedSources = approvalSource
     ? approvalSources.filter((source) => source.key === approvalSource)
@@ -1741,6 +1785,7 @@ function bindEvents() {
   qs("#refreshButton").addEventListener("click", refreshDashboard);
   qs("#loadTasksButton").addEventListener("click", loadTasks);
   qs("#taskForm").addEventListener("submit", createTaskPlan);
+  qs("#orchestrationCreateForm").addEventListener("submit", createOrchestrationRun);
   qs("#workspaceForm").addEventListener("submit", (event) => {
     event.preventDefault();
     loadWorkspace(qs("#workspacePathInput").value.trim() || ".");

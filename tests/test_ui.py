@@ -18,6 +18,9 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Context" in response.text
     assert "Active root" in response.text
     assert "CLI Runs" in response.text
+    assert "orchestrationCreateForm" in response.text
+    assert "orchestrationTasksInput" in response.text
+    assert "orchestrationMemoryPolicyInput" in response.text
     assert "orchestrationDetail" in response.text
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
@@ -65,6 +68,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderActivationChecks" in script_response.text
     assert "workspaceRootButton" in script_response.text
     assert "selectedOrchestrationId" in script_response.text
+    assert "createOrchestrationRun" in script_response.text
+    assert 'api("/tasks/orchestrations", { method: "POST", body: payload })' in script_response.text
+    assert 'JSON.parse(qs("#orchestrationTasksInput").value)' in script_response.text
+    assert "required_dod_evidence" in script_response.text
+    assert "shared_memory_tags" in script_response.text
+    assert "shared_memory_policy" in script_response.text
     assert 'safeLoad("agents", () => api("/agents"))' in script_response.text
     assert "Array.isArray(agentsResult.data)" in script_response.text
     assert "renderOrchestrationDetail" in script_response.text

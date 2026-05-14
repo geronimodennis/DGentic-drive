@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010l Orchestration Creation UI
+
+Status: completed for the scoped orchestration creation UI slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected orchestration creation as the next user-facing Sprint 16 gap after BL-010k because the dashboard could inspect and operate runs but could not create them from the orchestration console.
+- Completed: Developer added a compact New run form for objective, task graph JSON, required Definition of Done evidence keys, shared-memory tags, and owner/run reuse policy.
+- Completed: Developer wired creation to the existing `POST /tasks/orchestrations` contract, selected the new run after creation, and refreshed the orchestration console without introducing backend scope.
+- Completed: QA extended UI static contract tests for the create form, task JSON parsing, POST endpoint, DoD evidence, shared-memory tags, and shared-memory policy payload fields.
+- Completed: PM updated README, project status, planning, architecture, setup, and usage docs.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can create orchestration runs from a valid task-spec JSON array and immediately select the created run for inspection and execution controls.
+- Still out of scope after this slice: guided task graph builders, templates, drag-and-drop dependencies, AI-assisted graph generation, and browser end-to-end creation scenario automation.
+
+Validation:
+- Focused UI static tests passed: `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010k Orchestration Recovery And Closeout Controls
 
 Status: completed for the scoped orchestration mutation UX slice; Sprint 16 remains active for full chat workflows, orchestration creation UI, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

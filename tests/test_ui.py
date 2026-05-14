@@ -65,7 +65,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderActivationChecks" in script_response.text
     assert "workspaceRootButton" in script_response.text
     assert "selectedOrchestrationId" in script_response.text
+    assert 'safeLoad("agents", () => api("/agents"))' in script_response.text
+    assert "Array.isArray(agentsResult.data)" in script_response.text
     assert "renderOrchestrationDetail" in script_response.text
+    assert "renderTaskAgentBrief" in script_response.text
+    assert "agent-brief-grid" in script_response.text
     assert "postOrchestrationLoop" in script_response.text
     assert "postOrchestrationExecution" in script_response.text
     assert "cancelOrchestrationExecution" in script_response.text
@@ -88,6 +92,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".orchestration-detail" in style_response.text
     assert ".orchestration-controls" in style_response.text
     assert ".task-card" in style_response.text
+    assert ".agent-brief" in style_response.text
+    assert ".agent-brief-grid" in style_response.text
     assert ".approval-filter-row" in style_response.text
     assert ".approval-summary-grid" in style_response.text
     assert ".context-grid" in style_response.text

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010j Sub-Agent Detail In Orchestration Console
+
+Status: completed for the scoped per-task sub-agent detail slice; Sprint 16 remains active for full chat workflows, orchestration creation/update/recovery/closeout UI, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected richer sub-agent detail as the next compact user-facing Sprint 16 slice after BL-010i, keeping deeper backend Git expansion deferred rather than cancelled.
+- Completed: Explorer confirmed existing backend contracts already expose `/agents`, `/agents/{agent_id}`, child-agent reads, and `AgentBrief` fields needed for dashboard detail.
+- Completed: Developer joined orchestration task cards to visible `/agents` records and added expandable per-task agent briefs for role, status, parent, task id, timestamps, expected output, required data, and bounded context.
+- Completed: Developer preserved fail-soft behavior when the current token lacks the `agents` capability or agent records are unavailable.
+- Completed: QA extended UI static contract tests for `/agents` loading, list-shape guarding, `renderTaskAgentBrief`, and agent-brief CSS hooks.
+- Completed: PM updated README, project status, planning, architecture, setup, and usage docs.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` orchestration detail now shows expandable agent brief panels below task cards when a task has `agent_id` and the dashboard can read the corresponding visible agent record.
+- Implemented in this slice: the dashboard still renders task/execution detail when `/agents` is unavailable and shows a scoped unavailable message instead of failing the orchestration panel.
+- Still out of scope after this slice: graphical sub-agent hierarchy visualization, dedicated agent child tree navigation, task recovery/closeout forms, and API-backed browser scenario tests for capability-degraded agent detail.
+
+Validation:
+- Focused UI static tests passed: `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,328 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010i Approval Source And Status Filtering
 
 Status: completed for the scoped approval dashboard filtering slice; Sprint 16 remains active for non-CLI execution UX, reviewer audit affordances, full chat workflows, Codex-style AI-change diff review, richer settings editors, deeper sub-agent visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

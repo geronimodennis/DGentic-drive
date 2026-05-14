@@ -586,6 +586,25 @@ textarea {
   gap: 8px;
 }
 
+.agent-brief {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.agent-brief summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.agent-brief-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .review-panel pre,
 .output-region pre {
   overflow: auto;
@@ -760,6 +779,7 @@ textarea {
   .two-column,
   .settings-grid,
   .approval-summary-grid,
+  .agent-brief-grid,
   .context-grid,
   .checkpoint-grid,
   .workspace-layout,

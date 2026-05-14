@@ -336,11 +336,12 @@ async function loadHealth() {
 }
 
 async function loadTasks() {
-  const [plans, runs, summary, orchestrations] = await Promise.all([
+  const [plans, runs, summary, orchestrations, agents] = await Promise.all([
     safeLoad("plans", () => api("/tasks/plans")),
     safeLoad("runs", () => api("/tasks/runs")),
     safeLoad("orchestration summary", () => api("/tasks/orchestrations/operations/summary")),
     safeLoad("orchestrations", () => api("/tasks/orchestrations")),
+    safeLoad("agents", () => api("/agents")),
   ]);
 
   const planCount = plans.ok ? plans.data.length : "-";
@@ -349,7 +350,7 @@ async function loadTasks() {
   setMetric("#runsMetric", `Runs: ${runCount}`);
 
   renderTaskOutput(plans, runs);
-  renderOrchestrationSummary(summary, orchestrations);
+  renderOrchestrationSummary(summary, orchestrations, agents);
 }
 
 function renderTaskOutput(plans, runs) {
@@ -373,7 +374,7 @@ function renderTaskOutput(plans, runs) {
   }
 }
 
-function renderOrchestrationSummary(summary, orchestrations) {
+function renderOrchestrationSummary(summary, orchestrations, agents) {
   const target = qs("#orchestrationSummary");
   const detailTarget = qs("#orchestrationDetail");
   clear(target);
@@ -425,8 +426,8 @@ function renderOrchestrationSummary(summary, orchestrations) {
     row.append(copy, statusChip(run.status), inspectButton);
     target.append(row);
     if (run.id === selectedOrchestrationId) {
-      renderOrchestrationDetail(run, { ok: true, data: [] }, true);
-      void loadOrchestrationDetail(run.id, run);
+      renderOrchestrationDetail(run, { ok: true, data: [] }, true, agents);
+      void loadOrchestrationDetail(run.id, run, agents);
     }
   }
 }
@@ -436,13 +437,14 @@ function selectOrchestration(runId, run = null) {
   loadOrchestrationDetail(runId, run);
 }
 
-async function loadOrchestrationDetail(runId, knownRun = null) {
+async function loadOrchestrationDetail(runId, knownRun = null, knownAgents = null) {
   const target = qs("#orchestrationDetail");
   clear(target);
   target.append(statusBox("Loading orchestration", runId, "running"));
-  const [runResult, executions] = await Promise.all([
+  const [runResult, executions, agents] = await Promise.all([
     knownRun ? Promise.resolve({ ok: true, data: knownRun }) : safeLoad("orchestration", () => api(`/tasks/orchestrations/${encodeURIComponent(runId)}`)),
     safeLoad("executions", () => api(`/tasks/orchestrations/${encodeURIComponent(runId)}/executions`)),
+    knownAgents ? Promise.resolve(knownAgents) : safeLoad("agents", () => api("/agents")),
   ]);
   if (selectedOrchestrationId !== runId) {
     return;
@@ -452,10 +454,10 @@ async function loadOrchestrationDetail(runId, knownRun = null) {
     target.append(statusBox("Orchestration unavailable", runResult.error, "blocked"));
     return;
   }
-  renderOrchestrationDetail(runResult.data, executions);
+  renderOrchestrationDetail(runResult.data, executions, false, agents);
 }
 
-function renderOrchestrationDetail(run, executionsResult, loadingExecutions = false) {
+function renderOrchestrationDetail(run, executionsResult, loadingExecutions = false, agentsResult = null) {
   const target = qs("#orchestrationDetail");
   clear(target);
   const executions = executionsResult.ok ? executionsResult.data : [];
@@ -511,13 +513,13 @@ function renderOrchestrationDetail(run, executionsResult, loadingExecutions = fa
   appendKeyValue(grid, "Updated", formatTimestamp(run.updated_at));
   target.append(grid);
 
-  renderOrchestrationTasks(target, run.tasks || []);
+  renderOrchestrationTasks(target, run.tasks || [], agentsResult);
   renderOrchestrationBlockers(target, run.blockers || []);
   renderOrchestrationFollowUps(target, run.follow_ups || []);
   renderOrchestrationExecutions(target, executionsResult, loadingExecutions);
 }
 
-function renderOrchestrationTasks(target, tasks) {
+function renderOrchestrationTasks(target, tasks, agentsResult = null) {
   const box = make("div", "orchestration-task-list");
   box.append(make("div", "item-title", "Task Graph"));
   if (!tasks.length) {
@@ -540,9 +542,58 @@ function renderOrchestrationTasks(target, tasks) {
     if (task.error) {
       item.append(statusBox("Task error", task.error, "failed"));
     }
+    renderTaskAgentBrief(item, task, agentsResult);
     box.append(item);
   }
   target.append(box);
+}
+
+function renderTaskAgentBrief(target, task, agentsResult) {
+  if (!task.agent_id) {
+    return;
+  }
+  if (!agentsResult) {
+    target.append(make("div", "item-meta", "Agent detail loading."));
+    return;
+  }
+  if (!agentsResult.ok) {
+    target.append(statusBox("Agent detail unavailable", agentsResult.error, "blocked"));
+    return;
+  }
+  const agents = Array.isArray(agentsResult.data) ? agentsResult.data : [];
+  const agent = agents.find((candidate) => candidate.id === task.agent_id);
+  if (!agent) {
+    target.append(statusBox("Agent detail unavailable", task.agent_id, "pending"));
+    return;
+  }
+  const detail = make("details", "agent-brief");
+  detail.append(make("summary", "", `Agent ${agent.id}`));
+  const grid = make("div", "agent-brief-grid");
+  appendKeyValue(grid, "Role", agent.role || task.role || "-");
+  appendKeyValue(grid, "Status", agent.status || "-", agent.status || "");
+  appendKeyValue(grid, "Parent", agent.parent_agent_id || "-");
+  appendKeyValue(grid, "Task", agent.task_id || task.id || "-");
+  appendKeyValue(grid, "Created", formatTimestamp(agent.created_at));
+  appendKeyValue(grid, "Completed", formatTimestamp(agent.completed_at));
+  detail.append(grid);
+  if (agent.task) {
+    detail.append(make("div", "item-meta", agent.task));
+  }
+  if (agent.expected_output) {
+    detail.append(make("div", "item-meta", `Expected: ${agent.expected_output}`));
+  }
+  if (agent.required_data?.length) {
+    detail.append(make("div", "item-meta", `Needs: ${agent.required_data.join(", ")}`));
+  }
+  if (agent.context?.length) {
+    const context = make("div", "changed-paths");
+    context.append(make("div", "item-title", "Context"));
+    for (const item of agent.context.slice(0, 4)) {
+      context.append(make("code", "", item));
+    }
+    detail.append(context);
+  }
+  target.append(detail);
 }
 
 function renderOrchestrationBlockers(target, blockers) {

@@ -406,20 +406,24 @@ textarea {
   margin-top: 4px;
 }
 
-.policy-editor {
+.policy-editor,
+.git-approval-actions {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
   background: white;
 }
 
-.policy-editor summary {
+.policy-editor summary,
+.git-approval-actions summary {
   cursor: pointer;
   font-weight: 800;
 }
 
 .policy-editor form,
-.policy-editor .output-region {
+.policy-editor .output-region,
+.git-approval-actions form,
+.git-approval-actions .output-region {
   margin-top: 10px;
 }
 

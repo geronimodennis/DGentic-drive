@@ -24,6 +24,8 @@ let selectedOrchestrationId = "";
 let taskGraphBuilderTasks = [];
 let latestSettingsView = null;
 let latestPolicyReviewResults = null;
+let latestGitCheckpoint = null;
+let latestGitCheckpointRequest = null;
 let editingCliPolicyRuleId = "";
 
 function qs(selector) {
@@ -268,6 +270,17 @@ function approvalStatusLabel() {
 function approvalSourceLabel() {
   const source = approvalSources.find((candidate) => candidate.key === approvalSource);
   return source ? source.label : "All sources";
+}
+
+function setApprovalFilterState(sourceKey, statusKey) {
+  approvalSource = sourceKey;
+  approvalStatus = statusKey;
+  qs("#approvalSourceInput").value = sourceKey;
+  for (const button of qsa(".segmented-control button")) {
+    button.classList.toggle("active", button.dataset.status === statusKey);
+  }
+  selectedApproval = null;
+  clear(qs("#approvalReview"));
 }
 
 async function refreshDashboard() {
@@ -1613,8 +1626,7 @@ async function executeCliApproval(approvalId) {
   }
 }
 
-async function createGitCheckpoint(event) {
-  event.preventDefault();
+function gitCheckpointPayload() {
   const payload = {
     action: qs("#gitActionInput").value,
     test_evidence: splitLines(qs("#gitEvidenceInput").value),
@@ -1623,16 +1635,29 @@ async function createGitCheckpoint(event) {
   if (cwd) {
     payload.cwd = cwd;
   }
+  return payload;
+}
+
+async function createGitCheckpoint(event) {
+  event.preventDefault();
+  const payload = gitCheckpointPayload();
   const target = qs("#gitOutput");
+  latestGitCheckpoint = null;
+  latestGitCheckpointRequest = payload;
+  renderGitApprovalActions(null);
   clear(target);
   target.append(statusBox("Checking repository", payload.action, "running"));
   try {
     const checkpoint = await api("/cli/git/checkpoints", { method: "POST", body: payload });
     checkpoint.review_evidence_count = payload.test_evidence.length;
+    latestGitCheckpoint = checkpoint;
+    latestGitCheckpointRequest = payload;
     renderGitCheckpoint(checkpoint);
   } catch (error) {
+    latestGitCheckpoint = null;
     clear(target);
     target.append(statusBox("Checkpoint failed", error.message, "failed"));
+    renderGitApprovalActions(null);
   }
 }
 
@@ -1667,6 +1692,7 @@ function renderGitCheckpoint(checkpoint) {
   details.append(make("summary", "", "Raw checkpoint"));
   details.append(jsonBlock(checkpoint));
   target.append(details);
+  renderGitApprovalActions(checkpoint);
 }
 
 function renderGitReviewSummary(target, checkpoint) {
@@ -1722,6 +1748,98 @@ function renderChangedPaths(target, checkpoint) {
     box.append(make("code", "", path));
   }
   target.append(box);
+}
+
+function gitApprovalEndpoint(action) {
+  return `/cli/git/${action}-approvals`;
+}
+
+function gitApprovalTimeout() {
+  const timeout = Number(qs("#gitApprovalTimeoutInput").value || 30);
+  return Number.isFinite(timeout) ? timeout : 30;
+}
+
+function gitApprovalPayload(checkpoint) {
+  const payload = {
+    checkpoint_digest: checkpoint.checkpoint_digest,
+    test_evidence: latestGitCheckpointRequest?.test_evidence || [],
+    timeout_seconds: gitApprovalTimeout(),
+  };
+  if (latestGitCheckpointRequest?.cwd) {
+    payload.cwd = latestGitCheckpointRequest.cwd;
+  }
+  if (checkpoint.action === "commit") {
+    payload.commit_message = qs("#gitCommitMessageInput").value.trim();
+  } else if (checkpoint.action === "pr") {
+    payload.title = qs("#gitPrTitleInput").value.trim();
+    payload.body = qs("#gitPrBodyInput").value.trim();
+    payload.draft = qs("#gitPrDraftInput").checked;
+    const baseBranch = qs("#gitPrBaseInput").value.trim();
+    if (baseBranch) {
+      payload.base_branch = baseBranch;
+    }
+  }
+  return payload;
+}
+
+function renderGitApprovalActions(checkpoint) {
+  const panel = qs("#gitApprovalActions");
+  const output = qs("#gitApprovalOutput");
+  clear(output);
+  if (!checkpoint) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  panel.open = true;
+
+  const actionLabels = {
+    commit: "Commit Approval",
+    push: "Push Approval",
+    pr: "PR Approval",
+  };
+  qs("#gitApprovalSummary").textContent = actionLabels[checkpoint.action] || "Checkpoint Approval Actions";
+  qs("#gitCommitMessageField").hidden = checkpoint.action !== "commit";
+  qs("#gitCommitMessageInput").required = checkpoint.action === "commit";
+  qs("#gitPrTitleField").hidden = checkpoint.action !== "pr";
+  qs("#gitPrTitleInput").required = checkpoint.action === "pr";
+  qs("#gitPrBodyField").hidden = checkpoint.action !== "pr";
+  qs("#gitPrOptionsField").hidden = checkpoint.action !== "pr";
+  qs("#gitApprovalSubmitLabel").textContent = `Create ${actionLabels[checkpoint.action] || "Git"} Approval`;
+  qs("#gitApprovalSubmitButton").disabled = !checkpoint.ready;
+  if (!checkpoint.ready) {
+    output.append(statusBox("Approval unavailable", "Resolve checkpoint blockers before creating a Git approval.", "blocked"));
+  }
+}
+
+async function createGitApproval(event) {
+  event.preventDefault();
+  if (!latestGitCheckpoint) {
+    return;
+  }
+  const target = qs("#gitApprovalOutput");
+  if (!latestGitCheckpoint.ready) {
+    clear(target);
+    target.append(statusBox("Approval unavailable", "Resolve checkpoint blockers before creating a Git approval.", "blocked"));
+    return;
+  }
+  const payload = gitApprovalPayload(latestGitCheckpoint);
+  const endpoint = gitApprovalEndpoint(latestGitCheckpoint.action);
+  clear(target);
+  target.append(statusBox("Creating Git approval", latestGitCheckpoint.checkpoint_digest.slice(0, 16), "running"));
+  try {
+    const approval = await api(endpoint, { method: "POST", body: payload });
+    clear(target);
+    target.append(statusBox("Git approval created", approval.id, approval.status || "pending"));
+    target.append(jsonBlock(approval));
+    setApprovalFilterState("cli", "pending");
+    await loadApprovals();
+    showToast("Git approval created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Git approval failed", error.message, "failed"));
+    showToast(error.message);
+  }
 }
 
 function projectPayload() {
@@ -2748,6 +2866,7 @@ function bindEvents() {
     clear(qs("#cliPolicyEditorOutput"));
   });
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
+  qs("#gitApprovalForm").addEventListener("submit", createGitApproval);
   qs("#logFilter").addEventListener("change", loadLogs);
   qs("#approvalSourceInput").addEventListener("change", () => {
     approvalSource = qs("#approvalSourceInput").value;

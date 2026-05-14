@@ -4,6 +4,33 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 For the current sprint, priority order, safe stopping rules, and source-of-truth links, start with [docs/project-status.md](../project-status.md). Keep this file as the historical append-only progress ledger.
 
+## 2026-05-15
+
+### Sprint 16 BL-010t Git Checkpoint Approval Actions
+
+Status: completed for the scoped Git checkpoint approval UX slice; Sprint 16 remains active for full chat workflows, full raw diff/AI-change review, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected checkpoint-bound Git approval creation as the next user-facing Sprint 16 slice because the backend already exposes guarded commit, push, and PR approval APIs while deeper backend Git roadmap items remain deferred, not cancelled.
+- Completed: Architect/Explorer confirmed the current backend supports safe checkpoint metadata review plus approval creation, but not raw patch display or accept/reject AI-change artifacts.
+- Completed: Developer added a Git approval action panel that opens after checkpoint review, stores the checkpoint request evidence, and exposes the correct commit, push, or PR approval form for ready checkpoints.
+- Completed: Developer wired approval creation through `/cli/git/commit-approvals`, `/cli/git/push-approvals`, and `/cli/git/pr-approvals`, then refreshes the unified CLI approval inbox for reviewer follow-through.
+- Completed: QA extended UI static contract tests for the Git approval form, checkpoint state helpers, endpoint routing, payload fields, approval inbox refresh, and CSS hook.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can create checkpoint-bound Git commit, push, and PR approvals from ready Git checkpoints using existing backend Git workflow approval routes.
+- Still out of scope after this slice: raw file-by-file diff display, accept/reject AI-change artifacts, direct Git run buttons from the dashboard, branch cleanup, PR labels/reviewers/assignees/projects/templates, rollback/revert flows, allowed remote/branch policy editors, and deeper Git audit/observability.
+
+Validation:
+- Focused UI/static validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49693`: `/ui/` served the Git approval action panel and `/ui/app.js` served `createGitApproval` plus the Git approval route helper.
+
 ## 2026-05-14
 
 ### Sprint 16 BL-010s CLI Policy Edit And Toggle UI

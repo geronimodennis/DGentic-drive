@@ -32,6 +32,11 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
+    assert "gitApprovalActions" in response.text
+    assert "gitApprovalForm" in response.text
+    assert "gitCommitMessageInput" in response.text
+    assert "gitPrTitleInput" in response.text
+    assert "gitApprovalSubmitLabel" in response.text
     assert "Rules And Plugins" in response.text
     assert "policyReviewSummary" in response.text
     assert "Review Summary" in response.text
@@ -157,6 +162,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "executions/${encodeURIComponent(executionId)}/cancel`" in script_response.text
     assert "renderGitCheckpoint" in script_response.text
     assert "renderGitReviewSummary" in script_response.text
+    assert "latestGitCheckpoint" in script_response.text
+    assert "latestGitCheckpointRequest" in script_response.text
+    assert "gitCheckpointPayload" in script_response.text
+    assert "renderGitApprovalActions" in script_response.text
+    assert "createGitApproval" in script_response.text
+    assert "gitApprovalPayload" in script_response.text
+    assert "gitApprovalEndpoint" in script_response.text
+    assert "/cli/git/${action}-approvals" in script_response.text
+    assert "commit_message" in script_response.text
+    assert "base_branch" in script_response.text
+    assert "setApprovalFilterState" in script_response.text
+    assert 'setApprovalFilterState("cli", "pending")' in script_response.text
+    assert 'qs("#gitApprovalForm").addEventListener("submit", createGitApproval)' in (
+        script_response.text
+    )
     assert "AI change review" in script_response.text
     assert "review_evidence_count" in script_response.text
     assert "checkpoint-grid" in script_response.text
@@ -212,6 +232,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".setting-source-row" in style_response.text
     assert ".policy-review-section" in style_response.text
     assert ".policy-editor" in style_response.text
+    assert ".git-approval-actions" in style_response.text
     assert ".git-review-summary" in style_response.text
 
 

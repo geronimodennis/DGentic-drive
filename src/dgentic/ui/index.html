@@ -372,6 +372,42 @@ review</textarea>
               </button>
             </form>
             <div id="gitOutput" class="output-region"></div>
+            <details id="gitApprovalActions" class="git-approval-actions" hidden>
+              <summary id="gitApprovalSummary">Checkpoint Approval Actions</summary>
+              <form id="gitApprovalForm" class="stacked-form">
+                <label id="gitCommitMessageField">
+                  Commit Message
+                  <input id="gitCommitMessageInput" type="text" maxlength="240">
+                </label>
+                <label id="gitPrTitleField">
+                  PR Title
+                  <input id="gitPrTitleInput" type="text" maxlength="200">
+                </label>
+                <label id="gitPrBodyField">
+                  PR Body
+                  <textarea id="gitPrBodyInput" rows="4" maxlength="2000"></textarea>
+                </label>
+                <div class="two-column" id="gitPrOptionsField">
+                  <label>
+                    Base Branch
+                    <input id="gitPrBaseInput" type="text" maxlength="120" placeholder="default">
+                  </label>
+                  <label class="checkbox-label">
+                    <input id="gitPrDraftInput" type="checkbox">
+                    Draft PR
+                  </label>
+                </div>
+                <label>
+                  Timeout Seconds
+                  <input id="gitApprovalTimeoutInput" type="number" min="1" max="120" value="30">
+                </label>
+                <button id="gitApprovalSubmitButton" type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">A</span>
+                  <span id="gitApprovalSubmitLabel">Create Approval</span>
+                </button>
+              </form>
+              <div id="gitApprovalOutput" class="output-region" aria-live="polite"></div>
+            </details>
           </article>
 
           <article class="panel">

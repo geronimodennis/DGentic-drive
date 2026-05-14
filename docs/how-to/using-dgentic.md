@@ -957,7 +957,7 @@ Configure strict operating boundaries before running autonomous tasks:
 
 ### 4. Submit A Task
 
-Current backend MVP task submission is through the HTTP API. The unified chat/web UI is planned for Sprint 16, while the dedicated CLI client and VS Code extension are planned for Sprint 17.
+Current backend MVP task submission is through the HTTP API. The unified chat/web UI is planned for Sprint 16, while the dedicated CLI client and VS Code chat extension are planned for Sprint 17. The VS Code extension should integrate with VS Code's native workspace folders, Explorer, editor, and diff review instead of duplicating project file explorer/code editor UI inside the extension.
 
 Current interface:
 
@@ -967,7 +967,7 @@ Planned interfaces:
 
 - Unified chat interface
 - Dedicated CLI client
-- VS Code extension
+- VS Code chat extension with native Explorer/editor/diff integration
 
 DGentic should respond with a task plan, required context, proposed tools, model routing decisions, and any actions requiring approval.
 

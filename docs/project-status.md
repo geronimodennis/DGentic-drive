@@ -14,7 +14,7 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Priority Order
 
 1. Continue Sprint 16: richer task/chat UI, project add/open, active `rootDir` workspace context, file explorer, code editor, Codex-style AI-change review, approval dashboard, settings, plugin/command-recipe views, and Git workflow visibility.
-2. Start Sprint 17: VS Code extension and dedicated CLI client, including safe Git workflow commands.
+2. Start Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code Explorer/editor/diff integration and safe Git workflow commands.
 3. Continue Sprint 18: deployment, CI/CD, observability, rollback, and Git workflow telemetry.
 4. Continue Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.
 5. Return to deferred Sprint 15/backend Git hardening when it directly enables user-facing flows or after Sprint 16/17 surfaces are stable.
@@ -58,7 +58,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
 - Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a implemented.
-- Sprint 17: VS Code extension and dedicated CLI client, including Git checkpoint, commit, push, PR, review, and status flows.
+- Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.
 

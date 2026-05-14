@@ -376,19 +376,27 @@ Tasks:
 - Build settings UI.
 - Add backend settings API.
 
-### Story 8.3: Build VS Code Extension
+### Story 8.3: Build VS Code Chat Extension
 
-As a developer, I want DGentic inside VS Code so I can trigger tasks, inspect agents, and use generated tools from my editor.
+As a developer, I want DGentic chat inside VS Code so I can trigger tasks, inspect agents, review changes, and use generated tools from my editor without leaving VS Code's native project workspace.
 
 Acceptance criteria:
 - Command palette can trigger DGentic tasks.
+- DGentic chat is available in a VS Code view or panel for task submission, progress, approvals, action logs, and follow-up instructions.
 - Sidebar shows active agents, memory status, and task decomposition.
 - Extension can connect to DGentic backend using configured endpoint and token.
+- Extension binds DGentic `rootDir` to an opened VS Code workspace folder, with explicit selection for multi-root workspaces.
+- Extension uses VS Code's native Explorer and editor for file navigation and editing instead of duplicating those surfaces.
+- Extension shows AI-proposed file edits in VS Code-native diff/editor review flows before changes are accepted or rejected.
 
 Tasks:
 - Scaffold VS Code extension.
 - Implement connection settings.
-- Add sidebar view.
+- Add DGentic chat view.
+- Add workspace-folder to backend `rootDir` binding.
+- Add editor and selection context commands.
+- Add native diff/change-review flow for AI-proposed edits.
+- Add sidebar/status views.
 
 ### Story 8.4: Build Dedicated CLI Client
 

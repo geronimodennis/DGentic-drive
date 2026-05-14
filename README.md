@@ -202,7 +202,7 @@ README status policy: keep this section updated after every sprint, release, or 
 
 ### Not Yet Implemented
 
-- VS Code extension: planned for Sprint 17.
+- VS Code chat extension: planned for Sprint 17, integrated with VS Code's native workspace folders, Explorer, editor, and diff review instead of duplicating project file explorer/code editor UI inside the extension.
 - Dedicated CLI client interface: planned for Sprint 17.
 - Remaining backend Git expansion is not cancelled or downsized. Existing Sprint 15 Git checkpoints, approvals, direct commit/push/PR runners, and safe audit contracts stay implemented; deeper Git work such as branch cleanup, PR labels/reviewers/assignees/projects/templates, remote fetch freshness, rollback/revert workflows, allowed remote/branch policies, and richer Git observability is sequenced after the Sprint 16 UI and Sprint 17 VS Code/CLI surfaces unless it directly blocks those user-facing flows.
 - DGentic-native plugin bundles beyond manifest discovery/trust and declarative command recipe plus hook-policy activation, and managed policy-source controls beyond credential/CLI/hook/network/command-recipe/plugin-trust/plugin-component records and coarse surface locks: planned across remaining Sprint 15 security follow-ups plus Sprint 16 UI, Sprint 17 CLI/VS Code, and Sprint 18 CI/observability work after the Claude Code repository study.

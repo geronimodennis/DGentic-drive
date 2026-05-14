@@ -463,11 +463,16 @@ Current implementation status:
 Feature group: Developer interfaces.
 
 User value:
-- Developers need DGentic available from their editor and terminal so they can trigger tasks, inspect agents, review approvals, and reuse generated tools without leaving their normal workflow.
+- Developers need DGentic available from their editor and terminal so they can chat with the agent, trigger tasks, inspect agents, review approvals, and reuse generated tools without leaving their normal workflow.
 
 Needs to be done:
 - Scaffold a VS Code extension with command palette commands, backend connection settings, token configuration, and sidebar views.
-- Add VS Code task submission, active agent status, memory/tool status, and approval review surfaces.
+- Add a DGentic chat view inside VS Code for task submission, plan/status updates, approvals, action logs, and follow-up instructions.
+- Integrate with VS Code's native workspace/project model: use opened workspace folders as project `rootDir` candidates and require explicit selection when multiple folders are open.
+- Integrate with VS Code's native Explorer and editor instead of rebuilding a separate project file explorer or code editor inside the extension.
+- Add editor/context commands to send the active file, selected range, diagnostics, or workspace context to DGentic while preserving backend root-boundary checks.
+- Show AI-proposed file edits through VS Code-native diff/editor review flows before applying changes, with clear accept/reject/follow-up controls.
+- Add VS Code active agent status, memory/tool status, and approval review surfaces.
 - Add generated-tool discovery or launch integration where safe.
 - Build a dedicated CLI client for health checks, task planning/execution, approvals, CLI runs, providers, memory, tools, and logs.
 - Add a terminal-first command recipe layer for repeated workflows such as sprint execution, approval review, provider checks, git commit/push/PR preparation, branch cleanup, PR review, and release closeout.
@@ -476,7 +481,10 @@ Needs to be done:
 - Add packaging, installation, and smoke validation for both interfaces.
 
 Acceptance criteria:
-- VS Code users can connect to a DGentic backend, submit a task, inspect active agents, and review approval-required actions.
+- VS Code users can connect to a DGentic backend, chat with DGentic, submit a task, inspect active agents, and review approval-required actions.
+- VS Code users can bind the active DGentic project to an opened workspace folder as `rootDir`, with explicit selection for multi-root workspaces.
+- VS Code users can use the native Explorer and editor for project navigation and file editing while DGentic actions remain constrained by backend rootDir/approval rules.
+- VS Code users can review AI-proposed file changes in native diff/editor views before accepting, rejecting, or asking for revisions.
 - CLI users can perform core operational workflows without manually crafting HTTP requests.
 - CLI and VS Code command recipes are auditable, capability-gated, and use the same safe review contracts as backend approvals.
 - Git workflow automation checks the dirty worktree, blocks obvious secret files, records test evidence when available, and asks for approval before destructive branch cleanup or remote publication.
@@ -489,7 +497,7 @@ Definition of Done:
 - PM confirms the root README not-yet-implemented entries for VS Code extension and dedicated CLI client can move to implemented or partially implemented status.
 
 Current implementation status:
-- Not yet implemented: VS Code extension and dedicated CLI client interface.
+- Not yet implemented: VS Code extension with DGentic chat, native workspace/Explorer/editor integration, native AI-change diff review, and dedicated CLI client interface.
 
 ### BL-012: Production Deployment, CI/CD, Observability, And Rollback
 
@@ -777,7 +785,8 @@ Stories:
 - BL-011: VS Code Extension And Dedicated CLI Client.
 
 Exit criteria:
-- VS Code extension can connect to DGentic, submit tasks, show agent/status context, and review approvals.
+- VS Code extension can connect to DGentic, provide a DGentic chat view, submit tasks, show agent/status context, and review approvals.
+- VS Code extension integrates with native VS Code workspace folders, Explorer, editor, and diff review instead of duplicating file explorer/editor UI inside the extension.
 - CLI client can run core health, task, approval, CLI-run, provider, memory, tool, session, and log workflows.
 - CLI client includes original DGentic command recipes for common terminal workflows, including safe git commit/push/PR preparation and PR review orchestration.
 - DGentic plugin packages can describe reusable command recipes, agent blueprints, skills, hook policies, generated-tool references, and documentation with audited installation.

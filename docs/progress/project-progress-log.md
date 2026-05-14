@@ -67,6 +67,15 @@ Completed:
 - Added project file explorer, in-browser code editor, and Codex-style AI-change diff/review requirements to BL-010 and Story 8.1.
 - Preserved the existing BL-010a dashboard shell scope while making the richer project workspace UI the next Sprint 16 direction.
 
+### Sprint 17 VS Code Chat Integration Requirement
+
+Status: added to the Sprint 17 roadmap.
+
+Completed:
+- Clarified that the VS Code extension needs its own DGentic chat surface for task submission, status, approvals, logs, and follow-up instructions.
+- Clarified that VS Code should not duplicate the web UI file explorer/code editor; it should integrate with native workspace folders, Explorer, editor, and diff review.
+- Added native VS Code AI-change review requirements so proposed file edits can be inspected before acceptance or rejection.
+
 ## 2026-05-13
 
 ### Sprint 15 BL-009av Managed Network-Domain Policy Rule Records

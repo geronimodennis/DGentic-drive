@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010u Structured Approval Review Summaries
+
+Status: completed for the scoped approval-review UX slice; Sprint 16 remains active for full chat workflows, full raw diff/AI-change review, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected structured approval review summaries as the next user-facing approval-dashboard slice because safe review contracts already exist for CLI, filesystem, network, provider, and tool approval families.
+- Completed: Architect/Explorer confirmed source-specific review fields and warned that non-CLI direct execution should remain out of scope.
+- Completed: Developer replaced raw JSON-first approval review rendering with structured source-specific summary cards, warning rows, binding/digest context, and decision audit fields while preserving raw review JSON in a secondary details view.
+- Completed: Developer changed approve/deny handling to reload the safe `/review` response after decision mutations instead of treating approval records as review DTOs.
+- Completed: QA extended UI static contract tests for structured review helpers, warning fields, bound/direct execution flags, workflow binding visibility, safe review reload after decisions, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` shows structured approval review summaries for CLI, filesystem, network, provider, and tool approvals using existing safe backend review contracts.
+- Still out of scope after this slice: non-CLI direct execution UX, end-to-end approval scenario browser tests, raw diff/AI-change review, and backend approval schema changes.
+
+Validation:
+- Focused UI/static validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49694`: `/ui/` served the approval review container and `/ui/app.js` served the structured approval review helpers.
+
 ### Sprint 16 BL-010t Git Checkpoint Approval Actions
 
 Status: completed for the scoped Git checkpoint approval UX slice; Sprint 16 remains active for full chat workflows, full raw diff/AI-change review, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

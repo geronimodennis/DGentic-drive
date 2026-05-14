@@ -181,6 +181,13 @@ function settingValueText(value, fallback = "-") {
   return String(value);
 }
 
+function reviewValue(value, fallback = "-") {
+  if (Array.isArray(value)) {
+    return value.length ? value.map((item) => reviewValue(item)).join(", ") : fallback;
+  }
+  return settingValueText(value, fallback);
+}
+
 function parseSettingList(setting) {
   if (!setting) {
     return [];
@@ -1552,7 +1559,13 @@ function renderApprovalReview(item) {
   const target = qs("#approvalReview");
   clear(target);
   const header = statusBox(`${item.source.label} review`, item.approval.id, item.approval.status);
-  target.append(header, jsonBlock(item.review));
+  target.append(header);
+  renderApprovalReviewSummary(target, item);
+
+  const details = make("details", "json-details");
+  details.append(make("summary", "", "Raw review"));
+  details.append(jsonBlock(item.review));
+  target.append(details);
 
   const form = make("form", "decision-form");
   const reason = make("input");
@@ -1590,6 +1603,152 @@ function renderApprovalReview(item) {
   }
 }
 
+function renderApprovalReviewSummary(target, item) {
+  const review = item.review || item.approval || {};
+  const box = make("div", "approval-review-summary");
+  box.append(make("div", "item-title", "Review Summary"));
+  const grid = make("div", "checkpoint-grid");
+  for (const pair of approvalReviewPairs(item)) {
+    appendKeyValue(grid, pair.label, reviewValue(pair.value), pair.chip || "");
+  }
+  box.append(grid);
+  renderReviewWarnings(box, review.review_warnings || []);
+  target.append(box);
+}
+
+function approvalReviewPairs(item) {
+  const review = item.review || item.approval || {};
+  const pairs = [
+    { label: "Status", value: review.status || item.approval.status, chip: review.status || item.approval.status },
+    { label: "Permission", value: review.permission_mode },
+    { label: "Policy reason", value: review.policy_reason },
+    { label: "Requested by", value: review.requested_by },
+    { label: "Agent role", value: review.agent_role },
+    { label: "Task", value: review.task_id },
+    {
+      label: "Bound execution",
+      value: review.requires_bound_execution_request ? "Required" : "Not required",
+      chip: review.requires_bound_execution_request ? "pending" : "ok",
+    },
+    {
+      label: "Direct execution",
+      value: review.direct_execute_available ? "Available" : "Not available",
+      chip: review.direct_execute_available ? "ok" : "blocked",
+    },
+    { label: "Expires", value: formatTimestamp(review.expires_at) },
+  ];
+
+  if (review.decided_by || review.decision_reason || review.denial_reason) {
+    pairs.push(
+      { label: "Decided by", value: review.decided_by },
+      { label: "Decision reason", value: review.decision_reason || review.denial_reason },
+    );
+  }
+  if (review.executed_at) {
+    pairs.push({ label: "Executed", value: formatTimestamp(review.executed_at), chip: "ok" });
+  }
+
+  if (item.source.key === "cli") {
+    pairs.splice(
+      1,
+      0,
+      { label: "Command", value: review.review_command },
+      { label: "Working directory", value: review.cwd },
+      { label: "Timeout", value: `${review.timeout_seconds || "-"} seconds` },
+      { label: "Matched rule", value: review.matched_rule_name || review.matched_rule_id },
+      { label: "Environment keys", value: review.environment_keys },
+      { label: "Workflow binding", value: workflowBindingSummary(review.workflow_binding) },
+      { label: "Command digest", value: review.command_digest },
+      { label: "Run", value: review.run_id },
+    );
+  } else if (item.source.key === "filesystem") {
+    pairs.splice(
+      1,
+      0,
+      { label: "Action", value: review.action },
+      { label: "Path", value: review.path },
+      { label: "Target path", value: review.target_path },
+      { label: "Options", value: filesystemApprovalOptions(review) },
+      { label: "Approval digest", value: review.approval_digest },
+    );
+  } else if (item.source.key === "network") {
+    pairs.splice(
+      1,
+      0,
+      { label: "URL", value: review.url },
+      { label: "Surface", value: review.surface },
+      { label: "Action", value: review.action },
+      { label: "Host", value: review.port ? `${review.host}:${review.port}` : review.host },
+      { label: "Matched domain", value: review.matched_domain },
+      { label: "Approval digest", value: review.approval_digest },
+    );
+  } else if (item.source.key === "provider") {
+    pairs.splice(
+      1,
+      0,
+      { label: "Provider", value: review.provider_id },
+      { label: "Model", value: review.model },
+      { label: "Messages", value: providerMessageSummary(review) },
+      { label: "Options", value: review.option_keys },
+      { label: "Stream", value: review.stream ? "Yes" : "No" },
+      { label: "Approval digest", value: review.approval_digest },
+    );
+  } else if (item.source.key === "tool") {
+    pairs.splice(
+      1,
+      0,
+      { label: "Tool", value: review.tool_name },
+      { label: "Version", value: review.tool_version },
+      { label: "Tool status", value: review.tool_status, chip: review.tool_status },
+      { label: "Entrypoint", value: review.entrypoint },
+      { label: "Payload digest", value: review.payload_digest },
+      { label: "Approval digest", value: review.approval_digest },
+    );
+  }
+  return pairs.filter((pair) => pair.value !== undefined && pair.value !== null && pair.value !== "");
+}
+
+function filesystemApprovalOptions(review) {
+  return [
+    review.recursive ? "recursive" : "",
+    review.overwrite ? "overwrite" : "",
+    review.create_parent_dirs === false ? "no parent creation" : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function providerMessageSummary(review) {
+  const messages = review.review_messages || [];
+  if (!messages.length) {
+    return `${review.message_count || 0} messages`;
+  }
+  return messages.map((message) => `${message.role || "message"}:${message.content_length || 0}`).join(", ");
+}
+
+function workflowBindingSummary(binding) {
+  if (!binding || !Object.keys(binding).length) {
+    return "";
+  }
+  const type = binding.type || "bound";
+  const digest = binding.checkpoint_digest || binding.approval_digest || binding.digest || "";
+  return digest ? `${type} ${String(digest).slice(0, 16)}` : type;
+}
+
+function renderReviewWarnings(target, warnings) {
+  if (!warnings.length) {
+    return;
+  }
+  const box = make("div", "review-warning-list");
+  box.append(make("div", "item-title", "Review warnings"));
+  for (const warning of warnings) {
+    const row = make("div", "finding-row");
+    row.append(statusChip("pending"), make("span", "", warning));
+    box.append(row);
+  }
+  target.append(box);
+}
+
 async function decideApproval(decision, reason) {
   if (!selectedApproval) {
     return;
@@ -1602,8 +1761,9 @@ async function decideApproval(decision, reason) {
     });
     const verb = decision === "approve" ? "approved" : "denied";
     showToast(`${source.label} approval ${verb}.`);
-    selectedApproval = { source, approval: result };
-    renderApprovalReview({ source, approval: result, review: result });
+    const review = await api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`);
+    selectedApproval = { source, approval: result, review };
+    renderApprovalReview(selectedApproval);
     await loadApprovals();
   } catch (error) {
     showToast(error.message);

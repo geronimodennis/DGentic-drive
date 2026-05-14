@@ -806,6 +806,7 @@ textarea {
 .changed-paths,
 .json-details,
 .chip-list,
+.approval-review-summary,
 .git-review-summary {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -833,9 +834,16 @@ textarea {
 .finding-list,
 .changed-paths,
 .chip-list,
+.approval-review-summary,
+.review-warning-list,
 .git-review-summary {
   display: grid;
   gap: 8px;
+}
+
+.review-warning-list {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .finding-row {

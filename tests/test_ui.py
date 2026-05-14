@@ -67,6 +67,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "approvalStatusLabel" in script_response.text
     assert "approvalSourceLabel" in script_response.text
     assert "renderApprovalSummary" in script_response.text
+    assert "renderApprovalReviewSummary" in script_response.text
+    assert "approvalReviewPairs" in script_response.text
+    assert "renderReviewWarnings" in script_response.text
+    assert "reviewValue" in script_response.text
+    assert "Raw review" in script_response.text
+    assert "requires_bound_execution_request" in script_response.text
+    assert "direct_execute_available" in script_response.text
+    assert "review_warnings" in script_response.text
+    assert "workflow_binding" in script_response.text
+    assert "api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`)" in (
+        script_response.text
+    )
     assert "approvalScopeMetric" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
@@ -219,6 +231,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".builder-task-actions" in style_response.text
     assert ".approval-filter-row" in style_response.text
     assert ".approval-summary-grid" in style_response.text
+    assert ".approval-review-summary" in style_response.text
+    assert ".review-warning-list" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text
     assert ".reliability-grid" in style_response.text

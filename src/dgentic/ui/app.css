@@ -402,6 +402,23 @@ textarea {
   text-transform: uppercase;
 }
 
+.recipe-action-panel {
+  margin-top: 4px;
+}
+
+.recipe-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.recipe-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .input-action input {
   flex: 1 1 auto;
 }
@@ -861,6 +878,7 @@ textarea {
   .two-column,
   .task-builder-grid,
   .builder-row,
+  .recipe-parameter-grid,
   .settings-grid,
   .approval-summary-grid,
   .agent-brief-grid,

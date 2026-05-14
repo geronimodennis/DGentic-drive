@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010p Command Recipe Action UI
+
+Status: completed for the scoped command recipe action UI slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected command recipe actions as the next compact Sprint 16 slice because backend recipe preview, approval, run, and execute contracts already exist.
+- Completed: Developer added recipe action controls to the policy dashboard without adding backend endpoints.
+- Completed: Developer wired recipe parameter inputs to existing `/cli/recipes/{recipe_id}/preview`, `/approvals`, `/runs`, and `/execute` routes, preserving backend CLI policy/approval enforcement.
+- Completed: QA extended UI static contract tests for the recipe action panel, helper functions, parameter binding, endpoint wiring, and CSS hooks.
+- Completed: PM updated README, project status, planning, architecture, setup, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can select an enabled command recipe, enter safe parameter values, preview the resolved command policy, create an approval, start an async CLI run, or attempt direct execution through existing recipe contracts.
+- Still out of scope after this slice: command recipe create/edit forms, plugin command recipe install/disable controls, non-CLI filesystem/provider/tool direct execution UX, and browser end-to-end recipe scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Live UI smoke passed against a temporary FastAPI server on `127.0.0.1:8031`: `/ui/` and `/ui/app.js` served the recipe action panel and helper code.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010o Guided Orchestration Task Graph Builder
 
 Status: completed for the scoped guided task graph builder slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

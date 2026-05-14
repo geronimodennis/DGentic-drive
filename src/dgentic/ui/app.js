@@ -2068,11 +2068,7 @@ async function loadPolicySurfaces() {
     }`,
     status: rule.enabled === false ? "blocked" : "ok",
   }));
-  renderPolicyList(qs("#recipeList"), recipes, (recipe) => ({
-    title: recipe.name || recipe.id,
-    meta: `${recipe.source || "local"} - ${(recipe.tags || []).join(", ") || "recipe"}`,
-    status: "ok",
-  }));
+  renderRecipeList(recipes);
   renderPolicyList(qs("#hookPolicyList"), hooks, (hook) => ({
     title: hook.name || hook.id,
     meta: `${hook.source || "local"} - ${hook.surface || "-"} - ${hook.effect || "-"}`,
@@ -2105,6 +2101,129 @@ function renderPolicyList(target, result, mapper) {
     item.append(make("div", "item-meta", mapped.meta || ""));
     item.append(statusChip(mapped.status || "ok"));
     target.append(item);
+  }
+}
+
+function renderRecipeList(result) {
+  const target = qs("#recipeList");
+  const actionPanel = qs("#recipeActionPanel");
+  clear(target);
+  clear(actionPanel);
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  const recipes = result.data || [];
+  if (!recipes.length) {
+    target.append(statusBox("No records", "Nothing configured for this surface.", "pending"));
+    return;
+  }
+  for (const recipe of recipes.slice(0, 8)) {
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", recipe.name || recipe.id));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${recipe.source || "local"} - ${(recipe.tags || []).join(", ") || "recipe"} - ${
+          recipe.parameters?.length || 0
+        } params`,
+      ),
+    );
+    const button = make("button", "link-button", "Use");
+    button.type = "button";
+    button.disabled = recipe.enabled === false;
+    button.addEventListener("click", () => renderRecipeActionPanel(recipe));
+    item.append(detail, button);
+    target.append(item);
+  }
+}
+
+function renderRecipeActionPanel(recipe) {
+  const target = qs("#recipeActionPanel");
+  clear(target);
+  target.append(
+    statusBox(
+      recipe.name || recipe.id,
+      `${recipe.id} - ${recipe.source || "local"} - timeout ${recipe.timeout_seconds || 30}s`,
+      recipe.enabled === false ? "blocked" : "ok",
+    ),
+  );
+  const parameters = recipe.parameters || [];
+  if (parameters.length) {
+    const grid = make("div", "recipe-parameter-grid");
+    for (const parameter of parameters) {
+      const label = make("label");
+      label.append(document.createTextNode(parameter.required === false ? parameter.name : `${parameter.name} *`));
+      const input = document.createElement("input");
+      input.type = "text";
+      input.dataset.recipeParameter = parameter.name;
+      input.value = parameter.default || "";
+      input.placeholder = parameter.description || parameter.name;
+      label.append(input);
+      grid.append(label);
+    }
+    target.append(grid);
+  }
+  const buttons = make("div", "recipe-action-buttons");
+  for (const [label, action] of [
+    ["Preview", "preview"],
+    ["Create Approval", "approvals"],
+    ["Start Run", "runs"],
+    ["Execute", "execute"],
+  ]) {
+    const button = make("button", action === "execute" ? "primary-button" : "link-button", label);
+    button.type = "button";
+    button.disabled = recipe.enabled === false;
+    button.addEventListener("click", () => postCommandRecipeAction(recipe.id, action));
+    buttons.append(button);
+  }
+  const output = make("div", "output-region");
+  output.id = "recipeActionOutput";
+  target.append(buttons, output);
+}
+
+function commandRecipePayload() {
+  const parameters = {};
+  for (const input of qsa("#recipeActionPanel [data-recipe-parameter]")) {
+    const value = input.value.trim();
+    if (value) {
+      parameters[input.dataset.recipeParameter] = value;
+    }
+  }
+  return { parameters };
+}
+
+async function postCommandRecipeAction(recipeId, action) {
+  const target = qs("#recipeActionOutput");
+  const actionLabels = {
+    preview: "Previewing recipe",
+    approvals: "Creating recipe approval",
+    runs: "Starting recipe run",
+    execute: "Executing recipe",
+  };
+  clear(target);
+  target.append(statusBox(actionLabels[action] || "Using recipe", recipeId, "running"));
+  try {
+    const result = await api(`/cli/recipes/${encodeURIComponent(recipeId)}/${action}`, {
+      method: "POST",
+      body: commandRecipePayload(),
+    });
+    clear(target);
+    target.append(statusBox(actionLabels[action] || "Recipe action", recipeId, result.status || "ok"));
+    target.append(jsonBlock(result));
+    if (action === "approvals") {
+      await loadApprovals();
+    }
+    if (action === "runs" || action === "execute") {
+      await loadCliRuns();
+    }
+    showToast("Recipe action completed.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Recipe action failed", error.message, "failed"));
+    showToast(error.message);
   }
 }
 

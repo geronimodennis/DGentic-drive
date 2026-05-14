@@ -33,6 +33,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
     assert "Rules And Plugins" in response.text
+    assert "recipeActionPanel" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -60,6 +61,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "api(`/cli/approvals/${encodeURIComponent(approvalId)}/execute`" in script_response.text
     assert 'api("/cli/policy/rules")' in script_response.text
     assert 'api("/cli/recipes")' in script_response.text
+    assert "renderRecipeList" in script_response.text
+    assert "renderRecipeActionPanel" in script_response.text
+    assert "commandRecipePayload" in script_response.text
+    assert "postCommandRecipeAction" in script_response.text
+    assert "data-recipe-parameter" in script_response.text
+    assert "/cli/recipes/${encodeURIComponent(recipeId)}/${action}" in script_response.text
     assert 'api("/guardrails/hooks/rules")' in script_response.text
     assert 'api("/plugins")' in script_response.text
     assert 'api("/settings/effective")' in script_response.text
@@ -155,6 +162,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".checkpoint-grid" in style_response.text
     assert ".reliability-grid" in style_response.text
     assert ".policy-grid" in style_response.text
+    assert ".recipe-action-panel" in style_response.text
+    assert ".recipe-parameter-grid" in style_response.text
+    assert ".recipe-action-buttons" in style_response.text
     assert ".approval-list" in style_response.text
 
 

@@ -70,6 +70,20 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderOrchestrationDetail" in script_response.text
     assert "renderTaskAgentBrief" in script_response.text
     assert "agent-brief-grid" in script_response.text
+    assert "renderTaskUpdateForm" in script_response.text
+    assert "submitOrchestrationTaskUpdate" in script_response.text
+    assert 'method: "PATCH"' in script_response.text
+    assert "recoverableTaskBlockerSeverities" in script_response.text
+    assert "canRecoverTask" in script_response.text
+    assert "submitOrchestrationTaskRecovery" in script_response.text
+    assert "declared_write_paths: declaredWritePaths" in script_response.text
+    assert "/recover`" in script_response.text
+    assert "resolvableTaskBlockerSeverities" in script_response.text
+    assert "submitOrchestrationBlockerResolution" in script_response.text
+    assert "/blockers/${encodeURIComponent(blockerId)}/resolve`" in script_response.text
+    assert "renderOrchestrationCloseout" in script_response.text
+    assert "submitOrchestrationCloseout" in script_response.text
+    assert "required_dod_evidence" in script_response.text
     assert "postOrchestrationLoop" in script_response.text
     assert "postOrchestrationExecution" in script_response.text
     assert "cancelOrchestrationExecution" in script_response.text
@@ -94,6 +108,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-card" in style_response.text
     assert ".agent-brief" in style_response.text
     assert ".agent-brief-grid" in style_response.text
+    assert ".orchestration-form" in style_response.text
     assert ".approval-filter-row" in style_response.text
     assert ".approval-summary-grid" in style_response.text
     assert ".context-grid" in style_response.text

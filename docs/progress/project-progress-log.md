@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010k Orchestration Recovery And Closeout Controls
+
+Status: completed for the scoped orchestration mutation UX slice; Sprint 16 remains active for full chat workflows, orchestration creation UI, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected orchestration recovery and closeout controls as the next user-facing Sprint 16 slice because task update, recovery, blocker resolution, and closeout backend contracts already exist.
+- Completed: Developer added dashboard forms for running-task completion/failure/blocking, blocked-task recovery, manual/security blocker resolution, and required Definition of Done evidence closeout without adding backend endpoints.
+- Completed: Developer matched backend governance by showing task recovery only for `role_boundary` and `retry_exhausted` blockers, showing manual blocker resolution only for `blocked` and `security` blockers, and sending an intentionally empty `declared_write_paths` list when cleared.
+- Completed: QA extended UI static contract tests for the new handlers, endpoint wiring, blocker-severity gates, closeout evidence binding, and CSS hooks.
+- Completed: QA added API coverage proving beta-owned tokens cannot update or close another owner's run, while extra spoof fields such as `agent_id` and `requested_by` are rejected by the existing schemas.
+- Completed: PM updated README, project status, planning, architecture, setup, and usage docs.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` orchestration detail can mark running tasks completed, failed, or blocked through the existing `PATCH /tasks/orchestrations/{run_id}/tasks/{task_id}` contract.
+- Implemented in this slice: `/ui/` can submit blocked-task recovery and admin blocker-resolution requests through the existing recovery and blocker resolution contracts.
+- Implemented in this slice: `/ui/` can submit required Definition of Done evidence to close a completed run, while the backend still enforces incomplete-task, unresolved-blocker, and evidence gates.
+- Still out of scope after this slice: orchestration creation forms, graphical sub-agent hierarchy visualization, non-CLI approved action execution flows, and end-to-end browser automation for recovery/closeout scenarios.
+
+Validation:
+- Focused UI/API tests passed: `uv run pytest tests\test_ui.py tests\test_api.py::test_orchestration_api_task_update_and_close_respect_owner_and_payload_schema -q` with 4 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010j Sub-Agent Detail In Orchestration Console
 
 Status: completed for the scoped per-task sub-agent detail slice; Sprint 16 remains active for full chat workflows, orchestration creation/update/recovery/closeout UI, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, deeper sub-agent graph visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

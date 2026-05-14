@@ -1717,6 +1717,82 @@ def test_orchestration_api_recovery_respects_authenticated_task_owner(
     get_settings.cache_clear()
 
 
+def test_orchestration_api_task_update_and_close_respect_owner_and_payload_schema(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure_production_task_api_state(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+    payload = {
+        "objective": "Owner-scoped update and close.",
+        "required_dod_evidence": ["tests"],
+        "tasks": [
+            {
+                "id": "qa-validation",
+                "title": "QA validation",
+                "description": "Validate mutation owner filtering.",
+                "role": "QA",
+                "declared_write_paths": ["tests/test_api.py"],
+                "validation": "Owner filtering holds.",
+            }
+        ],
+    }
+
+    alpha_create = client.post(
+        "/tasks/orchestrations",
+        headers={"Authorization": "Bearer alpha-token"},
+        json=payload,
+    )
+    run_id = alpha_create.json()["id"]
+    beta_update = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        headers={"Authorization": "Bearer beta-token"},
+        json={"status": "completed", "output": {"tests": "passed"}},
+    )
+    beta_close = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        headers={"Authorization": "Bearer beta-token"},
+        json={"evidence": {"tests": "pytest passed"}},
+    )
+    spoofed_update = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={
+            "status": "completed",
+            "output": {"tests": "passed"},
+            "agent_id": "spoofed-agent",
+        },
+    )
+    alpha_update = client.patch(
+        f"/tasks/orchestrations/{run_id}/tasks/qa-validation",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"status": "completed", "output": {"tests": "passed"}},
+    )
+    spoofed_close = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"evidence": {"tests": "pytest passed"}, "requested_by": "spoofed-actor"},
+    )
+    alpha_close = client.post(
+        f"/tasks/orchestrations/{run_id}/close",
+        headers={"Authorization": "Bearer alpha-token"},
+        json={"evidence": {"tests": "pytest passed"}},
+    )
+
+    assert alpha_create.status_code == 201
+    assert beta_update.status_code == 404
+    assert beta_close.status_code == 404
+    assert spoofed_update.status_code == 422
+    assert spoofed_update.json()["detail"][0]["loc"] == ["body", "agent_id"]
+    assert alpha_update.status_code == 200
+    assert alpha_update.json()["tasks"][0]["status"] == "completed"
+    assert spoofed_close.status_code == 422
+    assert spoofed_close.json()["detail"][0]["loc"] == ["body", "requested_by"]
+    assert alpha_close.status_code == 200
+    assert alpha_close.json()["status"] == "completed"
+    get_settings.cache_clear()
+
+
 def test_orchestration_api_resolves_manual_blocker_with_admin_audit(
     tmp_path,
     monkeypatch,

@@ -605,6 +605,22 @@ textarea {
   margin-top: 10px;
 }
 
+.orchestration-form {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.orchestration-form summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.orchestration-form form {
+  margin-top: 10px;
+}
+
 .review-panel pre,
 .output-region pre {
   overflow: auto;

@@ -8,6 +8,9 @@ const approvalSources = [
   { key: "tool", label: "Tool", base: "/tools/approvals" },
 ];
 
+const recoverableTaskBlockerSeverities = new Set(["role_boundary", "retry_exhausted"]);
+const resolvableTaskBlockerSeverities = new Set(["blocked", "security"]);
+
 let approvalStatus = "pending";
 let approvalSource = "";
 let selectedApproval = null;
@@ -513,13 +516,14 @@ function renderOrchestrationDetail(run, executionsResult, loadingExecutions = fa
   appendKeyValue(grid, "Updated", formatTimestamp(run.updated_at));
   target.append(grid);
 
-  renderOrchestrationTasks(target, run.tasks || [], agentsResult);
-  renderOrchestrationBlockers(target, run.blockers || []);
+  renderOrchestrationTasks(target, run, run.tasks || [], agentsResult);
+  renderOrchestrationBlockers(target, run, run.blockers || []);
   renderOrchestrationFollowUps(target, run.follow_ups || []);
+  renderOrchestrationCloseout(target, run);
   renderOrchestrationExecutions(target, executionsResult, loadingExecutions);
 }
 
-function renderOrchestrationTasks(target, tasks, agentsResult = null) {
+function renderOrchestrationTasks(target, run, tasks, agentsResult = null) {
   const box = make("div", "orchestration-task-list");
   box.append(make("div", "item-title", "Task Graph"));
   if (!tasks.length) {
@@ -543,9 +547,123 @@ function renderOrchestrationTasks(target, tasks, agentsResult = null) {
       item.append(statusBox("Task error", task.error, "failed"));
     }
     renderTaskAgentBrief(item, task, agentsResult);
+    renderTaskActionForms(item, run, task);
     box.append(item);
   }
   target.append(box);
+}
+
+function renderTaskActionForms(target, run, task) {
+  if (run.status !== "running") {
+    return;
+  }
+  if (task.status === "running") {
+    renderTaskUpdateForm(target, run.id, task);
+  }
+  if (canRecoverTask(run, task)) {
+    renderTaskRecoveryForm(target, run.id, task);
+  }
+}
+
+function unresolvedTaskBlockers(run, taskId) {
+  return (run.blockers || []).filter((blocker) => blocker.task_id === taskId && blocker.status !== "resolved");
+}
+
+function canRecoverTask(run, task) {
+  if (task.status !== "blocked") {
+    return false;
+  }
+  const blockers = unresolvedTaskBlockers(run, task.id);
+  return blockers.length > 0 && blockers.every((blocker) => recoverableTaskBlockerSeverities.has(blocker.severity));
+}
+
+function renderTaskUpdateForm(target, runId, task) {
+  const detail = make("details", "orchestration-form");
+  detail.append(make("summary", "", "Update task"));
+  const form = make("form", "stacked-form");
+
+  const statusLabel = make("label");
+  statusLabel.textContent = "Status";
+  const statusInput = make("select");
+  statusInput.name = "status";
+  for (const status of ["completed", "failed", "blocked"]) {
+    const option = make("option", "", status);
+    option.value = status;
+    statusInput.append(option);
+  }
+  statusLabel.append(statusInput);
+
+  const outputLabel = make("label");
+  outputLabel.textContent = "Output Note";
+  const outputInput = make("textarea");
+  outputInput.name = "output_note";
+  outputInput.rows = 3;
+  outputLabel.append(outputInput);
+
+  const errorLabel = make("label");
+  errorLabel.textContent = "Failure Or Blocker Reason";
+  const errorInput = make("textarea");
+  errorInput.name = "error";
+  errorInput.rows = 3;
+  errorLabel.append(errorInput);
+
+  const footer = make("div", "form-footer");
+  footer.append(make("span", "item-meta", task.id));
+  const button = make("button", "primary-button", "Save Task");
+  button.type = "submit";
+  footer.append(button);
+
+  form.append(statusLabel, outputLabel, errorLabel, footer);
+  form.addEventListener("submit", (event) => submitOrchestrationTaskUpdate(event, runId, task.id, form));
+  detail.append(form);
+  target.append(detail);
+}
+
+function renderTaskRecoveryForm(target, runId, task) {
+  const detail = make("details", "orchestration-form");
+  detail.append(make("summary", "", "Recover task"));
+  const form = make("form", "stacked-form");
+
+  const resolutionLabel = make("label");
+  resolutionLabel.textContent = "Resolution";
+  const resolutionInput = make("textarea");
+  resolutionInput.name = "resolution";
+  resolutionInput.rows = 3;
+  resolutionInput.required = true;
+  resolutionLabel.append(resolutionInput);
+
+  const roleLabel = make("label");
+  roleLabel.textContent = "Role";
+  const roleInput = make("input");
+  roleInput.name = "role";
+  roleInput.type = "text";
+  roleInput.value = task.role || "";
+  roleLabel.append(roleInput);
+
+  const pathsLabel = make("label");
+  pathsLabel.textContent = "Declared Write Paths";
+  const pathsInput = make("textarea");
+  pathsInput.name = "declared_write_paths";
+  pathsInput.rows = 3;
+  pathsInput.value = (task.declared_write_paths || []).join("\n");
+  pathsLabel.append(pathsInput);
+
+  const resetLabel = make("label", "checkbox-label");
+  const resetInput = make("input");
+  resetInput.name = "reset_retry_count";
+  resetInput.type = "checkbox";
+  resetLabel.append(resetInput, make("span", "", "Reset retry count"));
+
+  const footer = make("div", "form-footer");
+  footer.append(resetLabel);
+  const button = make("button", "primary-button", "Recover");
+  button.type = "submit";
+  footer.append(button);
+
+  form.append(resolutionLabel, roleLabel, pathsLabel, footer);
+  form.addEventListener("submit", (event) => submitOrchestrationTaskRecovery(event, runId, task.id, form));
+  detail.append(form);
+  target.append(detail);
 }
 
 function renderTaskAgentBrief(target, task, agentsResult) {
@@ -596,7 +714,7 @@ function renderTaskAgentBrief(target, task, agentsResult) {
   target.append(detail);
 }
 
-function renderOrchestrationBlockers(target, blockers) {
+function renderOrchestrationBlockers(target, run, blockers) {
   const openBlockers = blockers.filter((blocker) => blocker.status !== "resolved");
   if (!openBlockers.length) {
     return;
@@ -607,8 +725,44 @@ function renderOrchestrationBlockers(target, blockers) {
     const row = make("div", "finding-row");
     row.append(statusChip(blocker.severity || "blocked"), make("span", "", `${blocker.task_id}: ${blocker.reason}`));
     box.append(row);
+    if (run.status === "running" && resolvableTaskBlockerSeverities.has(blocker.severity)) {
+      renderBlockerResolutionForm(box, run.id, blocker);
+    }
   }
   target.append(box);
+}
+
+function renderBlockerResolutionForm(target, runId, blocker) {
+  const detail = make("details", "orchestration-form");
+  detail.append(make("summary", "", `Resolve ${blocker.id}`));
+  const form = make("form", "stacked-form");
+
+  const resolutionLabel = make("label");
+  resolutionLabel.textContent = "Resolution";
+  const resolutionInput = make("textarea");
+  resolutionInput.name = "resolution";
+  resolutionInput.rows = 3;
+  resolutionInput.required = true;
+  resolutionLabel.append(resolutionInput);
+
+  const rescheduleLabel = make("label", "checkbox-label");
+  const rescheduleInput = make("input");
+  rescheduleInput.name = "reschedule";
+  rescheduleInput.type = "checkbox";
+  rescheduleLabel.append(rescheduleInput, make("span", "", "Reschedule after resolve"));
+
+  const footer = make("div", "form-footer");
+  footer.append(rescheduleLabel);
+  const button = make("button", "primary-button", "Resolve");
+  button.type = "submit";
+  footer.append(button);
+
+  form.append(resolutionLabel, footer);
+  form.addEventListener("submit", (event) =>
+    submitOrchestrationBlockerResolution(event, runId, blocker.id, form),
+  );
+  detail.append(form);
+  target.append(detail);
 }
 
 function renderOrchestrationFollowUps(target, followUps) {
@@ -621,6 +775,54 @@ function renderOrchestrationFollowUps(target, followUps) {
     box.append(make("code", "", `${followUp.assigned_role} - ${followUp.task_id}: ${followUp.description}`));
   }
   target.append(box);
+}
+
+function renderOrchestrationCloseout(target, run) {
+  if (run.status !== "running") {
+    return;
+  }
+  const detail = make("details", "orchestration-form");
+  detail.append(make("summary", "", "Close orchestration"));
+  const form = make("form", "stacked-form");
+  const incompleteTasks = (run.tasks || []).filter((task) => task.status !== "completed");
+  const openBlockers = (run.blockers || []).filter((blocker) => blocker.status !== "resolved");
+  if (incompleteTasks.length || openBlockers.length) {
+    form.append(
+      statusBox(
+        "Close blocked",
+        `${incompleteTasks.length} incomplete tasks, ${openBlockers.length} open blockers`,
+        "blocked",
+      ),
+    );
+  }
+
+  const evidenceKeys = run.required_dod_evidence || [];
+  if (!evidenceKeys.length) {
+    form.append(make("div", "item-meta", "No required Definition of Done evidence keys are configured."));
+  }
+  for (const key of evidenceKeys) {
+    const label = make("label");
+    label.textContent = key;
+    const input = make("textarea");
+    input.name = "evidence";
+    input.dataset.evidenceKey = key;
+    input.rows = 3;
+    input.required = true;
+    input.value = run.dod_evidence?.[key] || "";
+    label.append(input);
+    form.append(label);
+  }
+
+  const footer = make("div", "form-footer");
+  footer.append(make("span", "item-meta", run.id));
+  const button = make("button", "primary-button", "Close Run");
+  button.type = "submit";
+  button.disabled = Boolean(incompleteTasks.length || openBlockers.length);
+  footer.append(button);
+  form.append(footer);
+  form.addEventListener("submit", (event) => submitOrchestrationCloseout(event, run.id, form));
+  detail.append(form);
+  target.append(detail);
 }
 
 function renderOrchestrationExecutions(target, executionsResult, loadingExecutions) {
@@ -728,6 +930,131 @@ async function cancelOrchestrationExecution(runId, executionId) {
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Execution cancel failed", error.message, "failed"));
+  }
+}
+
+async function submitOrchestrationTaskUpdate(event, runId, taskId, form) {
+  event.preventDefault();
+  const status = form.querySelector('[name="status"]').value;
+  const outputNote = form.querySelector('[name="output_note"]').value.trim();
+  const errorText = form.querySelector('[name="error"]').value.trim();
+  if ((status === "failed" || status === "blocked") && !errorText) {
+    showToast("Failure or blocker reason is required.");
+    return;
+  }
+  const payload = {
+    status,
+    output: outputNote ? { summary: outputNote } : {},
+    error: errorText || null,
+  };
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Updating task", taskId, "running"));
+  try {
+    const run = await api(
+      `/tasks/orchestrations/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}`,
+      {
+        method: "PATCH",
+        body: payload,
+      },
+    );
+    showToast("Task updated.");
+    await loadOrchestrationDetail(run.id, run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Task update failed", error.message, "failed"));
+  }
+}
+
+async function submitOrchestrationTaskRecovery(event, runId, taskId, form) {
+  event.preventDefault();
+  const resolution = form.querySelector('[name="resolution"]').value.trim();
+  if (!resolution) {
+    showToast("Resolution is required.");
+    return;
+  }
+  const role = form.querySelector('[name="role"]').value.trim();
+  const declaredWritePaths = splitLines(form.querySelector('[name="declared_write_paths"]').value);
+  const payload = {
+    resolution,
+    reset_retry_count: Boolean(form.querySelector('[name="reset_retry_count"]').checked),
+    declared_write_paths: declaredWritePaths,
+  };
+  if (role) {
+    payload.role = role;
+  }
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Recovering task", taskId, "running"));
+  try {
+    const run = await api(
+      `/tasks/orchestrations/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/recover`,
+      {
+        method: "POST",
+        body: payload,
+      },
+    );
+    showToast("Task recovery submitted.");
+    await loadOrchestrationDetail(run.id, run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Task recovery failed", error.message, "failed"));
+  }
+}
+
+async function submitOrchestrationBlockerResolution(event, runId, blockerId, form) {
+  event.preventDefault();
+  const resolution = form.querySelector('[name="resolution"]').value.trim();
+  if (!resolution) {
+    showToast("Resolution is required.");
+    return;
+  }
+  const payload = {
+    resolution,
+    reschedule: Boolean(form.querySelector('[name="reschedule"]').checked),
+  };
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Resolving blocker", blockerId, "running"));
+  try {
+    const run = await api(
+      `/tasks/orchestrations/${encodeURIComponent(runId)}/blockers/${encodeURIComponent(blockerId)}/resolve`,
+      {
+        method: "POST",
+        body: payload,
+      },
+    );
+    showToast("Blocker resolved.");
+    await loadOrchestrationDetail(run.id, run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Blocker resolution failed", error.message, "failed"));
+  }
+}
+
+async function submitOrchestrationCloseout(event, runId, form) {
+  event.preventDefault();
+  const evidence = {};
+  for (const input of Array.from(form.querySelectorAll('[name="evidence"]'))) {
+    const key = input.dataset.evidenceKey;
+    const value = input.value.trim();
+    if (key && value) {
+      evidence[key] = value;
+    }
+  }
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Closing orchestration", runId, "running"));
+  try {
+    const run = await api(`/tasks/orchestrations/${encodeURIComponent(runId)}/close`, {
+      method: "POST",
+      body: { evidence },
+    });
+    showToast("Orchestration closed.");
+    await loadOrchestrationDetail(run.id, run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Closeout failed", error.message, "failed"));
   }
 }
 

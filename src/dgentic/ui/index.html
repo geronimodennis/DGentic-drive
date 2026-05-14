@@ -19,6 +19,7 @@
         <nav class="nav-list" aria-label="Dashboard sections">
           <a href="#overview">Overview</a>
           <a href="#tasks">Tasks</a>
+          <a href="#project-context">Project</a>
           <a href="#workspace">Workspace</a>
           <a href="#approvals">Approvals</a>
           <a href="#git">Git</a>
@@ -47,6 +48,7 @@
           <div>
             <p class="eyebrow">Sprint 16</p>
             <h1>Approval Dashboard</h1>
+            <p id="rootContextSummary" class="topbar-context">Active root: -</p>
           </div>
           <div class="topbar-actions">
             <button id="refreshButton" type="button" class="icon-button" title="Refresh dashboard" aria-label="Refresh dashboard">
@@ -131,15 +133,29 @@
             <div id="orchestrationSummary" class="compact-list"></div>
           </article>
 
+          <article id="project-context" class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Project</p>
+                <h2>Context</h2>
+              </div>
+              <button id="projectOpenRootButton" type="button" class="link-button">Open root</button>
+            </div>
+            <div id="projectContextOutput" class="compact-list"></div>
+          </article>
+
           <article id="workspace" class="panel wide-panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Workspace</p>
                 <h2>Files</h2>
               </div>
-              <button id="workspaceParentButton" type="button" class="icon-button" title="Open parent folder" aria-label="Open parent folder">
-                U
-              </button>
+              <div class="button-row">
+                <button id="workspaceRootButton" type="button" class="link-button">Root</button>
+                <button id="workspaceParentButton" type="button" class="icon-button" title="Open parent folder" aria-label="Open parent folder">
+                  U
+                </button>
+              </div>
             </div>
             <form id="workspaceForm" class="workspace-path-form">
               <label for="workspacePathInput">Path</label>

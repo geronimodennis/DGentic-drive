@@ -169,6 +169,14 @@ textarea {
   font-size: 2rem;
 }
 
+.topbar-context {
+  margin: 8px 0 0;
+  max-width: 78ch;
+  color: var(--muted);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
 .panel h2 {
   font-size: 1rem;
 }
@@ -524,6 +532,70 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.context-grid,
+.checkpoint-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.info-pair,
+.finding-list,
+.changed-paths,
+.json-details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+  min-width: 0;
+}
+
+.info-pair {
+  display: grid;
+  gap: 4px;
+}
+
+.info-pair span:first-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.info-pair strong {
+  overflow-wrap: anywhere;
+}
+
+.finding-list,
+.changed-paths {
+  display: grid;
+  gap: 8px;
+}
+
+.finding-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.changed-paths code {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.json-details summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.json-details pre {
+  margin-top: 10px;
+}
+
 .setting-item strong {
   display: block;
   overflow-wrap: anywhere;
@@ -610,6 +682,8 @@ textarea {
   .content-grid,
   .two-column,
   .settings-grid,
+  .context-grid,
+  .checkpoint-grid,
   .workspace-layout,
   .policy-grid,
   .decision-form {

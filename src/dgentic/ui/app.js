@@ -13,6 +13,8 @@ let selectedApproval = null;
 let workspacePath = ".";
 let openFilePath = "";
 let toastTimer = null;
+let activeRootDir = "";
+let activeRootSource = "";
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -125,6 +127,38 @@ function statusBox(title, detail, state = "") {
 
 function setMetric(selector, value) {
   qs(selector).textContent = value;
+}
+
+function compactPath(value) {
+  const text = String(value || "-");
+  if (text.length <= 76) {
+    return text;
+  }
+  return `${text.slice(0, 34)}...${text.slice(-34)}`;
+}
+
+function settingByName(view, name) {
+  return (view?.settings || []).find((setting) => setting.name === name) || null;
+}
+
+function settingText(setting, fallback = "-") {
+  if (!setting) {
+    return fallback;
+  }
+  if (setting.value && typeof setting.value === "object") {
+    return JSON.stringify(setting.value);
+  }
+  return String(setting.value ?? fallback);
+}
+
+function appendKeyValue(target, label, value, chipValue = "") {
+  const item = make("div", "info-pair");
+  item.append(make("span", "", label));
+  item.append(make("strong", "", value));
+  if (chipValue) {
+    item.append(statusChip(chipValue));
+  }
+  target.append(item);
 }
 
 async function refreshDashboard() {
@@ -519,13 +553,71 @@ async function createGitCheckpoint(event) {
   target.append(statusBox("Checking repository", payload.action, "running"));
   try {
     const checkpoint = await api("/cli/git/checkpoints", { method: "POST", body: payload });
-    clear(target);
-    target.append(statusBox(checkpoint.ready ? "Ready" : "Blocked", checkpoint.branch, checkpoint.ready ? "ready" : "blocked"));
-    target.append(jsonBlock(checkpoint));
+    renderGitCheckpoint(checkpoint);
   } catch (error) {
     clear(target);
     target.append(statusBox("Checkpoint failed", error.message, "failed"));
   }
+}
+
+function renderGitCheckpoint(checkpoint) {
+  const target = qs("#gitOutput");
+  clear(target);
+  target.append(
+    statusBox(
+      checkpoint.ready ? "Checkpoint ready" : "Checkpoint blocked",
+      `${checkpoint.action} on ${checkpoint.branch}`,
+      checkpoint.ready ? "ready" : "blocked",
+    ),
+  );
+
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Branch", checkpoint.branch || "-");
+  appendKeyValue(grid, "Head", checkpoint.head_sha ? checkpoint.head_sha.slice(0, 12) : "-");
+  appendKeyValue(grid, "Upstream", checkpoint.upstream || "-");
+  appendKeyValue(grid, "Ahead / behind", `${checkpoint.ahead || 0} / ${checkpoint.behind || 0}`);
+  appendKeyValue(grid, "Staged", String(checkpoint.staged_count || 0));
+  appendKeyValue(grid, "Unstaged", String(checkpoint.unstaged_count || 0));
+  appendKeyValue(grid, "Untracked", String(checkpoint.untracked_count || 0));
+  appendKeyValue(grid, "Diff", checkpoint.diff_stat?.summary || "No tracked diff changes.");
+  target.append(grid);
+
+  renderFindings(target, "Blockers", checkpoint.blockers || [], "blocked");
+  renderFindings(target, "Warnings", checkpoint.warnings || [], "pending");
+  renderChangedPaths(target, checkpoint);
+
+  const details = make("details", "json-details");
+  details.append(make("summary", "", "Raw checkpoint"));
+  details.append(jsonBlock(checkpoint));
+  target.append(details);
+}
+
+function renderFindings(target, title, findings, state) {
+  if (!findings.length) {
+    return;
+  }
+  const box = make("div", "finding-list");
+  box.append(make("div", "item-title", title));
+  for (const finding of findings) {
+    const row = make("div", "finding-row");
+    row.append(statusChip(state), make("span", "", finding));
+    box.append(row);
+  }
+  target.append(box);
+}
+
+function renderChangedPaths(target, checkpoint) {
+  const paths = checkpoint.changed_paths || [];
+  if (!paths.length) {
+    return;
+  }
+  const box = make("div", "changed-paths");
+  const title = checkpoint.changed_paths_truncated ? "Changed paths (truncated)" : "Changed paths";
+  box.append(make("div", "item-title", title));
+  for (const path of paths.slice(0, 12)) {
+    box.append(make("code", "", path));
+  }
+  target.append(box);
 }
 
 async function loadSettings() {
@@ -534,8 +626,10 @@ async function loadSettings() {
   clear(target);
   if (!result.ok) {
     target.append(statusBox("Settings unavailable", result.error, "blocked"));
+    renderProjectContext(null, result.error);
     return;
   }
+  renderProjectContext(result.data);
   const settings = result.data.settings || [];
   for (const setting of settings.slice(0, 24)) {
     const item = make("div", "setting-item");
@@ -549,6 +643,44 @@ async function loadSettings() {
       item.append(statusChip("redacted"));
     }
     target.append(item);
+  }
+}
+
+function renderProjectContext(settingsView, error = "") {
+  const target = qs("#projectContextOutput");
+  clear(target);
+  if (!settingsView) {
+    activeRootDir = "";
+    activeRootSource = "";
+    qs("#rootContextSummary").textContent = "Active root: -";
+    target.append(statusBox("Project context unavailable", error || "Settings are unavailable.", "blocked"));
+    return;
+  }
+
+  const rootSetting = settingByName(settingsView, "root_dir");
+  const dataSetting = settingByName(settingsView, "data_dir");
+  const environmentSetting = settingByName(settingsView, "environment");
+  const authSetting = settingByName(settingsView, "effective_auth_enabled");
+  activeRootDir = settingText(rootSetting, ".");
+  activeRootSource = rootSetting?.source || "default";
+
+  qs("#rootContextSummary").textContent = `Active root: ${compactPath(activeRootDir)}`;
+  target.append(statusBox("Active workspace root", compactPath(activeRootDir), "ok"));
+  const grid = make("div", "context-grid");
+  appendKeyValue(grid, "Root source", activeRootSource, activeRootSource);
+  appendKeyValue(grid, "State directory", compactPath(settingText(dataSetting, "-")));
+  appendKeyValue(grid, "Environment", settingText(environmentSetting, "-"));
+  appendKeyValue(grid, "Auth", settingText(authSetting, "-"));
+  target.append(grid);
+
+  if (settingsView.managed_settings_enabled) {
+    target.append(
+      statusBox(
+        "Managed settings",
+        compactPath(settingsView.managed_settings_file || settingsView.managed_settings_digest || "-"),
+        "ok",
+      ),
+    );
   }
 }
 
@@ -722,6 +854,11 @@ function bindEvents() {
     event.preventDefault();
     loadWorkspace(qs("#workspacePathInput").value.trim() || ".");
   });
+  qs("#projectOpenRootButton").addEventListener("click", () => {
+    loadWorkspace(".");
+    window.location.hash = "workspace";
+  });
+  qs("#workspaceRootButton").addEventListener("click", () => loadWorkspace("."));
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);

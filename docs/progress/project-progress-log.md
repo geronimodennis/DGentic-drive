@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010e Project Context And Git Checkpoint Review UI
+
+Status: completed for the scoped active-root context and structured Git checkpoint review slice; Sprint 16 remains active for true project add/open and rootDir switching, AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Architect confirmed there is no first-class project/rootDir switching backend contract yet; the current safe boundary is the backend's configured `DGENTIC_ROOT_DIR`.
+- Completed: Developer added active project/root context visibility to `/ui/` using the existing effective settings endpoint, plus root-reset workspace controls and a structured Git checkpoint review renderer.
+- Completed: QA updated UI static tests for the new project context and Git checkpoint review wiring.
+- Completed: PM updated README, architecture, setup, usage, backlog, project status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` displays the active workspace root, root setting source, state directory, environment, auth state, and managed-settings indicator from `GET /settings/effective`.
+- Implemented in this slice: the workspace panel can reset browsing to `.` from both the project context and workspace controls without changing backend state.
+- Implemented in this slice: the Git checkpoint panel now renders branch, head, upstream, ahead/behind counts, staged/unstaged/untracked counts, diff-stat summary, blockers, warnings, changed paths, and a collapsible raw checkpoint payload.
+- Still out of scope after this slice: project registry APIs, browser-side add/open/switch controls that mutate active `rootDir`, project-scoped state semantics, stale approval invalidation across project switches, and AI-change diff review.
+
+Validation:
+- Focused UI tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Lint/format/diff hygiene passed: `python -m ruff check .`, `python -m ruff format --check .`, `git diff --check`, and `node --check src\dgentic\ui\app.js`.
+- Browser smoke passed with Edge/Playwright against `http://127.0.0.1:8021/ui/`: no page errors, no failed API responses, active root rendered as `C:\workspace\AI Agent`, workspace root listed 17 rows, and Git checkpoint rendered the structured grid.
+
 ### Sprint 16 BL-010d Read-Only Policy And Plugin Visibility
 
 Status: completed for the scoped read-only policy/plugin visibility slice; Sprint 16 remains active for editable settings/policy surfaces, project add/open and rootDir switching, AI-change review, richer approval filtering, memory/tool reliability dashboards, and broader browser validation.

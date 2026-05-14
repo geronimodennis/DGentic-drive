@@ -52,7 +52,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/projects/preflight"' in script_response.text
     assert 'api("/projects"' in script_response.text
     assert 'api("/projects/active")' in script_response.text
-    assert "activateProject" not in script_response.text
+    assert "activateProject" in script_response.text
+    assert "api(`/projects/${encodeURIComponent(projectId)}/activate`" in script_response.text
+    assert "renderActivationChecks" in script_response.text
     assert "workspaceRootButton" in script_response.text
     assert "renderGitCheckpoint" in script_response.text
     assert "checkpoint-grid" in script_response.text

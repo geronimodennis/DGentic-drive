@@ -76,7 +76,15 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     const detail = payload && typeof payload === "object" ? payload.detail : payload;
-    throw new Error(detail || `Request failed with ${response.status}`);
+    let message = detail || `Request failed with ${response.status}`;
+    if (Array.isArray(detail)) {
+      message = detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
+    } else if (detail && typeof detail === "object") {
+      message = detail.detail || `Request failed with ${response.status}`;
+    }
+    const error = new Error(message);
+    error.detail = detail;
+    throw error;
   }
   return payload;
 }
@@ -645,6 +653,21 @@ function renderProjectMarkers(target, markers, warnings) {
   renderFindings(target, "Warnings", warnings || [], "pending");
 }
 
+function renderActivationChecks(target, activation) {
+  const checks = activation?.checks || [];
+  if (!checks.length) {
+    return;
+  }
+  const box = make("div", "finding-list");
+  box.append(make("div", "item-title", "Activation checks"));
+  for (const check of checks) {
+    const row = make("div", "finding-row");
+    row.append(statusChip(check.status), make("span", "", `${check.label}: ${check.detail}`));
+    box.append(row);
+  }
+  target.append(box);
+}
+
 async function preflightProjectRoot(event) {
   event?.preventDefault();
   const payload = projectPayload();
@@ -691,6 +714,32 @@ async function registerProject(event) {
   }
 }
 
+async function activateProject(projectId) {
+  const target = qs("#projectRegistryOutput");
+  clear(target);
+  target.append(statusBox("Opening project", projectId, "running"));
+  try {
+    const result = await api(`/projects/${encodeURIComponent(projectId)}/activate`, {
+      method: "POST",
+    });
+    workspacePath = ".";
+    openFilePath = "";
+    qs("#workspaceEditorTitle").textContent = "No file open";
+    qs("#workspaceEditor").value = "";
+    await Promise.all([loadSettings(), loadWorkspace("."), loadLogs()]);
+    await loadProjects();
+    showToast(result.switched ? "Project opened." : "Project is already active.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Project activation blocked", error.message, "blocked"));
+    if (error.detail && typeof error.detail === "object") {
+      renderFindings(target, "Blockers", error.detail.blockers || [], "blocked");
+      renderFindings(target, "Warnings", error.detail.warnings || [], "pending");
+      renderActivationChecks(target, error.detail);
+    }
+  }
+}
+
 async function loadProjects() {
   const [projects, active] = await Promise.all([
     safeLoad("projects", () => api("/projects")),
@@ -725,6 +774,14 @@ function renderProjectList(projects, active) {
     item.append(make("div", "item-title", project.name || project.id));
     item.append(make("div", "item-meta", compactPath(project.root_dir)));
     item.append(statusChip(isActive ? "active" : project.status || "available"));
+    const actions = make("div", "button-row");
+    const openButton = make("button", "link-button", isActive ? "Active" : "Open");
+    openButton.type = "button";
+    openButton.disabled =
+      isActive || project.status !== "available" || !active.ok || !active.data.switching_available;
+    openButton.addEventListener("click", () => activateProject(project.id));
+    actions.append(openButton);
+    item.append(actions);
     target.append(item);
   }
   if (active.ok) {

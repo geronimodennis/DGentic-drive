@@ -2,17 +2,20 @@ import re
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from dgentic.database import reset_database_state
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
-from dgentic.schemas import LogEventType
-from dgentic.settings import get_settings
+from dgentic.schemas import LogEventType, StepStatus
+from dgentic.settings import activate_runtime_root_dir, get_settings, runtime_root_switch_barrier
 from dgentic.storage import JsonCollection
 
 ProjectStatus = Literal["available", "archived"]
+ProjectActivationCheckStatus = Literal["ok", "warning", "blocked"]
 
 _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
 _PROJECT_MARKERS = (
@@ -102,14 +105,39 @@ class ProjectRecord(BaseModel):
 class ActiveProjectResponse(BaseModel):
     active_root_dir: Path
     project: ProjectRecord | None = None
-    switching_available: bool = False
+    switching_available: bool = True
     reason: str = (
-        "Project root switching is not enabled yet; registered projects are preflighted "
-        "metadata only."
+        "Registered project activation is available when no active runs or unexecuted "
+        "approval records would cross runtime roots."
     )
 
 
+class ProjectActivationCheck(BaseModel):
+    id: str
+    label: str
+    status: ProjectActivationCheckStatus
+    detail: str
+
+
+class ProjectActivationResponse(BaseModel):
+    project: ProjectRecord
+    previous_root_dir: Path
+    active_root_dir: Path
+    switched: bool = False
+    can_activate: bool
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    checks: list[ProjectActivationCheck] = Field(default_factory=list)
+
+
+class ProjectActivationBlockedError(RuntimeError):
+    def __init__(self, response: ProjectActivationResponse) -> None:
+        super().__init__("Project activation is blocked by active runtime state.")
+        self.response = response
+
+
 _projects = JsonCollection("projects", ProjectRecord)
+_activation_lock = Lock()
 
 
 def preflight_project_root(request: ProjectPreflightRequest) -> ProjectPreflightResponse:
@@ -202,6 +230,59 @@ def get_active_project() -> ActiveProjectResponse:
     return ActiveProjectResponse(active_root_dir=active_root, project=matching_project)
 
 
+def preflight_project_activation(project_id: str) -> ProjectActivationResponse:
+    project = get_project(project_id)
+    return _activation_response(project, switched=False)
+
+
+def activate_project(project_id: str, *, actor: str | None = None) -> ProjectActivationResponse:
+    with runtime_root_switch_barrier(), _activation_lock:
+        project = get_project(project_id)
+        response = _activation_response(project, switched=False)
+        if not response.can_activate:
+            raise ProjectActivationBlockedError(response)
+
+        now = datetime.now(UTC)
+        refreshed_root_dir = _validate_project_root(project.root_dir)
+        previous_root_dir = _active_root_dir()
+        switched = refreshed_root_dir != previous_root_dir
+
+        def mark_opened(current: ProjectRecord) -> ProjectRecord:
+            return current.model_copy(
+                update={
+                    "root_dir": refreshed_root_dir,
+                    "markers": _project_markers(refreshed_root_dir),
+                    "last_opened_at": now,
+                    "updated_at": now,
+                }
+            )
+
+        saved = _projects.update(project.id, mark_opened)
+        if switched:
+            activate_runtime_root_dir(refreshed_root_dir)
+            reset_database_state()
+
+        active_root_dir = _active_root_dir()
+        activation_response = _activation_response(
+            saved,
+            switched=switched,
+            previous_root_dir=previous_root_dir,
+            active_root_dir=active_root_dir,
+        )
+        _record_project_event(
+            "Activated project root.",
+            saved,
+            actor=actor,
+            extra_metadata={
+                "previous_root_dir": str(previous_root_dir),
+                "active_root_dir": str(active_root_dir),
+                "switched": switched,
+                "warnings": activation_response.warnings,
+            },
+        )
+        return activation_response
+
+
 def _validate_project_root(path: Path) -> Path:
     raw_path = str(path)
     if "\x00" in raw_path:
@@ -252,17 +333,240 @@ def _project_id(name: str, root_dir: Path) -> str:
     return f"{slug}-{digest}"
 
 
-def _record_project_event(message: str, project: ProjectRecord, *, actor: str | None) -> None:
+def _activation_response(
+    project: ProjectRecord,
+    *,
+    switched: bool,
+    previous_root_dir: Path | None = None,
+    active_root_dir: Path | None = None,
+) -> ProjectActivationResponse:
+    previous_root = previous_root_dir or _active_root_dir()
+    active_root = active_root_dir or previous_root
+    target_root = _validate_project_root(project.root_dir)
+    warnings: list[str] = []
+    checks: list[ProjectActivationCheck] = []
+    blockers: list[str] = []
+    switch_required = target_root != previous_root
+
+    def add_check(
+        check_id: str,
+        label: str,
+        status: ProjectActivationCheckStatus,
+        detail: str,
+    ) -> None:
+        checks.append(
+            ProjectActivationCheck(
+                id=check_id,
+                label=label,
+                status=status,
+                detail=detail,
+            )
+        )
+        if status == "blocked":
+            blockers.append(detail)
+        elif status == "warning":
+            warnings.append(detail)
+
+    if project.status != "available":
+        add_check(
+            "project-status",
+            "Project status",
+            "blocked",
+            f"Project {project.id} is archived and cannot be activated.",
+        )
+    else:
+        add_check("project-status", "Project status", "ok", "Project is available.")
+
+    if switch_required:
+        _append_runtime_blocking_checks(add_check)
+        _append_state_anchor_warning(add_check)
+    else:
+        add_check("active-root", "Active root", "ok", "Project root is already active.")
+
+    return ProjectActivationResponse(
+        project=project,
+        previous_root_dir=previous_root,
+        active_root_dir=active_root if switched else previous_root,
+        switched=switched,
+        can_activate=not blockers,
+        blockers=blockers,
+        warnings=warnings,
+        checks=checks,
+    )
+
+
+def _append_runtime_blocking_checks(add_check) -> None:
+    active_cli_run_ids = _active_cli_run_ids()
+    if active_cli_run_ids:
+        add_check(
+            "active-cli-runs",
+            "CLI runs",
+            "blocked",
+            "Active CLI runs must finish or be cancelled before switching project roots: "
+            + ", ".join(active_cli_run_ids[:5]),
+        )
+    else:
+        add_check("active-cli-runs", "CLI runs", "ok", "No active CLI runs.")
+
+    active_execution_ids = _active_orchestration_execution_ids()
+    if active_execution_ids:
+        add_check(
+            "active-orchestration-executions",
+            "Orchestration executions",
+            "blocked",
+            "Active orchestration executions must finish or be cancelled before switching "
+            "project roots: " + ", ".join(active_execution_ids[:5]),
+        )
+    else:
+        add_check(
+            "active-orchestration-executions",
+            "Orchestration executions",
+            "ok",
+            "No active orchestration executions.",
+        )
+
+    active_task_ids = _active_orchestration_task_ids()
+    if active_task_ids:
+        add_check(
+            "active-orchestration-tasks",
+            "Orchestration tasks",
+            "blocked",
+            "Running orchestration tasks must finish or be blocked before switching "
+            "project roots: " + ", ".join(active_task_ids[:5]),
+        )
+    else:
+        add_check(
+            "active-orchestration-tasks",
+            "Orchestration tasks",
+            "ok",
+            "No running orchestration tasks.",
+        )
+
+    approval_counts = _unexecuted_approval_counts()
+    if approval_counts:
+        summary = ", ".join(
+            f"{surface}: {count}" for surface, count in sorted(approval_counts.items())
+        )
+        add_check(
+            "unexecuted-approvals",
+            "Unexecuted approvals",
+            "blocked",
+            "Pending or approved approval records must be resolved before switching "
+            f"project roots ({summary}).",
+        )
+    else:
+        add_check(
+            "unexecuted-approvals",
+            "Unexecuted approvals",
+            "ok",
+            "No pending or approved approval records.",
+        )
+
+
+def _append_state_anchor_warning(add_check) -> None:
+    settings = get_settings()
+    if settings.data_dir.is_absolute():
+        add_check(
+            "state-anchor",
+            "DGentic state",
+            "ok",
+            "DGentic state already uses an absolute dataDir and will stay anchored.",
+        )
+        return
+
+    data_dir = (settings.root_dir.resolve() / settings.data_dir).resolve()
+    add_check(
+        "state-anchor",
+        "DGentic state",
+        "warning",
+        "Relative DGentic dataDir will be pinned to its current absolute location during "
+        f"this process: {data_dir}",
+    )
+
+
+def _active_cli_run_ids() -> list[str]:
+    from dgentic.cli_runtime import CommandRunStatus, cli_runtime_service
+
+    active_statuses = {CommandRunStatus.starting, CommandRunStatus.running}
+    return [
+        run.id for run in cli_runtime_service.list_command_runs() if run.status in active_statuses
+    ]
+
+
+def _active_orchestration_execution_ids() -> list[str]:
+    from dgentic.orchestration import orchestration_service
+
+    return orchestration_service.get_operations_summary().active_execution_ids
+
+
+def _active_orchestration_task_ids() -> list[str]:
+    from dgentic.orchestration import orchestration_service
+
+    return [
+        task.id
+        for run in orchestration_service.list_runs()
+        for task in run.tasks
+        if task.status == StepStatus.running
+    ]
+
+
+def _unexecuted_approval_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+
+    from dgentic.cli_runtime import CommandApprovalStatus, cli_runtime_service
+    from dgentic.guardrails import FileApprovalStatus, list_file_approvals
+    from dgentic.network_policy import NetworkApprovalStatus, list_network_approvals
+    from dgentic.provider_runtime import ProviderApprovalStatus, list_provider_approvals
+    from dgentic.tool_runtime import ToolApprovalStatus, list_tool_approvals
+
+    cli_count = len(cli_runtime_service.list_approvals(CommandApprovalStatus.pending)) + len(
+        cli_runtime_service.list_approvals(CommandApprovalStatus.approved)
+    )
+    file_count = len(list_file_approvals(FileApprovalStatus.pending)) + len(
+        list_file_approvals(FileApprovalStatus.approved)
+    )
+    network_count = len(list_network_approvals(NetworkApprovalStatus.pending)) + len(
+        list_network_approvals(NetworkApprovalStatus.approved)
+    )
+    provider_count = len(list_provider_approvals(ProviderApprovalStatus.pending)) + len(
+        list_provider_approvals(ProviderApprovalStatus.approved)
+    )
+    tool_count = len(list_tool_approvals(ToolApprovalStatus.pending)) + len(
+        list_tool_approvals(ToolApprovalStatus.approved)
+    )
+
+    for surface, count in {
+        "cli": cli_count,
+        "filesystem": file_count,
+        "network": network_count,
+        "provider": provider_count,
+        "tool": tool_count,
+    }.items():
+        if count:
+            counts[surface] = count
+    return counts
+
+
+def _record_project_event(
+    message: str,
+    project: ProjectRecord,
+    *,
+    actor: str | None,
+    extra_metadata: dict[str, object] | None = None,
+) -> None:
+    metadata = {
+        "project_id": project.id,
+        "name": project.name,
+        "root_dir": str(project.root_dir),
+        "status": project.status,
+        "markers": project.markers,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
     event_log.record(
         LogEventType.project,
         message,
         actor=actor or "system",
         subject_id=project.id,
-        metadata={
-            "project_id": project.id,
-            "name": project.name,
-            "root_dir": str(project.root_dir),
-            "status": project.status,
-            "markers": project.markers,
-        },
+        metadata=metadata,
     )

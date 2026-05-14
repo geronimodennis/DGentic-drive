@@ -1,11 +1,14 @@
 import json
 import os
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -13,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dgentic.redaction import REDACTED_SECRET_MARKER, redact_metadata, redact_sensitive_values
 
-SettingsSource = Literal["default", "environment", "managed", "derived"]
+SettingsSource = Literal["default", "environment", "managed", "runtime", "derived"]
 
 _MANAGED_SETTINGS_RESERVED_FIELDS = frozenset({"managed_settings_file"})
 _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
@@ -323,6 +326,9 @@ class SettingsSourceMetadata:
 
 
 _LAST_SETTINGS_SOURCE_METADATA = SettingsSourceMetadata(sources={})
+_RUNTIME_SETTINGS_LOCK = Lock()
+_RUNTIME_SETTINGS_OVERRIDES: dict[str, Any] = {}
+_RUNTIME_ROOT_SWITCH_LOCK = Lock()
 
 
 @lru_cache
@@ -331,8 +337,55 @@ def get_settings() -> Settings:
 
     settings = Settings()
     effective_settings, metadata = _apply_managed_settings(settings)
+    effective_settings, metadata = _apply_runtime_settings_overrides(
+        effective_settings,
+        metadata,
+    )
     _LAST_SETTINGS_SOURCE_METADATA = metadata
     return effective_settings
+
+
+def activate_runtime_root_dir(root_dir: Path) -> Settings:
+    """Switch the in-process runtime root while keeping DGentic state anchored."""
+
+    if root_dir.is_symlink():
+        raise ValueError("Runtime rootDir must not be a symlink.")
+    try:
+        resolved_root_dir = root_dir.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Runtime rootDir must exist.") from exc
+    if not resolved_root_dir.is_dir():
+        raise ValueError("Runtime rootDir must be a directory.")
+
+    current_settings = get_settings()
+    stable_data_dir = current_settings.data_dir
+    if not stable_data_dir.is_absolute():
+        current_root_dir = current_settings.root_dir
+        if not current_root_dir.is_absolute():
+            current_root_dir = current_root_dir.resolve()
+        stable_data_dir = (current_root_dir / stable_data_dir).resolve()
+
+    with _RUNTIME_SETTINGS_LOCK:
+        _RUNTIME_SETTINGS_OVERRIDES["root_dir"] = resolved_root_dir
+        _RUNTIME_SETTINGS_OVERRIDES["data_dir"] = stable_data_dir
+    get_settings.cache_clear()
+    return get_settings()
+
+
+def clear_runtime_settings_overrides() -> None:
+    """Clear in-process runtime settings overrides for tests and process reset hooks."""
+
+    with _RUNTIME_SETTINGS_LOCK:
+        _RUNTIME_SETTINGS_OVERRIDES.clear()
+    get_settings.cache_clear()
+
+
+@contextmanager
+def runtime_root_switch_barrier() -> Iterator[None]:
+    """Serialize root-sensitive API work with active runtime root switching."""
+
+    with _RUNTIME_ROOT_SWITCH_LOCK:
+        yield
 
 
 def get_settings_source_metadata() -> SettingsSourceMetadata:
@@ -471,6 +524,32 @@ def _apply_managed_settings(settings: Settings) -> tuple[Settings, SettingsSourc
         managed_settings_file=redact_sensitive_values(str(managed_path)),
         managed_settings_digest=sha256(raw_payload.encode("utf-8")).hexdigest(),
         managed_fields=tuple(sorted(managed_values)),
+    )
+
+
+def _apply_runtime_settings_overrides(
+    settings: Settings,
+    metadata: SettingsSourceMetadata,
+) -> tuple[Settings, SettingsSourceMetadata]:
+    with _RUNTIME_SETTINGS_LOCK:
+        overrides = dict(_RUNTIME_SETTINGS_OVERRIDES)
+    if not overrides:
+        return settings, metadata
+
+    try:
+        effective_settings = Settings.model_validate({**settings.model_dump(), **overrides})
+    except ValidationError as exc:
+        raise ManagedSettingsError("Runtime settings override values are invalid.") from exc
+
+    sources = dict(metadata.sources)
+    for field_name in overrides:
+        sources[field_name] = "runtime"
+
+    return effective_settings, SettingsSourceMetadata(
+        sources=sources,
+        managed_settings_file=metadata.managed_settings_file,
+        managed_settings_digest=metadata.managed_settings_digest,
+        managed_fields=metadata.managed_fields,
     )
 
 

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -11,6 +12,7 @@ from dgentic.auth import require_route_capability, validate_auth_configuration
 from dgentic.settings import get_settings
 
 UI_ASSETS_DIR = Path(__file__).with_name("ui")
+_HTTP_RUNTIME_ROOT_SWITCH_LOCK = asyncio.Lock()
 
 
 def create_app() -> FastAPI:
@@ -23,6 +25,7 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_route_capability)],
     )
     app.add_exception_handler(RequestValidationError, _request_validation_exception_handler)
+    app.middleware("http")(_runtime_root_switch_middleware)
     app.include_router(router)
     app.include_router(memory_router)
     if UI_ASSETS_DIR.exists():
@@ -43,6 +46,11 @@ async def _request_validation_exception_handler(
         for error in exc.errors()
     ]
     return JSONResponse(status_code=422, content={"detail": sanitized_errors})
+
+
+async def _runtime_root_switch_middleware(request, call_next):
+    async with _HTTP_RUNTIME_ROOT_SWITCH_LOCK:
+        return await call_next(request)
 
 
 app = create_app()

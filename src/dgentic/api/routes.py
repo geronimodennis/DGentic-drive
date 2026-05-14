@@ -174,15 +174,19 @@ from dgentic.plugins import (
 )
 from dgentic.projects import (
     ActiveProjectResponse,
+    ProjectActivationBlockedError,
+    ProjectActivationResponse,
     ProjectPreflightRequest,
     ProjectPreflightResponse,
     ProjectRecord,
     ProjectRequest,
     ProjectUpdateRequest,
+    activate_project,
     create_project,
     get_active_project,
     get_project,
     list_projects,
+    preflight_project_activation,
     preflight_project_root,
     update_project,
 )
@@ -414,6 +418,34 @@ def register_project(payload: ProjectRequest, request: Request) -> ProjectRecord
 @router.get("/projects/active", response_model=ActiveProjectResponse)
 def get_runtime_active_project() -> ActiveProjectResponse:
     return get_active_project()
+
+
+@router.post(
+    "/projects/{project_id}/activation/preflight",
+    response_model=ProjectActivationResponse,
+)
+def preflight_registered_project_activation(project_id: str) -> ProjectActivationResponse:
+    try:
+        return preflight_project_activation(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/activate", response_model=ProjectActivationResponse)
+def activate_registered_project(project_id: str, request: Request) -> ProjectActivationResponse:
+    try:
+        return activate_project(project_id, actor=_principal_actor(request))
+    except ProjectActivationBlockedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=exc.response.model_dump(mode="json"),
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/projects/{project_id}", response_model=ProjectRecord)

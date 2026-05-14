@@ -6,6 +6,36 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010g Safe Project Activation And Root Switching
+
+Status: completed for the scoped safe registered-project activation slice; Sprint 16 remains active for AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, richer approval filtering/non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Architect kept the activation contract in-process and conservative, with DGentic JSON/SQLite state pinned to its pre-switch absolute data directory.
+- Completed: Developer added runtime settings overrides, activation preflight and activate routes, active CLI/orchestration/approval blocker checks, a project-activation event, database cache reset after root switch, a root-switch HTTP request barrier for the local FastAPI process, and dashboard Open controls.
+- Completed: QA added focused activation happy-path, anchored-state, old-root filesystem visibility, unexecuted approval blocker, active CLI run blocker, running orchestration task blocker, invalid root/archive handling, auth mapping, and UI wiring tests.
+- Completed: Reviewer/Security confirmed activation is admin-gated, keeps existing rootDir filesystem checks intact, blocks stale approval/run/task state before switching, and records remaining scope as follow-up rather than silently widening it.
+
+Feature tracking:
+- Implemented in this slice: `POST /projects/{project_id}/activation/preflight` reports machine-readable checks, blockers, warnings, and whether a registered project can be opened safely.
+- Implemented in this slice: `POST /projects/{project_id}/activate` switches the active runtime `root_dir` only for registered available project roots that still resolve to absolute existing non-symlink directories outside DGentic state.
+- Implemented in this slice: relative `DGENTIC_DATA_DIR` is pinned to its current absolute path before switching so project registry, approvals, events, and SQLite state do not silently move under the newly opened project.
+- Implemented in this slice: switching is blocked while CLI runs are starting/running, orchestration background executions are active, orchestration tasks are running, or CLI/filesystem/network/provider/tool approvals are pending or approved but not executed.
+- Implemented in this slice: `/ui/` project records now show Open/Active controls, clear stale editor state after opening a project, reload settings/workspace/logs/projects, and render activation blockers plus warnings.
+- Still out of scope after this slice: persisted restart-stable active project selection, multi-worker distributed activation locks, project-scoped state migration, non-CLI approval execution UX, and AI-change diff review.
+
+Validation:
+- Focused project/UI tests passed: `uv run pytest tests\test_projects.py tests\test_ui.py -q` with 12 tests.
+- Focused auth mapping passed: `uv run pytest tests\test_auth.py -q` with 134 tests.
+- Broader API/UI/auth regression passed: `uv run pytest tests\test_projects.py tests\test_ui.py tests\test_auth.py tests\test_api.py -q` with 356 tests.
+- Broader CLI/orchestration regression passed: `uv run pytest tests\test_cli_runtime.py tests\test_orchestration.py -q` with 203 passed and 2 skipped.
+- Full regression passed: `uv run pytest -q` with 1,328 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live local UI/API smoke passed against a temporary FastAPI server on `127.0.0.1:8022`: `/ui/` and `/ui/app.js` returned 200, project preflight/register/activate succeeded, effective `root_dir` switched to the registered project, and guarded filesystem listing showed the new project-only file without the old-root file.
+
 ### Sprint 16 BL-010f Project Registry And Root Preflight
 
 Status: completed for the scoped project registry and root preflight slice; Sprint 16 remains active for true active-root switching, AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, and broader browser validation.

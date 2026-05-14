@@ -2139,6 +2139,8 @@ def test_persisted_token_uses_operator_id_for_approval_requesters_and_decisions(
         ("/projects", "admin"),
         ("/projects/preflight", "admin"),
         ("/projects/active", "admin"),
+        ("/projects/project-1/activation/preflight", "admin"),
+        ("/projects/project-1/activate", "admin"),
         ("/guardrails/hooks/rules", "hooks"),
         ("/guardrails/hooks/rules/rule-1", "hooks"),
         ("/guardrails/network", "network"),

@@ -20,6 +20,15 @@ Validation:
 - `git diff --check` passed with no whitespace errors.
 - Verified the Sprint 15 through Sprint 19 references and Git workflow timeline remain present in the docs.
 
+### Chat Interface Documentation Clarification
+
+Status: completed for the scoped documentation wording fix.
+
+Completed:
+- Clarified that the human-facing chat/web UI is not implemented yet and remains planned for Sprint 16.
+- Clarified that current backend MVP task submission is through the HTTP API, with dedicated CLI and VS Code clients planned for Sprint 17.
+- Preserved the chat interface as a planned feature rather than removing it from the roadmap.
+
 ## 2026-05-13
 
 ### Sprint 15 BL-009av Managed Network-Domain Policy Rule Records

@@ -131,15 +131,15 @@ Place new documentation under `docs/` using focused subdirectories:
 
 When implementation changes behavior, update the README plus the relevant document in `docs/` in the same change. At minimum, update the progress log for every meaningful sprint or release change.
 
-### Future Runtime Usage
+### Runtime Usage
 
-Once implemented, DGentic should be used through one or more supported interfaces:
+Current backend MVP usage is through the HTTP API. The human-facing chat/web UI is planned for Sprint 16, and the dedicated CLI plus VS Code extension are planned for Sprint 17. As those interfaces land, DGentic should be used through one or more supported interfaces:
 
 1. Start the DGentic backend orchestrator.
 2. Configure local model runtimes such as Ollama or LM Studio.
 3. Add external provider credentials through the secure settings layer.
 4. Set the workspace `rootDir` for guarded file and CLI access.
-5. Submit a task through the chat interface, CLI, API, or VS Code extension.
+5. Submit a task through the current API, then through the chat interface, dedicated CLI, or VS Code extension as those clients are implemented.
 6. Review the orchestrator plan, approve restricted actions, and inspect sub-agent progress.
 7. Export or persist the session summary, created tools, and memory updates.
 

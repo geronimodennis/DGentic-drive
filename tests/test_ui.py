@@ -19,6 +19,8 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Active root" in response.text
     assert "CLI Runs" in response.text
     assert "orchestrationDetail" in response.text
+    assert "approvalSourceInput" in response.text
+    assert "Executed" in response.text
     assert "Rules And Plugins" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
@@ -33,6 +35,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert script_response.status_code == 200
     assert "const TOKEN_KEY" in script_response.text
     assert "approvalSources" in script_response.text
+    assert "approvalSource" in script_response.text
+    assert "approvalStatusLabel" in script_response.text
+    assert "approvalSourceLabel" in script_response.text
+    assert "renderApprovalSummary" in script_response.text
+    assert "approvalScopeMetric" in script_response.text
     assert "headers.Authorization" in script_response.text
     assert 'api("/filesystem/list"' in script_response.text
     assert 'api("/filesystem/read"' in script_response.text
@@ -81,6 +88,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".orchestration-detail" in style_response.text
     assert ".orchestration-controls" in style_response.text
     assert ".task-card" in style_response.text
+    assert ".approval-filter-row" in style_response.text
+    assert ".approval-summary-grid" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text
     assert ".policy-grid" in style_response.text

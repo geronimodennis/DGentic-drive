@@ -9,6 +9,7 @@ const approvalSources = [
 ];
 
 let approvalStatus = "pending";
+let approvalSource = "";
 let selectedApproval = null;
 let workspacePath = ".";
 let openFilePath = "";
@@ -196,6 +197,15 @@ function activeExecution(executions) {
   return (executions || []).find((execution) =>
     ["starting", "running", "cancelling"].includes(execution.status),
   );
+}
+
+function approvalStatusLabel() {
+  return approvalStatus ? approvalStatus : "all";
+}
+
+function approvalSourceLabel() {
+  const source = approvalSources.find((candidate) => candidate.key === approvalSource);
+  return source ? source.label : "All sources";
 }
 
 async function refreshDashboard() {
@@ -700,7 +710,10 @@ async function createTaskPlan(event) {
 }
 
 async function loadApprovals() {
-  const loads = approvalSources.map(async (source) => {
+  const selectedSources = approvalSource
+    ? approvalSources.filter((source) => source.key === approvalSource)
+    : approvalSources;
+  const loads = selectedSources.map(async (source) => {
     const suffix = approvalStatus ? `?status=${encodeURIComponent(approvalStatus)}` : "";
     const result = await safeLoad(source.label, () => api(`${source.base}${suffix}`));
     return { source, ...result };
@@ -718,6 +731,7 @@ async function loadApprovals() {
     }
   }
   setMetric("#approvalsMetric", String(approvals.length));
+  setMetric("#approvalScopeMetric", `${approvalStatusLabel()} - ${approvalSourceLabel()}`);
   renderApprovalList(approvals, errors);
 }
 
@@ -743,6 +757,7 @@ function approvalMeta(item) {
 function renderApprovalList(items, errors) {
   const target = qs("#approvalList");
   clear(target);
+  renderApprovalSummary(target, items, errors);
   for (const error of errors) {
     target.append(statusBox(`${error.source.label} unavailable`, error.error, "blocked"));
   }
@@ -762,6 +777,23 @@ function renderApprovalList(items, errors) {
     row.append(copy, button);
     target.append(row);
   }
+}
+
+function renderApprovalSummary(target, items, errors) {
+  const grid = make("div", "approval-summary-grid");
+  const counts = {};
+  for (const item of items) {
+    const status = item.approval.status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  appendKeyValue(grid, "Status", approvalStatusLabel());
+  appendKeyValue(grid, "Source", approvalSourceLabel());
+  appendKeyValue(grid, "Loaded", String(items.length));
+  appendKeyValue(grid, "Errors", String(errors.length), errors.length ? "blocked" : "ok");
+  if (items.length) {
+    appendKeyValue(grid, "Breakdown", countsText(counts));
+  }
+  target.append(grid);
 }
 
 async function reviewApproval(item) {
@@ -1348,11 +1380,19 @@ function bindEvents() {
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
+  qs("#approvalSourceInput").addEventListener("change", () => {
+    approvalSource = qs("#approvalSourceInput").value;
+    selectedApproval = null;
+    clear(qs("#approvalReview"));
+    loadApprovals();
+  });
   for (const button of qsa(".segmented-control button")) {
     button.addEventListener("click", () => {
       approvalStatus = button.dataset.status;
+      selectedApproval = null;
       qsa(".segmented-control button").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
+      clear(qs("#approvalReview"));
       loadApprovals();
     });
   }

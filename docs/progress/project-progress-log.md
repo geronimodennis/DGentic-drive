@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010i Approval Source And Status Filtering
+
+Status: completed for the scoped approval dashboard filtering slice; Sprint 16 remains active for non-CLI execution UX, reviewer audit affordances, full chat workflows, Codex-style AI-change diff review, richer settings editors, deeper sub-agent visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected richer approval filtering as the next compact user-facing Sprint 16 slice after BL-010h was committed and pushed.
+- Completed: Developer added source filtering for CLI, filesystem, network, provider, and tool approvals plus status filtering for pending, approved, denied, executed, and all approval states without changing backend approval contracts.
+- Completed: Developer added a filtered summary grid and clears stale review detail when filters change so operators do not accidentally review an item outside the current filter context.
+- Completed: QA extended UI static contract tests for the new filter controls, summary renderer, approval scope metric, and CSS hooks.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` approval inbox can narrow loaded approval endpoints by source and status, update the approval metric scope, and show loaded/error/breakdown counts for the current filter.
+- Still out of scope after this slice: non-CLI approved action execution flows, richer reviewer audit affordances, approval scenario browser automation, and backend approval-contract expansion.
+
+Validation:
+- Focused UI static tests passed: `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,328 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live local UI asset smoke passed against a temporary FastAPI server on `127.0.0.1:8024`: `/ui/` exposed `approvalSourceInput` and `/ui/app.js` exposed `renderApprovalSummary`.
+
 ### Sprint 16 BL-010h Richer Orchestration Console
 
 Status: completed for the scoped dashboard orchestration task/execution visibility slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, richer approval filtering/non-CLI execution UX, deeper sub-agent visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

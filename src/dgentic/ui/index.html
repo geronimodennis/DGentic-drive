@@ -211,9 +211,22 @@
                 <p class="eyebrow">Approvals</p>
                 <h2>Unified Inbox</h2>
               </div>
-              <div class="segmented-control" role="group" aria-label="Approval filters">
-                <button type="button" data-status="pending" class="active">Pending</button>
-                <button type="button" data-status="">All</button>
+              <div class="approval-filter-row">
+                <select id="approvalSourceInput" aria-label="Approval source filter">
+                  <option value="">All Sources</option>
+                  <option value="cli">CLI</option>
+                  <option value="filesystem">Filesystem</option>
+                  <option value="network">Network</option>
+                  <option value="provider">Provider</option>
+                  <option value="tool">Tool</option>
+                </select>
+                <div class="segmented-control" role="group" aria-label="Approval status filters">
+                  <button type="button" data-status="pending" class="active">Pending</button>
+                  <button type="button" data-status="approved">Approved</button>
+                  <button type="button" data-status="denied">Denied</button>
+                  <button type="button" data-status="executed">Executed</button>
+                  <button type="button" data-status="">All</button>
+                </div>
               </div>
             </div>
             <div id="approvalList" class="approval-list"></div>

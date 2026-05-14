@@ -47,6 +47,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderProjectContext" in script_response.text
     assert "activeRootDir" in script_response.text
     assert "projectOpenRootButton" in script_response.text
+    assert "projectPreflightButton" in script_response.text
+    assert "projectForm" in script_response.text
+    assert 'api("/projects/preflight"' in script_response.text
+    assert 'api("/projects"' in script_response.text
+    assert 'api("/projects/active")' in script_response.text
+    assert "activateProject" not in script_response.text
     assert "workspaceRootButton" in script_response.text
     assert "renderGitCheckpoint" in script_response.text
     assert "checkpoint-grid" in script_response.text

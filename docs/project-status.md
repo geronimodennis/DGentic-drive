@@ -7,9 +7,9 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010e active project/root context and structured Git checkpoint review UI is implemented and focused-validation clean.
-- Latest completed slice: BL-010e, `/ui/` active root context visibility, workspace root-reset controls, and structured Git checkpoint blockers/warnings/diff-stat review using existing backend contracts.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with a real project add/open/rootDir switching backend contract, AI-change review, richer settings editors, and broader browser validation next, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010f project registry and root preflight is implemented and focused-validation clean.
+- Latest completed slice: BL-010f, admin-gated project root preflight/register/list/detail/update APIs plus `/ui/` project registry controls that do not activate or switch `rootDir`.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with a safe active project/rootDir switching transaction, AI-change review, richer settings editors, and broader browser validation next, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -57,7 +57,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a through BL-010e implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a through BL-010f implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

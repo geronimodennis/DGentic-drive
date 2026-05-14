@@ -172,6 +172,20 @@ from dgentic.plugins import (
     preview_plugin_reference_components,
     update_plugin_trust,
 )
+from dgentic.projects import (
+    ActiveProjectResponse,
+    ProjectPreflightRequest,
+    ProjectPreflightResponse,
+    ProjectRecord,
+    ProjectRequest,
+    ProjectUpdateRequest,
+    create_project,
+    get_active_project,
+    get_project,
+    list_projects,
+    preflight_project_root,
+    update_project,
+)
 from dgentic.provider_pricing import ProviderPricingConfigurationError
 from dgentic.provider_routing import ProviderRoutingConfigurationError
 from dgentic.provider_runtime import (
@@ -372,6 +386,54 @@ def health() -> HealthResponse:
 @router.get("/settings/effective", response_model=EffectiveSettingsView)
 def get_effective_runtime_settings() -> EffectiveSettingsView:
     return get_effective_settings_view()
+
+
+@router.post("/projects/preflight", response_model=ProjectPreflightResponse)
+def preflight_project(payload: ProjectPreflightRequest) -> ProjectPreflightResponse:
+    try:
+        return preflight_project_root(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/projects", response_model=list[ProjectRecord])
+def get_projects() -> list[ProjectRecord]:
+    return list_projects()
+
+
+@router.post("/projects", response_model=ProjectRecord, status_code=201)
+def register_project(payload: ProjectRequest, request: Request) -> ProjectRecord:
+    try:
+        return create_project(payload, actor=_principal_actor(request))
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.get("/projects/active", response_model=ActiveProjectResponse)
+def get_runtime_active_project() -> ActiveProjectResponse:
+    return get_active_project()
+
+
+@router.get("/projects/{project_id}", response_model=ProjectRecord)
+def get_registered_project(project_id: str) -> ProjectRecord:
+    try:
+        return get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectRecord)
+def update_registered_project(
+    project_id: str,
+    payload: ProjectUpdateRequest,
+    request: Request,
+) -> ProjectRecord:
+    try:
+        return update_project(project_id, payload, actor=_principal_actor(request))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/auth/tokens", response_model=AuthTokenCreateResponse, status_code=201)

@@ -68,6 +68,7 @@ CAPABILITY_PATHS: tuple[tuple[str, str], ...] = (
     ("/tasks", CAPABILITY_TASKS),
     ("/auth", CAPABILITY_AUTH),
     ("/credentials", CAPABILITY_CREDENTIALS),
+    ("/projects", CAPABILITY_ADMIN),
     ("/network/approvals", CAPABILITY_APPROVALS),
     ("/web-retrieval", CAPABILITY_NETWORK),
     ("/guardrails/hooks/rules", CAPABILITY_HOOKS),

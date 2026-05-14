@@ -15,6 +15,7 @@ let openFilePath = "";
 let toastTimer = null;
 let activeRootDir = "";
 let activeRootSource = "";
+let activeProjectId = "";
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -169,6 +170,7 @@ async function refreshDashboard() {
     loadApprovals(),
     loadProviders(),
     loadCliRuns(),
+    loadProjects(),
     loadPolicySurfaces(),
     loadSettings(),
     loadLogs(),
@@ -620,6 +622,119 @@ function renderChangedPaths(target, checkpoint) {
   target.append(box);
 }
 
+function projectPayload() {
+  const payload = {
+    root_dir: qs("#projectRootInput").value.trim(),
+  };
+  const name = qs("#projectNameInput").value.trim();
+  if (name) {
+    payload.name = name;
+  }
+  return payload;
+}
+
+function renderProjectMarkers(target, markers, warnings) {
+  if (markers?.length) {
+    const box = make("div", "changed-paths");
+    box.append(make("div", "item-title", "Markers"));
+    for (const marker of markers) {
+      box.append(make("code", "", marker));
+    }
+    target.append(box);
+  }
+  renderFindings(target, "Warnings", warnings || [], "pending");
+}
+
+async function preflightProjectRoot(event) {
+  event?.preventDefault();
+  const payload = projectPayload();
+  if (!payload.root_dir) {
+    showToast("Project root is required.");
+    return;
+  }
+  const target = qs("#projectRegistryOutput");
+  clear(target);
+  target.append(statusBox("Checking project root", payload.root_dir, "running"));
+  try {
+    const result = await api("/projects/preflight", { method: "POST", body: payload });
+    clear(target);
+    target.append(statusBox("Project root ready", result.root_dir, "ok"));
+    renderProjectMarkers(target, result.markers, result.warnings);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Project check failed", error.message, "failed"));
+  }
+}
+
+async function registerProject(event) {
+  event.preventDefault();
+  const payload = projectPayload();
+  if (!payload.root_dir) {
+    showToast("Project root is required.");
+    return;
+  }
+  if (!payload.name) {
+    payload.name = payload.root_dir.split(/[\\/]/).filter(Boolean).pop() || "Project";
+  }
+  const target = qs("#projectRegistryOutput");
+  clear(target);
+  target.append(statusBox("Registering project", payload.root_dir, "running"));
+  try {
+    const project = await api("/projects", { method: "POST", body: payload });
+    clear(target);
+    target.append(statusBox("Project registered", project.name, "ok"));
+    qs("#projectForm").reset();
+    await loadProjects();
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Registration failed", error.message, "failed"));
+  }
+}
+
+async function loadProjects() {
+  const [projects, active] = await Promise.all([
+    safeLoad("projects", () => api("/projects")),
+    safeLoad("active project", () => api("/projects/active")),
+  ]);
+  const target = qs("#projectRegistryOutput");
+  if (!projects.ok && !active.ok) {
+    clear(target);
+    target.append(statusBox("Projects unavailable", `${projects.error}; ${active.error}`, "blocked"));
+    return;
+  }
+  if (active.ok) {
+    activeProjectId = active.data.project?.id || "";
+  }
+  renderProjectList(projects, active);
+}
+
+function renderProjectList(projects, active) {
+  const target = qs("#projectRegistryOutput");
+  clear(target);
+  if (!projects.ok) {
+    target.append(statusBox("Projects unavailable", projects.error, "blocked"));
+    return;
+  }
+  const records = projects.data || [];
+  if (!records.length) {
+    target.append(statusBox("No registered projects", active.ok ? active.data.active_root_dir : "-", "pending"));
+  }
+  for (const project of records.slice(0, 8)) {
+    const item = make("div", "list-item");
+    const isActive = activeProjectId && project.id === activeProjectId;
+    item.append(make("div", "item-title", project.name || project.id));
+    item.append(make("div", "item-meta", compactPath(project.root_dir)));
+    item.append(statusChip(isActive ? "active" : project.status || "available"));
+    target.append(item);
+  }
+  if (active.ok) {
+    target.append(statusBox("Runtime root", compactPath(active.data.active_root_dir), "ok"));
+    if (active.data.reason) {
+      renderFindings(target, "Notes", [active.data.reason], "pending");
+    }
+  }
+}
+
 async function loadSettings() {
   const result = await safeLoad("settings", () => api("/settings/effective"));
   const target = qs("#settingsOutput");
@@ -858,6 +973,8 @@ function bindEvents() {
     loadWorkspace(".");
     window.location.hash = "workspace";
   });
+  qs("#projectPreflightButton").addEventListener("click", preflightProjectRoot);
+  qs("#projectForm").addEventListener("submit", registerProject);
   qs("#workspaceRootButton").addEventListener("click", () => loadWorkspace("."));
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);

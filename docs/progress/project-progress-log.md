@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010f Project Registry And Root Preflight
+
+Status: completed for the scoped project registry and root preflight slice; Sprint 16 remains active for true active-root switching, AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Architect selected a safe backend-only registry/preflight contract first because runtime `rootDir` switching affects filesystem, CLI, git, plugin, tool, approval, and persistence boundaries.
+- Completed: Developer added admin-gated `/projects` preflight, register, list, detail, update, and active-root metadata endpoints, plus dashboard controls that preview/register project roots without activating them.
+- Completed: QA added focused project registry, auth mapping, no-active-switch, and UI static wiring tests.
+- Completed: Security/Reviewer confirmed this slice does not clear settings, reset database state, switch active `rootDir`, or weaken existing filesystem root checks.
+
+Feature tracking:
+- Implemented in this slice: project roots can be preflighted only when they are absolute existing directories, not symlink roots, and not inside the current DGentic data directory.
+- Implemented in this slice: registered project records persist to `projects.json` with safe ids, redacted names, canonical root paths, marker summaries, status, timestamps, and active-root matching metadata.
+- Implemented in this slice: `/ui/` can list registered projects, preview a root, add a root, and show that switching is not yet available.
+- Still out of scope after this slice: runtime project activation, root switching transactions, stale approval invalidation, active CLI/orchestration quiescence checks, project-scoped state migration, and old-root editor/save invalidation.
+
+Validation:
+- Focused project tests passed: `python -m pytest -q tests\test_projects.py --maxfail=1 -x` with 4 tests.
+- Focused UI tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Focused auth mapping passed: `python -m pytest -q tests\test_auth.py::test_capability_for_path_maps_public_and_sensitive_routes --maxfail=1 -x` with 54 parameter cases.
+- Focused lint/format/diff hygiene passed for touched source and tests, plus `node --check src\dgentic\ui\app.js` and `git diff --check`.
+- Browser smoke passed with Edge/Playwright against `http://127.0.0.1:8021/ui/`: no page errors, no failed API responses, active root rendered as `C:\workspace\AI Agent`, project registry showed runtime root, and project preflight returned marker and no-switch warning output.
+
 ### Sprint 16 BL-010e Project Context And Git Checkpoint Review UI
 
 Status: completed for the scoped active-root context and structured Git checkpoint review slice; Sprint 16 remains active for true project add/open and rootDir switching, AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, and broader browser validation.

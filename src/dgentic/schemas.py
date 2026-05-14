@@ -68,6 +68,7 @@ class LogEventType(StrEnum):
     auth = "auth"
     credential = "credential"
     hook = "hook"
+    project = "project"
     task = "task"
     agent = "agent"
     provider = "provider"

@@ -142,6 +142,24 @@
               <button id="projectOpenRootButton" type="button" class="link-button">Open root</button>
             </div>
             <div id="projectContextOutput" class="compact-list"></div>
+            <form id="projectForm" class="stacked-form">
+              <label>
+                Name
+                <input id="projectNameInput" type="text" maxlength="120">
+              </label>
+              <label>
+                Root Directory
+                <input id="projectRootInput" type="text" required>
+              </label>
+              <div class="button-row">
+                <button id="projectPreflightButton" type="button" class="link-button">Preview</button>
+                <button type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">+</span>
+                  Add
+                </button>
+              </div>
+            </form>
+            <div id="projectRegistryOutput" class="compact-list"></div>
           </article>
 
           <article id="workspace" class="panel wide-panel">
@@ -310,6 +328,7 @@
                 <option value="task">Task</option>
                 <option value="approval">Approval</option>
                 <option value="cli">CLI</option>
+                <option value="project">Project</option>
                 <option value="provider">Provider</option>
                 <option value="filesystem">Filesystem</option>
                 <option value="web_retrieval">Web Retrieval</option>

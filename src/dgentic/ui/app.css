@@ -628,6 +628,45 @@ textarea {
   margin-top: 10px;
 }
 
+.orchestration-builder {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.orchestration-builder h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.task-builder-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.4fr) minmax(0, 1fr) minmax(160px, 0.45fr);
+  gap: 12px;
+}
+
+.dependency-list {
+  min-height: 108px;
+}
+
+.builder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.builder-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .agent-tree {
   display: grid;
   gap: 8px;
@@ -820,6 +859,8 @@ textarea {
   .metric-grid,
   .content-grid,
   .two-column,
+  .task-builder-grid,
+  .builder-row,
   .settings-grid,
   .approval-summary-grid,
   .agent-brief-grid,

@@ -21,6 +21,7 @@ let activeRootDir = "";
 let activeRootSource = "";
 let activeProjectId = "";
 let selectedOrchestrationId = "";
+let taskGraphBuilderTasks = [];
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -1156,6 +1157,178 @@ async function createTaskPlan(event) {
   }
 }
 
+function parseOrchestrationTasksInput() {
+  const value = qs("#orchestrationTasksInput").value.trim();
+  if (!value) {
+    return [];
+  }
+  const tasks = JSON.parse(value);
+  if (!Array.isArray(tasks)) {
+    throw new Error("Tasks must be a JSON array.");
+  }
+  return tasks;
+}
+
+function writeOrchestrationTasksInput(tasks) {
+  taskGraphBuilderTasks = tasks;
+  qs("#orchestrationTasksInput").value = JSON.stringify(tasks, null, 2);
+  renderOrchestrationTaskBuilderPreview();
+}
+
+function buildOrchestrationTaskDraft() {
+  return {
+    id: qs("#orchestrationTaskIdInput").value.trim(),
+    title: qs("#orchestrationTaskTitleInput").value.trim(),
+    description: qs("#orchestrationTaskDescriptionInput").value.trim(),
+    role: qs("#orchestrationTaskRoleInput").value,
+    dependencies: Array.from(qs("#orchestrationTaskDependencyList").selectedOptions).map((option) => option.value),
+    declared_write_paths: splitLines(qs("#orchestrationTaskPathsInput").value),
+    shared_memory_tags: splitLines(qs("#orchestrationTaskTagsInput").value),
+    expected_output: qs("#orchestrationTaskOutputInput").value.trim(),
+    validation: qs("#orchestrationTaskValidationInput").value.trim(),
+    retry_limit: Number(qs("#orchestrationTaskRetryInput").value || 0),
+  };
+}
+
+function validateOrchestrationTaskDraft(task, tasks) {
+  if (!task.id || !task.title || !task.description) {
+    throw new Error("Task ID, title, and description are required.");
+  }
+  if (tasks.some((item) => item.id === task.id)) {
+    throw new Error("Task ID already exists in the graph.");
+  }
+  if (task.retry_limit < 0 || task.retry_limit > 10) {
+    throw new Error("Retry limit must be between 0 and 10.");
+  }
+  const existingIds = new Set(tasks.map((item) => item.id));
+  const unknownDependencies = task.dependencies.filter((dependency) => !existingIds.has(dependency));
+  if (unknownDependencies.length) {
+    throw new Error(`Unknown dependencies: ${unknownDependencies.join(", ")}`);
+  }
+}
+
+function resetOrchestrationTaskDraft() {
+  qs("#orchestrationTaskIdInput").value = "";
+  qs("#orchestrationTaskTitleInput").value = "";
+  qs("#orchestrationTaskDescriptionInput").value = "";
+  qs("#orchestrationTaskRoleInput").value = "Developer";
+  qs("#orchestrationTaskPathsInput").value = "";
+  qs("#orchestrationTaskOutputInput").value = "";
+  qs("#orchestrationTaskValidationInput").value = "";
+  qs("#orchestrationTaskTagsInput").value = "";
+  qs("#orchestrationTaskRetryInput").value = "0";
+  for (const option of qs("#orchestrationTaskDependencyList").options) {
+    option.selected = false;
+  }
+}
+
+function showOrchestrationBuilderError(message) {
+  const target = qs("#orchestrationCreateOutput");
+  clear(target);
+  target.append(statusBox("Task graph invalid", message, "failed"));
+  showToast(message);
+}
+
+function addOrchestrationTaskDraft() {
+  let tasks = [];
+  try {
+    tasks = parseOrchestrationTasksInput();
+    const task = buildOrchestrationTaskDraft();
+    validateOrchestrationTaskDraft(task, tasks);
+    writeOrchestrationTasksInput([...tasks, task]);
+    resetOrchestrationTaskDraft();
+    showToast("Task added to graph.");
+  } catch (error) {
+    showOrchestrationBuilderError(error.message);
+  }
+}
+
+function removeOrchestrationTaskDraft(taskId) {
+  let tasks = [];
+  try {
+    tasks = parseOrchestrationTasksInput()
+      .filter((task) => task.id !== taskId)
+      .map((task) => ({
+        ...task,
+        dependencies: (task.dependencies || []).filter((dependency) => dependency !== taskId),
+      }));
+    writeOrchestrationTasksInput(tasks);
+    showToast("Task removed from graph.");
+  } catch (error) {
+    showOrchestrationBuilderError(error.message);
+  }
+}
+
+function renderOrchestrationTaskDependencyOptions(tasks) {
+  const target = qs("#orchestrationTaskDependencyList");
+  const selected = new Set(Array.from(target.selectedOptions).map((option) => option.value));
+  clear(target);
+  for (const task of tasks) {
+    const option = document.createElement("option");
+    option.value = task.id;
+    option.textContent = `${task.id} - ${task.title || task.role}`;
+    option.selected = selected.has(task.id);
+    target.append(option);
+  }
+}
+
+function renderOrchestrationTaskBuilderPreview() {
+  const target = qs("#orchestrationTaskBuilderPreview");
+  clear(target);
+  let tasks = [];
+  try {
+    tasks = parseOrchestrationTasksInput();
+  } catch (error) {
+    renderOrchestrationTaskDependencyOptions([]);
+    target.append(statusBox("Task graph invalid", error.message, "failed"));
+    return;
+  }
+  taskGraphBuilderTasks = tasks;
+  renderOrchestrationTaskDependencyOptions(tasks);
+  if (!tasks.length) {
+    target.append(statusBox("No builder tasks", "Add tasks here or paste JSON below.", "pending"));
+    return;
+  }
+  for (const task of tasks) {
+    const row = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", `${task.id} - ${task.title || "Untitled task"}`));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${task.role || "Unassigned"} - depends on ${(task.dependencies || []).join(", ") || "none"} - paths ${(task.declared_write_paths || []).join(", ") || "read-only"}`,
+      ),
+    );
+    const removeButton = make("button", "link-button", "Remove");
+    removeButton.type = "button";
+    removeButton.addEventListener("click", () => removeOrchestrationTaskDraft(task.id));
+    row.append(detail, removeButton);
+    target.append(row);
+  }
+}
+
+function loadOrchestrationTaskBuilderJson() {
+  try {
+    taskGraphBuilderTasks = parseOrchestrationTasksInput();
+    renderOrchestrationTaskBuilderPreview();
+    showToast("Task graph loaded into builder.");
+  } catch (error) {
+    showOrchestrationBuilderError(error.message);
+  }
+}
+
+function setupOrchestrationTaskBuilder() {
+  qs("#orchestrationTaskAddButton").addEventListener("click", addOrchestrationTaskDraft);
+  qs("#orchestrationTaskClearButton").addEventListener("click", () => {
+    resetOrchestrationTaskDraft();
+    showToast("Task draft cleared.");
+  });
+  qs("#orchestrationTaskLoadJsonButton").addEventListener("click", loadOrchestrationTaskBuilderJson);
+  qs("#orchestrationTasksInput").addEventListener("input", renderOrchestrationTaskBuilderPreview);
+  renderOrchestrationTaskBuilderPreview();
+}
+
 async function createOrchestrationRun(event) {
   event.preventDefault();
   const objective = qs("#orchestrationObjectiveInput").value.trim();
@@ -1166,7 +1339,7 @@ async function createOrchestrationRun(event) {
   }
   let tasks = [];
   try {
-    tasks = JSON.parse(qs("#orchestrationTasksInput").value);
+    tasks = parseOrchestrationTasksInput();
   } catch (error) {
     clear(target);
     target.append(statusBox("Task graph invalid", error.message, "failed"));
@@ -1192,6 +1365,8 @@ async function createOrchestrationRun(event) {
     clear(target);
     target.append(statusBox("Orchestration created", run.id, run.status));
     qs("#orchestrationCreateForm").reset();
+    writeOrchestrationTasksInput([]);
+    resetOrchestrationTaskDraft();
     await loadTasks();
     await loadOrchestrationDetail(run.id, run);
   } catch (error) {
@@ -1973,6 +2148,7 @@ function bindEvents() {
   qs("#loadTasksButton").addEventListener("click", loadTasks);
   qs("#taskForm").addEventListener("submit", createTaskPlan);
   qs("#orchestrationCreateForm").addEventListener("submit", createOrchestrationRun);
+  setupOrchestrationTaskBuilder();
   qs("#workspaceForm").addEventListener("submit", (event) => {
     event.preventDefault();
     loadWorkspace(qs("#workspacePathInput").value.trim() || ".");

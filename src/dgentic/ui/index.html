@@ -138,6 +138,75 @@
                   Objective
                   <textarea id="orchestrationObjectiveInput" rows="3" required></textarea>
                 </label>
+                <section id="orchestrationTaskBuilder" class="orchestration-builder" aria-labelledby="taskBuilderHeading">
+                  <h3 id="taskBuilderHeading">Task Builder</h3>
+                  <div class="task-builder-grid">
+                    <label>
+                      Task ID
+                      <input id="orchestrationTaskIdInput" type="text" autocomplete="off" />
+                    </label>
+                    <label>
+                      Title
+                      <input id="orchestrationTaskTitleInput" type="text" autocomplete="off" />
+                    </label>
+                    <label>
+                      Role
+                      <select id="orchestrationTaskRoleInput">
+                        <option value="Developer">Developer</option>
+                        <option value="QA">QA</option>
+                        <option value="PM">PM</option>
+                        <option value="Reviewer">Reviewer</option>
+                        <option value="Security">Security</option>
+                        <option value="Architect">Architect</option>
+                        <option value="DevOps">DevOps</option>
+                        <option value="ReleaseManager">Release Manager</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>
+                    Description
+                    <textarea id="orchestrationTaskDescriptionInput" rows="3"></textarea>
+                  </label>
+                  <div class="two-column">
+                    <label>
+                      Depends On
+                      <select id="orchestrationTaskDependencyList" class="dependency-list" multiple size="4"></select>
+                    </label>
+                    <label>
+                      Write Paths
+                      <textarea id="orchestrationTaskPathsInput" rows="4"></textarea>
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
+                      Expected Output
+                      <textarea id="orchestrationTaskOutputInput" rows="3"></textarea>
+                    </label>
+                    <label>
+                      Validation
+                      <textarea id="orchestrationTaskValidationInput" rows="3"></textarea>
+                    </label>
+                  </div>
+                  <div class="form-footer">
+                    <label>
+                      Shared Memory Tags
+                      <textarea id="orchestrationTaskTagsInput" rows="2"></textarea>
+                    </label>
+                    <label>
+                      Retry Limit
+                      <input id="orchestrationTaskRetryInput" type="number" min="0" max="10" value="0" />
+                    </label>
+                  </div>
+                  <div class="builder-task-actions">
+                    <button id="orchestrationTaskLoadJsonButton" type="button" class="link-button">Load JSON</button>
+                    <button id="orchestrationTaskClearButton" type="button" class="link-button">Clear</button>
+                    <button id="orchestrationTaskAddButton" type="button" class="primary-button">
+                      <span class="button-icon" aria-hidden="true">+</span>
+                      Add Task
+                    </button>
+                  </div>
+                  <div id="orchestrationTaskBuilderPreview" class="compact-list"></div>
+                </section>
                 <label>
                   Task Graph JSON
                   <textarea id="orchestrationTasksInput" rows="10" spellcheck="false" required></textarea>

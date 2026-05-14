@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010o Guided Orchestration Task Graph Builder
+
+Status: completed for the scoped guided task graph builder slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected guided orchestration task graph creation as the next user-facing Sprint 16 slice after BL-010n because the dashboard could create runs but required hand-authored JSON.
+- Completed: Explorer recommended keeping the existing task JSON textarea as the canonical create contract and using a helper builder rather than adding backend/API scope.
+- Completed: Developer added a non-nested task builder inside the existing New run form for task id, title, role, description, dependencies, declared write paths, expected output, validation, shared-memory tags, and retry limit.
+- Completed: Developer kept the raw task JSON textarea visible and canonical; builder actions parse, mutate, and rewrite that JSON so manual edits remain available.
+- Completed: QA extended UI static contract tests for builder markup, helper functions, canonical JSON serialization, and CSS hooks.
+- Completed: PM updated README, project status, planning, architecture, setup, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can build orchestration task graph JSON from guided controls, preview/remove tasks, prune removed-task dependencies, and submit through the existing `POST /tasks/orchestrations` contract.
+- Still out of scope after this slice: graph templates, drag-and-drop dependency editing, AI-assisted graph generation, and browser end-to-end builder scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Live UI smoke passed against a temporary FastAPI server on `127.0.0.1:8030`: `/ui/` and `/ui/app.js` served the builder surface and helper code.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010n Memory And Tool Reliability Dashboard
 
 Status: completed for the scoped memory/tool reliability dashboard slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

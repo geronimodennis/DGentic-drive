@@ -406,6 +406,23 @@ textarea {
   margin-top: 4px;
 }
 
+.policy-editor {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.policy-editor summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.policy-editor form,
+.policy-editor .output-region {
+  margin-top: 10px;
+}
+
 .recipe-parameter-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

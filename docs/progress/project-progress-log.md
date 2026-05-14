@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010r CLI Policy Creation UI
+
+Status: completed for the scoped first editable policy UX slice; Sprint 16 remains active for full chat workflows, full Codex-style AI-change diff review, broader editable settings and policy workflows, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local CLI policy rule creation as the next compact Sprint 16 editable-policy slice because the backend already exposes guarded create/list contracts and managed-lock enforcement.
+- Completed: Explorer confirmed the required `POST /cli/policy/rules` payload, `cli` capability requirement, and `managed_policy_locks` 403 behavior.
+- Completed: Developer added a dashboard CLI rule creation form for name, match type, pattern, permission mode, reason, agent roles, priority, and enabled state.
+- Completed: Developer wired form submission to the existing CLI policy rule API, reset successful submissions, rendered success/error feedback, and refreshed policy lists plus summaries after creation.
+- Completed: QA extended UI static contract tests for the new form markup, payload helper, POST wiring, submit binding, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can create local CLI policy rules through the existing backend policy route while preserving backend capability checks, validation, and managed-lock read-only enforcement.
+- Still out of scope after this slice: editing existing CLI rules, hook/network/filesystem policy editors, provider/routing/settings editors, managed-policy mutation workflows, and browser end-to-end policy mutation scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against a temporary FastAPI server on `127.0.0.1:49671`: `/ui/` served the CLI policy form markup and `/ui/app.js` served the policy creation helper code.
+
 ### Sprint 16 BL-010q Settings, Policy, And Git Review Summary UI
 
 Status: completed for the scoped read-only review-summary slice; Sprint 16 remains active for full chat workflows, full Codex-style AI-change diff review, editable settings and policy workflows, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

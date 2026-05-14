@@ -2345,6 +2345,13 @@ function disabledCount(records) {
   return (records || []).filter((record) => record.enabled === false || record.status === "disabled").length;
 }
 
+function splitCsv(value) {
+  return String(value || "")
+    .split(/[\n,;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function renderPolicyReviewSummary(cliRules, recipes, hooks, plugins) {
   if (arguments.length) {
     latestPolicyReviewResults = { cliRules, recipes, hooks, plugins };
@@ -2395,6 +2402,43 @@ function appendPolicyReviewCard(target, label, result, records, sourceField) {
     detailParts.push(`disabled: ${disabled}`);
   }
   appendKeyValue(target, label, detailParts.join(" | "), records.length ? "ok" : "pending");
+}
+
+function cliPolicyRulePayload() {
+  const priority = Number(qs("#cliPolicyPriorityInput").value || 100);
+  return {
+    name: qs("#cliPolicyNameInput").value.trim(),
+    match_type: qs("#cliPolicyMatchInput").value,
+    pattern: qs("#cliPolicyPatternInput").value.trim(),
+    permission_mode: qs("#cliPolicyModeInput").value,
+    reason: qs("#cliPolicyReasonInput").value.trim(),
+    agent_roles: splitCsv(qs("#cliPolicyRolesInput").value),
+    enabled: qs("#cliPolicyEnabledInput").checked,
+    priority: Number.isFinite(priority) ? priority : 100,
+  };
+}
+
+async function createCliPolicyRule(event) {
+  event.preventDefault();
+  const target = qs("#cliPolicyEditorOutput");
+  const payload = cliPolicyRulePayload();
+  clear(target);
+  target.append(statusBox("Creating CLI rule", payload.name || "policy", "running"));
+  try {
+    const rule = await api("/cli/policy/rules", { method: "POST", body: payload });
+    qs("#cliPolicyForm").reset();
+    qs("#cliPolicyPriorityInput").value = "100";
+    qs("#cliPolicyEnabledInput").checked = true;
+    clear(target);
+    target.append(statusBox("CLI rule created", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"));
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast("CLI policy rule created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("CLI rule create failed", error.message, "failed"));
+    showToast(error.message);
+  }
 }
 
 function renderPolicyList(target, result, mapper) {
@@ -2597,6 +2641,7 @@ function bindEvents() {
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
+  qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
   qs("#approvalSourceInput").addEventListener("change", () => {

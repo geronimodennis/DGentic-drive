@@ -35,6 +35,11 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Rules And Plugins" in response.text
     assert "policyReviewSummary" in response.text
     assert "Review Summary" in response.text
+    assert "cliPolicyForm" in response.text
+    assert "cliPolicyEditorOutput" in response.text
+    assert "cliPolicyMatchInput" in response.text
+    assert "cliPolicyModeInput" in response.text
+    assert "cliPolicyRolesInput" in response.text
     assert "recipeActionPanel" in response.text
     assert "settingsOutput" in response.text
     assert "./app.js" in response.text
@@ -156,6 +161,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderPolicyReviewSummary" in script_response.text
     assert "appendPolicyReviewCard" in script_response.text
     assert "managed_policy_locks" in script_response.text
+    assert "cliPolicyRulePayload" in script_response.text
+    assert "createCliPolicyRule" in script_response.text
+    assert "splitCsv" in script_response.text
+    assert 'api("/cli/policy/rules", { method: "POST", body: payload })' in script_response.text
+    assert (
+        'qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule)'
+        in script_response.text
+    )
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".workspace-layout" in style_response.text
@@ -185,6 +198,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".settings-group-list" in style_response.text
     assert ".setting-source-row" in style_response.text
     assert ".policy-review-section" in style_response.text
+    assert ".policy-editor" in style_response.text
     assert ".git-review-summary" in style_response.text
 
 

@@ -440,6 +440,63 @@ review</textarea>
               </section>
               <section>
                 <h3>CLI Rules</h3>
+                <details class="policy-editor">
+                  <summary>New CLI Rule</summary>
+                  <form id="cliPolicyForm" class="stacked-form">
+                    <label>
+                      Name
+                      <input id="cliPolicyNameInput" type="text" maxlength="160" required>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Match
+                        <select id="cliPolicyMatchInput">
+                          <option value="executable">Executable</option>
+                          <option value="exact">Exact</option>
+                          <option value="contains">Contains</option>
+                          <option value="argument_contains">Argument</option>
+                        </select>
+                      </label>
+                      <label>
+                        Mode
+                        <select id="cliPolicyModeInput">
+                          <option value="approval_required">Approval Required</option>
+                          <option value="blocked">Blocked</option>
+                          <option value="autopilot_safe">Autopilot Safe</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label>
+                      Pattern
+                      <input id="cliPolicyPatternInput" type="text" maxlength="500" required>
+                    </label>
+                    <label>
+                      Reason
+                      <textarea id="cliPolicyReasonInput" rows="3" required></textarea>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Agent Roles
+                        <input id="cliPolicyRolesInput" type="text" placeholder="developer, qa">
+                      </label>
+                      <label>
+                        Priority
+                        <input id="cliPolicyPriorityInput" type="number" min="0" max="10000" value="100">
+                      </label>
+                    </div>
+                    <div class="form-footer">
+                      <label class="checkbox-label">
+                        <input id="cliPolicyEnabledInput" type="checkbox" checked>
+                        Enabled
+                      </label>
+                      <button type="submit" class="primary-button">
+                        <span class="button-icon" aria-hidden="true">+</span>
+                        Add Rule
+                      </button>
+                    </div>
+                  </form>
+                  <div id="cliPolicyEditorOutput" class="output-region" aria-live="polite"></div>
+                </details>
                 <div id="cliPolicyList" class="compact-list"></div>
               </section>
               <section>

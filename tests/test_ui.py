@@ -14,6 +14,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "DGentic Control" in response.text
     assert "Workspace" in response.text
+    assert "CLI Runs" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -31,6 +32,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/filesystem/list"' in script_response.text
     assert 'api("/filesystem/read"' in script_response.text
     assert 'api("/filesystem/write"' in script_response.text
+    assert 'api("/cli/runs"' in script_response.text
+    assert "api(`/cli/runs/${encodeURIComponent(runId)}/output`)" in script_response.text
+    assert "api(`/cli/approvals/${encodeURIComponent(approvalId)}/execute`" in script_response.text
     assert "rootDir" not in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text

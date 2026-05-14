@@ -22,6 +22,7 @@
           <a href="#workspace">Workspace</a>
           <a href="#approvals">Approvals</a>
           <a href="#git">Git</a>
+          <a href="#cli-runs">CLI Runs</a>
           <a href="#settings">Settings</a>
           <a href="#activity">Activity</a>
         </nav>
@@ -223,6 +224,22 @@
               </div>
             </div>
             <div id="providerList" class="compact-list"></div>
+          </article>
+
+          <article id="cli-runs" class="panel wide-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">CLI</p>
+                <h2>Runs</h2>
+              </div>
+              <button id="loadCliRunsButton" type="button" class="icon-button" title="Reload CLI runs" aria-label="Reload CLI runs">
+                R
+              </button>
+            </div>
+            <div class="workspace-layout">
+              <div id="cliRunList" class="compact-list"></div>
+              <div id="cliRunOutput" class="output-region"></div>
+            </div>
           </article>
 
           <article id="settings" class="panel wide-panel">

@@ -134,6 +134,7 @@ async function refreshDashboard() {
     loadWorkspace(),
     loadApprovals(),
     loadProviders(),
+    loadCliRuns(),
     loadSettings(),
     loadLogs(),
   ]);
@@ -447,6 +448,23 @@ function renderApprovalReview(item) {
     decideApproval(submitter.dataset.decision, reason.value.trim());
   });
   target.append(form);
+  if (item.source.key === "cli" && item.approval.status === "approved") {
+    const canExecute = item.review.direct_execute_available !== false;
+    const executeButton = make("button", "primary-button", "Execute approved command");
+    executeButton.type = "button";
+    executeButton.disabled = !canExecute;
+    executeButton.addEventListener("click", () => executeCliApproval(item.approval.id));
+    target.append(executeButton);
+    if (!canExecute) {
+      target.append(
+        statusBox(
+          "Bound execution required",
+          "This approval needs an execution request with matching bound fields.",
+          "blocked",
+        ),
+      );
+    }
+  }
 }
 
 async function decideApproval(decision, reason) {
@@ -466,6 +484,22 @@ async function decideApproval(decision, reason) {
     await loadApprovals();
   } catch (error) {
     showToast(error.message);
+  }
+}
+
+async function executeCliApproval(approvalId) {
+  const target = qs("#approvalReview");
+  target.append(statusBox("Executing approved command", approvalId, "running"));
+  try {
+    const result = await api(`/cli/approvals/${encodeURIComponent(approvalId)}/execute`, {
+      method: "POST",
+    });
+    showToast("CLI approval executed.");
+    target.append(jsonBlock(result));
+    await Promise.all([loadApprovals(), loadCliRuns()]);
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Execution failed", error.message, "failed"));
   }
 }
 
@@ -518,10 +552,9 @@ async function loadSettings() {
 }
 
 async function loadProviders() {
-  const [providers, tools, runs] = await Promise.all([
+  const [providers, tools] = await Promise.all([
     safeLoad("providers", () => api("/providers")),
     safeLoad("tools", () => api("/tools")),
-    safeLoad("cli runs", () => api("/cli/runs")),
   ]);
   setMetric("#providersMetric", providers.ok ? String(providers.data.length) : "-");
   setMetric("#toolsMetric", `Tools: ${tools.ok ? tools.data.length : "-"}`);
@@ -541,9 +574,53 @@ async function loadProviders() {
       target.append(item);
     }
   }
-  if (runs.ok && runs.data.length) {
-    const latest = runs.data[runs.data.length - 1];
-    target.append(statusBox("Latest CLI run", `${latest.id} - ${latest.status}`, latest.status));
+}
+
+async function loadCliRuns() {
+  const result = await safeLoad("cli runs", () => api("/cli/runs"));
+  const target = qs("#cliRunList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("CLI runs unavailable", result.error, "blocked"));
+    return;
+  }
+  const runs = result.data.slice(-10).reverse();
+  if (!runs.length) {
+    target.append(statusBox("No CLI runs", "Executed commands will appear here.", "pending"));
+    clear(qs("#cliRunOutput"));
+    return;
+  }
+  for (const run of runs) {
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", run.command || run.id));
+    item.append(make("div", "item-meta", `${run.id} - exit ${run.exit_code ?? "-"} - ${run.cwd}`));
+    item.append(statusChip(run.status));
+    const button = make("button", "link-button", "Output");
+    button.type = "button";
+    button.addEventListener("click", () => loadCliRunOutput(run.id));
+    item.append(button);
+    target.append(item);
+  }
+}
+
+async function loadCliRunOutput(runId) {
+  const target = qs("#cliRunOutput");
+  clear(target);
+  target.append(statusBox("Loading CLI output", runId, "running"));
+  try {
+    const output = await api(`/cli/runs/${encodeURIComponent(runId)}/output`);
+    clear(target);
+    target.append(statusBox("CLI output", `${runId} - next sequence ${output.next_sequence}`, output.status));
+    const lines = (output.chunks || []).map((chunk) => {
+      const marker = chunk.truncated ? " truncated" : "";
+      return `[${chunk.sequence}] ${chunk.stream}${marker}\n${chunk.text}`;
+    });
+    const pre = make("pre");
+    pre.textContent = lines.join("\n\n") || "No output chunks recorded.";
+    target.append(pre);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Output unavailable", error.message, "failed"));
   }
 }
 
@@ -592,6 +669,7 @@ function bindEvents() {
   });
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
+  qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
   for (const button of qsa(".segmented-control button")) {

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010c CLI Approval Execution And Run Output UI
+
+Status: completed for the scoped CLI approval execution and run output visibility slice; Sprint 16 remains active for richer approval filtering, non-CLI execution UX, project add/open and rootDir switching, AI-change review, policy/settings editors, plugin and command-recipe views, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: Developer added a CLI Runs dashboard panel with recent run listing and output chunk polling through `GET /cli/runs` and `GET /cli/runs/{run_id}/output`.
+- Completed: Developer added an execute action for already approved CLI approvals when the safe review contract does not require a separate bound execution request, using `POST /cli/approvals/{approval_id}/execute`.
+- Completed: QA expanded UI static tests to assert approved CLI execution and CLI run output endpoint wiring.
+- Completed: PM updated README, architecture, setup, usage, backlog, project status, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` lists recent CLI runs, shows run status/exit metadata, and renders redacted chunked stdout/stderr output from the backend output polling endpoint.
+- Implemented in this slice: approved CLI approval reviews show an execute button only for CLI approvals with `status: approved`, and the button is disabled when `direct_execute_available` is false.
+- Implemented in this slice: execution still goes through existing backend `cli` capability checks, cross-actor rules, workflow revalidation, and approval claim protections.
+- Still out of scope after this slice: non-CLI direct execution UX, environment-bound execution request forms, richer run filtering/search, live output auto-refresh, and end-to-end browser approval scenario tests.
+
+Validation:
+- Focused UI tests passed: `python -m pytest -q tests\test_ui.py --maxfail=1 -x` with 3 tests.
+- Focused lint/format/diff hygiene passed: `python -m ruff check tests\test_ui.py src\dgentic\main.py`, `python -m ruff format --check tests\test_ui.py src\dgentic\main.py`, and `git diff --check`.
+- Browser smoke passed in the Codex in-app browser against `http://127.0.0.1:8020/ui/`: CLI Runs panel rendered and console error count was 0.
+- Full lint/format/regression gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `python -m pytest -q --maxfail=1 -x` with 1,314 tests and 2 skipped.
+
 ### Sprint 16 BL-010b Current-Root Workspace Browser And Editor
 
 Status: completed for the scoped current-root workspace UI slice; Sprint 16 remains active for project add/open and rootDir switching, AI-change diff review, richer task/chat execution, policy/settings editors, plugin and command-recipe views, direct approved-action execution UX, and broader browser validation.

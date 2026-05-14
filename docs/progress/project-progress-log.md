@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010n Memory And Tool Reliability Dashboard
+
+Status: completed for the scoped memory/tool reliability dashboard slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected read-only memory/tool reliability visibility as the next compact Sprint 16 slice because the backend already exposes memory metadata and SQL tool-registry reliability contracts.
+- Completed: Developer added a Reliability dashboard panel for memory lifecycle/freshness and tool-registry reliability using existing `/api/v1/memory/metadata` and `/api/v1/tools/registry` APIs without backend expansion.
+- Completed: Developer preserved fail-soft behavior when the current token lacks `memory` or `tools` capability or either backend surface is unavailable.
+- Completed: QA extended UI static contract tests for the reliability panel, endpoint wiring, render helpers, score fields, and CSS hooks.
+- Completed: PM updated README, project status, planning, architecture, setup, usage, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` now shows read-only memory totals, active memory counts, stale or inactive memory records, registered tool totals, low-reliability tool counts, and top memory/tool reliability rows.
+- Still out of scope after this slice: reliability drilldown actions, lifecycle/compression job control, tool deprecation mutation UX, and browser end-to-end reliability scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- QA reviewer found no blockers for read-only API usage, auth token propagation, fail-soft unavailable panels, or static coverage.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010m Sub-Agent Graph Visibility
 
 Status: completed for the scoped sub-agent graph visibility slice; Sprint 16 remains active for full chat workflows, guided task graph builders beyond raw JSON, Codex-style AI-change diff review, richer settings editors, non-CLI execution UX, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.

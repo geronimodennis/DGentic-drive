@@ -24,6 +24,7 @@
           <a href="#approvals">Approvals</a>
           <a href="#git">Git</a>
           <a href="#cli-runs">CLI Runs</a>
+          <a href="#reliability">Reliability</a>
           <a href="#policy">Policy</a>
           <a href="#settings">Settings</a>
           <a href="#activity">Activity</a>
@@ -312,6 +313,29 @@ review</textarea>
               </div>
             </div>
             <div id="providerList" class="compact-list"></div>
+          </article>
+
+          <article id="reliability" class="panel wide-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Reliability</p>
+                <h2>Memory And Tools</h2>
+              </div>
+              <button id="loadReliabilityButton" type="button" class="icon-button" title="Reload reliability" aria-label="Reload reliability">
+                R
+              </button>
+            </div>
+            <div id="reliabilitySummary" class="checkpoint-grid"></div>
+            <div class="reliability-grid">
+              <section>
+                <h3>Memory Lifecycle</h3>
+                <div id="memoryReliabilityList" class="compact-list"></div>
+              </section>
+              <section>
+                <h3>Tool Reliability</h3>
+                <div id="toolReliabilityList" class="compact-list"></div>
+              </section>
+            </div>
           </article>
 
           <article id="cli-runs" class="panel wide-panel">

@@ -413,7 +413,7 @@ Tasks:
 - Add local install and smoke-test documentation.
 
 Current implementation status:
-- Partially implemented: web frontend/dashboard and interactive approval UI are active in Sprint 16, with dashboard shell, task planning, project context/open controls, workspace file browsing/editing, orchestration creation, orchestration detail/execution controls, expandable per-task sub-agent briefs, parent-child agent graph visibility, task update/recovery/blocker resolution/closeout controls, unified approval source/status filtering plus review/decision actions, approved CLI execution, Git checkpoint visibility, policy/plugin visibility, settings summary, and logs implemented.
+- Partially implemented: web frontend/dashboard and interactive approval UI are active in Sprint 16, with dashboard shell, task planning, project context/open controls, workspace file browsing/editing, orchestration creation, orchestration detail/execution controls, expandable per-task sub-agent briefs, parent-child agent graph visibility, task update/recovery/blocker resolution/closeout controls, unified approval source/status filtering plus review/decision actions, approved CLI execution, Git checkpoint visibility, memory/tool reliability summaries, policy/plugin visibility, settings summary, and logs implemented.
 - Not yet implemented: full chat UX, guided task graph builders beyond raw JSON, AI-change accept/reject diff review, editable settings/policy UX, VS Code extension, and dedicated CLI client.
 - Planned: remaining Story 8.1 and Story 8.2 work continues in Sprint 16; Story 8.3 and Story 8.4 are covered by Sprint 17.
 

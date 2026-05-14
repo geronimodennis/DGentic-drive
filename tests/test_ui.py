@@ -22,6 +22,9 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "orchestrationTasksInput" in response.text
     assert "orchestrationMemoryPolicyInput" in response.text
     assert "orchestrationDetail" in response.text
+    assert "loadReliabilityButton" in response.text
+    assert "memoryReliabilityList" in response.text
+    assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
     assert "Rules And Plugins" in response.text
@@ -74,6 +77,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "required_dod_evidence" in script_response.text
     assert "shared_memory_tags" in script_response.text
     assert "shared_memory_policy" in script_response.text
+    assert "loadReliability" in script_response.text
+    assert 'api("/api/v1/memory/metadata?limit=50")' in script_response.text
+    assert 'api("/api/v1/tools/registry?limit=50")' in script_response.text
+    assert "renderMemoryReliability" in script_response.text
+    assert "renderToolReliability" in script_response.text
+    assert "reliability_score" in script_response.text
+    assert "freshness_score" in script_response.text
     assert 'safeLoad("agents", () => api("/agents"))' in script_response.text
     assert "Array.isArray(agentsResult.data)" in script_response.text
     assert "renderOrchestrationDetail" in script_response.text
@@ -128,6 +138,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".approval-summary-grid" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text
+    assert ".reliability-grid" in style_response.text
     assert ".policy-grid" in style_response.text
     assert ".approval-list" in style_response.text
 

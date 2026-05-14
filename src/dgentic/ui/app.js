@@ -218,6 +218,7 @@ async function refreshDashboard() {
     loadWorkspace(),
     loadApprovals(),
     loadProviders(),
+    loadReliability(),
     loadCliRuns(),
     loadProjects(),
     loadPolicySurfaces(),
@@ -1712,6 +1713,124 @@ async function loadProviders() {
   }
 }
 
+async function loadReliability() {
+  const [memory, registry] = await Promise.all([
+    safeLoad("memory metadata", () => api("/api/v1/memory/metadata?limit=50")),
+    safeLoad("tool registry", () => api("/api/v1/tools/registry?limit=50")),
+  ]);
+  renderReliabilitySummary(memory, registry);
+  renderMemoryReliability(memory);
+  renderToolReliability(registry);
+}
+
+function renderReliabilitySummary(memory, registry) {
+  const target = qs("#reliabilitySummary");
+  clear(target);
+  const memoryItems = memory.ok ? memory.data.items || [] : [];
+  const registryItems = registry.ok ? registry.data.items || [] : [];
+  const memoryTotal = memory.ok ? memory.data.total ?? memoryItems.length : "-";
+  const toolTotal = registry.ok ? registry.data.total ?? registryItems.length : "-";
+  const activeMemory = memoryItems.filter((item) => item.lifecycle_state === "active").length;
+  const lowReliabilityTools = registryItems.filter((tool) => Number(tool.reliability_score ?? 1) < 0.8).length;
+  appendKeyValue(target, "Memory", String(memoryTotal));
+  appendKeyValue(target, "Active memory", memory.ok ? String(activeMemory) : "-");
+  appendKeyValue(target, "Registered tools", String(toolTotal));
+  appendKeyValue(target, "Tools needing review", registry.ok ? String(lowReliabilityTools) : "-");
+}
+
+function memoryStatusChip(item) {
+  const lifecycleState = String(item.lifecycle_state || "active").toLowerCase();
+  const freshnessScore = Number(item.freshness_score ?? 1);
+  if (["archived", "soft_pruned", "pruned"].includes(lifecycleState)) {
+    return "blocked";
+  }
+  if (freshnessScore < 0.35) {
+    return "pending";
+  }
+  if (["active", "promoted"].includes(lifecycleState)) {
+    return "ok";
+  }
+  return lifecycleState || "pending";
+}
+
+function renderMemoryReliability(result) {
+  const target = qs("#memoryReliabilityList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Memory unavailable", result.error, "blocked"));
+    return;
+  }
+  const items = result.data.items || [];
+  if (!items.length) {
+    target.append(statusBox("No memory metadata", "Indexed memory records will appear here.", "pending"));
+    return;
+  }
+  const sorted = [...items].sort((left, right) => {
+    const leftFreshness = Number(left.freshness_score ?? 1);
+    const rightFreshness = Number(right.freshness_score ?? 1);
+    return leftFreshness - rightFreshness || Number(right.access_count || 0) - Number(left.access_count || 0);
+  });
+  for (const item of sorted.slice(0, 8)) {
+    const row = make("div", "list-item");
+    row.append(make("div", "item-title", `${item.entity_type}: ${item.entity_id}`));
+    row.append(
+      make(
+        "div",
+        "item-meta",
+        `${item.category || "uncategorized"} - ${item.lifecycle_state || "active"} - freshness ${Number(item.freshness_score ?? 0).toFixed(2)} - accesses ${item.access_count || 0}`,
+      ),
+    );
+    row.append(statusChip(memoryStatusChip(item)));
+    target.append(row);
+  }
+}
+
+function toolReliabilityStatus(tool) {
+  if (tool.deprecated) {
+    return "blocked";
+  }
+  const score = Number(tool.reliability_score ?? 1);
+  if (score < 0.5) {
+    return "failed";
+  }
+  if (score < 0.8 || Number(tool.failure_count || 0) > 0) {
+    return "pending";
+  }
+  return "ok";
+}
+
+function renderToolReliability(result) {
+  const target = qs("#toolReliabilityList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Tool registry unavailable", result.error, "blocked"));
+    return;
+  }
+  const tools = result.data.items || [];
+  if (!tools.length) {
+    target.append(statusBox("No registered tools", "Generated-tool registry rows will appear here.", "pending"));
+    return;
+  }
+  const sorted = [...tools].sort((left, right) => {
+    const leftStatus = left.deprecated ? -1 : Number(left.reliability_score ?? 1);
+    const rightStatus = right.deprecated ? -1 : Number(right.reliability_score ?? 1);
+    return leftStatus - rightStatus || Number(right.failure_count || 0) - Number(left.failure_count || 0);
+  });
+  for (const tool of sorted.slice(0, 8)) {
+    const row = make("div", "list-item");
+    row.append(make("div", "item-title", `${tool.tool_name} ${tool.version}`));
+    row.append(
+      make(
+        "div",
+        "item-meta",
+        `${tool.permission_level} - reliability ${Number(tool.reliability_score ?? 0).toFixed(2)} - usage ${tool.usage_count || 0} - failures ${tool.failure_count || 0}`,
+      ),
+    );
+    row.append(statusChip(toolReliabilityStatus(tool)));
+    target.append(row);
+  }
+}
+
 async function loadCliRuns() {
   const result = await safeLoad("cli runs", () => api("/cli/runs"));
   const target = qs("#cliRunList");
@@ -1867,6 +1986,7 @@ function bindEvents() {
   qs("#workspaceRootButton").addEventListener("click", () => loadWorkspace("."));
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
+  qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);

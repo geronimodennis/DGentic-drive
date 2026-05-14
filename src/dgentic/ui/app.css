@@ -375,20 +375,27 @@ textarea {
   min-width: 0;
 }
 
-.policy-grid {
+.policy-grid,
+.reliability-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
-.policy-grid section {
+.reliability-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.policy-grid section,
+.reliability-grid section {
   display: grid;
   align-content: start;
   gap: 10px;
   min-width: 0;
 }
 
-.policy-grid h3 {
+.policy-grid h3,
+.reliability-grid h3 {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;

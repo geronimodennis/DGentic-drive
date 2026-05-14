@@ -24,6 +24,7 @@ let selectedOrchestrationId = "";
 let taskGraphBuilderTasks = [];
 let latestSettingsView = null;
 let latestPolicyReviewResults = null;
+let editingCliPolicyRuleId = "";
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -1900,6 +1901,9 @@ async function loadSettings() {
   renderProjectContext(result.data);
   renderSettingsReview(result.data, target);
   renderPolicyReviewSummary();
+  if (latestPolicyReviewResults?.cliRules) {
+    renderCliPolicyList(latestPolicyReviewResults.cliRules);
+  }
 }
 
 function renderSettingsReview(settingsView, target) {
@@ -2296,13 +2300,7 @@ async function loadPolicySurfaces() {
     safeLoad("plugins", () => api("/plugins")),
   ]);
   renderPolicyReviewSummary(cliRules, recipes, hooks, plugins);
-  renderPolicyList(qs("#cliPolicyList"), cliRules, (rule) => ({
-    title: rule.name || rule.id,
-    meta: `${rule.source || "local"} - ${rule.permission_mode || rule.risk || "policy"} - ${
-      rule.match_type || "-"
-    }`,
-    status: rule.enabled === false ? "blocked" : "ok",
-  }));
+  renderCliPolicyList(cliRules);
   renderRecipeList(recipes);
   renderPolicyList(qs("#hookPolicyList"), hooks, (hook) => ({
     title: hook.name || hook.id,
@@ -2343,6 +2341,10 @@ function countBy(records, getter) {
 
 function disabledCount(records) {
   return (records || []).filter((record) => record.enabled === false || record.status === "disabled").length;
+}
+
+function managedPolicyLocks() {
+  return parseSettingList(settingByName(latestSettingsView, "managed_policy_locks"));
 }
 
 function splitCsv(value) {
@@ -2423,21 +2425,120 @@ async function createCliPolicyRule(event) {
   const target = qs("#cliPolicyEditorOutput");
   const payload = cliPolicyRulePayload();
   clear(target);
-  target.append(statusBox("Creating CLI rule", payload.name || "policy", "running"));
+  const isEditing = Boolean(editingCliPolicyRuleId);
+  target.append(statusBox(isEditing ? "Updating CLI rule" : "Creating CLI rule", payload.name || "policy", "running"));
   try {
-    const rule = await api("/cli/policy/rules", { method: "POST", body: payload });
-    qs("#cliPolicyForm").reset();
-    qs("#cliPolicyPriorityInput").value = "100";
-    qs("#cliPolicyEnabledInput").checked = true;
+    const rule = isEditing
+      ? await api(`/cli/policy/rules/${encodeURIComponent(editingCliPolicyRuleId)}`, {
+          method: "PATCH",
+          body: payload,
+        })
+      : await api("/cli/policy/rules", { method: "POST", body: payload });
+    resetCliPolicyForm();
     clear(target);
-    target.append(statusBox("CLI rule created", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"));
+    target.append(
+      statusBox(isEditing ? "CLI rule updated" : "CLI rule created", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"),
+    );
     target.append(jsonBlock(rule));
     await loadPolicySurfaces();
-    showToast("CLI policy rule created.");
+    showToast(isEditing ? "CLI policy rule updated." : "CLI policy rule created.");
   } catch (error) {
     clear(target);
-    target.append(statusBox("CLI rule create failed", error.message, "failed"));
+    target.append(statusBox(isEditing ? "CLI rule update failed" : "CLI rule create failed", error.message, "failed"));
     showToast(error.message);
+  }
+}
+
+function resetCliPolicyForm() {
+  editingCliPolicyRuleId = "";
+  qs("#cliPolicyForm").reset();
+  qs("#cliPolicyPriorityInput").value = "100";
+  qs("#cliPolicyEnabledInput").checked = true;
+  qs("#cliPolicyEditorSummary").textContent = "New CLI Rule";
+  qs("#cliPolicySubmitLabel").textContent = "Add Rule";
+  qs("#cliPolicyCancelEditButton").hidden = true;
+}
+
+function editCliPolicyRule(rule) {
+  editingCliPolicyRuleId = rule.id || "";
+  qs("#cliPolicyEditor").open = true;
+  qs("#cliPolicyEditorSummary").textContent = `Edit CLI Rule: ${rule.name || rule.id}`;
+  qs("#cliPolicyNameInput").value = rule.name || "";
+  qs("#cliPolicyMatchInput").value = rule.match_type || "executable";
+  qs("#cliPolicyModeInput").value = rule.permission_mode || "approval_required";
+  qs("#cliPolicyPatternInput").value = rule.pattern || "";
+  qs("#cliPolicyReasonInput").value = rule.reason || "";
+  qs("#cliPolicyRolesInput").value = (rule.agent_roles || []).join(", ");
+  qs("#cliPolicyPriorityInput").value = String(rule.priority ?? 100);
+  qs("#cliPolicyEnabledInput").checked = rule.enabled !== false;
+  qs("#cliPolicySubmitLabel").textContent = "Update Rule";
+  qs("#cliPolicyCancelEditButton").hidden = false;
+  clear(qs("#cliPolicyEditorOutput"));
+  qs("#cliPolicyEditorOutput").append(statusBox("Editing CLI rule", rule.id || rule.name, "pending"));
+}
+
+async function patchCliPolicyRule(ruleId, update) {
+  const target = qs("#cliPolicyEditorOutput");
+  clear(target);
+  target.append(statusBox("Updating CLI rule", ruleId, "running"));
+  try {
+    const rule = await api(`/cli/policy/rules/${encodeURIComponent(ruleId)}`, {
+      method: "PATCH",
+      body: update,
+    });
+    clear(target);
+    target.append(statusBox("CLI rule updated", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"));
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast("CLI policy rule updated.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("CLI rule update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderCliPolicyList(result) {
+  const target = qs("#cliPolicyList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  if (!result.data.length) {
+    target.append(statusBox("No records", "Nothing configured for this surface.", "pending"));
+    return;
+  }
+  const cliPolicyLocked = managedPolicyLocks().includes("cli_policy");
+  for (const rule of result.data.slice(0, 8)) {
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", rule.name || rule.id));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${rule.source || "local"} - ${rule.permission_mode || "policy"} - ${rule.match_type || "-"} - priority ${
+          rule.priority ?? 100
+        }`,
+      ),
+    );
+    const actions = make("div", "recipe-action-buttons");
+    const editButton = make("button", "link-button", "Edit");
+    editButton.type = "button";
+    editButton.dataset.testid = "cli-policy-edit";
+    editButton.dataset.ruleId = rule.id || "";
+    editButton.disabled = rule.source === "managed" || cliPolicyLocked;
+    editButton.addEventListener("click", () => editCliPolicyRule(rule));
+    const toggleButton = make("button", rule.enabled === false ? "success-button" : "danger-button", rule.enabled === false ? "Enable" : "Disable");
+    toggleButton.type = "button";
+    toggleButton.dataset.testid = "cli-policy-toggle";
+    toggleButton.dataset.ruleId = rule.id || "";
+    toggleButton.disabled = rule.source === "managed" || cliPolicyLocked;
+    toggleButton.addEventListener("click", () => patchCliPolicyRule(rule.id, { enabled: rule.enabled === false }));
+    actions.append(statusChip(rule.enabled === false ? "blocked" : "ok"), editButton, toggleButton);
+    item.append(detail, actions);
+    target.append(item);
   }
 }
 
@@ -2642,6 +2743,10 @@ function bindEvents() {
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
+  qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
+    resetCliPolicyForm();
+    clear(qs("#cliPolicyEditorOutput"));
+  });
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#logFilter").addEventListener("change", loadLogs);
   qs("#approvalSourceInput").addEventListener("change", () => {

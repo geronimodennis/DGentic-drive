@@ -36,7 +36,10 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "policyReviewSummary" in response.text
     assert "Review Summary" in response.text
     assert "cliPolicyForm" in response.text
+    assert "cliPolicyEditor" in response.text
     assert "cliPolicyEditorOutput" in response.text
+    assert "cliPolicyCancelEditButton" in response.text
+    assert "cliPolicySubmitLabel" in response.text
     assert "cliPolicyMatchInput" in response.text
     assert "cliPolicyModeInput" in response.text
     assert "cliPolicyRolesInput" in response.text
@@ -163,12 +166,22 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "managed_policy_locks" in script_response.text
     assert "cliPolicyRulePayload" in script_response.text
     assert "createCliPolicyRule" in script_response.text
+    assert "renderCliPolicyList" in script_response.text
+    assert "editCliPolicyRule" in script_response.text
+    assert "patchCliPolicyRule" in script_response.text
+    assert "resetCliPolicyForm" in script_response.text
+    assert "managedPolicyLocks" in script_response.text
     assert "splitCsv" in script_response.text
     assert 'api("/cli/policy/rules", { method: "POST", body: payload })' in script_response.text
+    assert 'method: "PATCH"' in script_response.text
+    assert "/cli/policy/rules/${encodeURIComponent(ruleId)}" in script_response.text
+    assert "{ enabled: rule.enabled === false }" in script_response.text
+    assert "cli-policy-toggle" in script_response.text
     assert (
         'qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule)'
         in script_response.text
     )
+    assert 'qs("#cliPolicyCancelEditButton").addEventListener("click"' in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".workspace-layout" in style_response.text

@@ -440,8 +440,8 @@ review</textarea>
               </section>
               <section>
                 <h3>CLI Rules</h3>
-                <details class="policy-editor">
-                  <summary>New CLI Rule</summary>
+                <details id="cliPolicyEditor" class="policy-editor">
+                  <summary id="cliPolicyEditorSummary">New CLI Rule</summary>
                   <form id="cliPolicyForm" class="stacked-form">
                     <label>
                       Name
@@ -489,10 +489,13 @@ review</textarea>
                         <input id="cliPolicyEnabledInput" type="checkbox" checked>
                         Enabled
                       </label>
-                      <button type="submit" class="primary-button">
-                        <span class="button-icon" aria-hidden="true">+</span>
-                        Add Rule
-                      </button>
+                      <div class="button-row">
+                        <button id="cliPolicyCancelEditButton" type="button" class="link-button" hidden>Cancel Edit</button>
+                        <button id="cliPolicySubmitButton" type="submit" class="primary-button">
+                          <span class="button-icon" aria-hidden="true">+</span>
+                          <span id="cliPolicySubmitLabel">Add Rule</span>
+                        </button>
+                      </div>
                     </div>
                   </form>
                   <div id="cliPolicyEditorOutput" class="output-region" aria-live="polite"></div>

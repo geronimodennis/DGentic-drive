@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010s CLI Policy Edit And Toggle UI
+
+Status: completed for the scoped CLI policy update UX slice; Sprint 16 remains active for full chat workflows, full Codex-style AI-change diff review, broader editable settings and policy workflows, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local CLI policy update/toggle controls as the next compact Sprint 16 editable-policy slice because the backend already exposes guarded PATCH contracts and managed-rule read-only behavior.
+- Completed: Explorer recommended the smallest safe per-rule enable/disable flow and confirmed the full partial-update contract for local CLI policy rules.
+- Completed: Developer replaced the generic CLI policy renderer with a dedicated list that shows local rule actions while disabling edit/toggle affordances for managed rules or managed `cli_policy` locks.
+- Completed: Developer added edit-mode population for existing local rules, cancel-edit reset behavior, and PATCH submission through the existing `/cli/policy/rules/{rule_id}` route.
+- Completed: QA extended UI static contract tests for the edit/toggle renderer, PATCH helper, cancel binding, managed-lock helper, and dynamic toggle metadata.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can edit local CLI policy rule fields and enable or disable local CLI rules through existing backend policy routes while preserving backend capability checks, managed-rule read-only enforcement, and managed policy surface locks.
+- Still out of scope after this slice: delete/archive flows, hook/network/filesystem policy editors, provider/routing/settings editors, managed-policy mutation workflows, and browser end-to-end policy mutation scenarios.
+
+Validation:
+- Focused UI/static validation passed: `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,329 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against a temporary FastAPI server on `127.0.0.1:49688`: `/ui/` served the CLI policy editor markup and `/ui/app.js` served the edit/toggle helper code.
+
 ### Sprint 16 BL-010r CLI Policy Creation UI
 
 Status: completed for the scoped first editable policy UX slice; Sprint 16 remains active for full chat workflows, full Codex-style AI-change diff review, broader editable settings and policy workflows, broader non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

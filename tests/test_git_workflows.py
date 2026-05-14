@@ -11,7 +11,10 @@ from fastapi.testclient import TestClient
 
 from dgentic.events import event_log
 from dgentic.git_workflows import (
+    MAX_DIFF_REVIEW_SECTION_BYTES,
+    GitRawDiffReviewRequest,
     GitWorkflowCheckpointRequest,
+    create_git_raw_diff_review,
     create_git_workflow_checkpoint,
 )
 from dgentic.main import create_app
@@ -241,6 +244,154 @@ def test_commit_checkpoint_blocks_protected_and_secret_shaped_staged_files(
     assert "Staged diff contains secret-shaped additions." in secret_shaped.blockers
     assert raw_secret not in serialized
     assert raw_secret not in serialized_logs
+
+
+def test_git_raw_diff_review_redacts_and_bounds_staged_and_unstaged_sections(
+    git_workspace,
+) -> None:
+    staged_secret = "staged-diff-secret"
+    unstaged_secret = "unstaged-diff-secret"
+    git_workspace.joinpath("README.md").write_text(
+        f"# Checkpoint\n\nACCESS_TOKEN={staged_secret}\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    git_workspace.joinpath("README.md").write_text(
+        f"# Checkpoint\n\nACCESS_TOKEN={staged_secret}\nPASSWORD={unstaged_secret}\n",
+        encoding="utf-8",
+    )
+    checkpoint = _checkpoint("commit", git_workspace)
+
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    serialized = review.model_dump_json()
+    serialized_logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.cli)]
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+    unstaged = next(section for section in review.sections if section.scope == "unstaged")
+
+    assert review.checkpoint_digest == checkpoint.checkpoint_digest
+    assert staged.redacted is True
+    assert unstaged.redacted is True
+    assert "ACCESS_TOKEN=[REDACTED]" in staged.patch
+    assert "PASSWORD=[REDACTED]" in unstaged.patch
+    assert staged_secret not in serialized
+    assert unstaged_secret not in serialized
+    assert staged_secret not in serialized_logs
+    assert unstaged_secret not in serialized_logs
+    assert "Secret-shaped patch content was redacted before returning this review." in (
+        review.warnings
+    )
+
+
+def test_git_raw_diff_review_rejects_stale_checkpoint_digest(git_workspace) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nFirst change.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nSecond change.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+
+    with pytest.raises(ValueError, match="fresh matching checkpoint digest"):
+        create_git_raw_diff_review(
+            GitRawDiffReviewRequest(
+                action="commit",
+                cwd=git_workspace,
+                checkpoint_digest=checkpoint.checkpoint_digest,
+                test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+            )
+        )
+
+
+def test_git_raw_diff_review_omits_protected_path_patch_content(git_workspace) -> None:
+    git_workspace.joinpath(".env").write_text(
+        "API_KEY=protected-file-secret\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", ".env")
+    checkpoint = _checkpoint("commit", git_workspace)
+
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+
+    assert staged.patch == ""
+    assert ".env" in staged.omitted_protected_paths
+    assert "protected-file-secret" not in review.model_dump_json()
+    assert "Protected or secret-shaped paths were omitted from patch content." in review.warnings
+
+
+def test_git_raw_diff_review_truncates_large_patch_sections(git_workspace) -> None:
+    omitted_tail = "TAIL_MARKER_SHOULD_BE_OMITTED"
+    git_workspace.joinpath("README.md").write_text(
+        f"# Checkpoint\n\n{'A' * (MAX_DIFF_REVIEW_SECTION_BYTES + 4096)}{omitted_tail}\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            include_unstaged=False,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+
+    assert staged.truncated is True
+    assert "... [diff review truncated]" in staged.patch
+    assert omitted_tail not in staged.patch
+    assert staged.returned_byte_count <= MAX_DIFF_REVIEW_SECTION_BYTES
+    assert staged.byte_count > staged.returned_byte_count
+    assert "Large patch content was truncated for bounded review output." in review.warnings
+
+
+def test_git_raw_diff_review_api_returns_checkpoint_bound_sections(git_workspace) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nAPI diff review.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/cli/git/diff-reviews",
+        json={
+            "action": "commit",
+            "cwd": str(git_workspace),
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["uv run pytest tests/test_git_workflows.py -q"],
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert [section["scope"] for section in body["sections"]] == ["staged", "unstaged"]
+    assert "API diff review." in body["sections"][0]["patch"]
 
 
 def test_push_and_pr_checkpoints_block_unsafe_starting_states(git_workspace) -> None:

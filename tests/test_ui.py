@@ -181,6 +181,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "createGitApproval" in script_response.text
     assert "gitApprovalPayload" in script_response.text
     assert "gitApprovalEndpoint" in script_response.text
+    assert "latestGitDiffReview" in script_response.text
+    assert "renderGitDiffReviewPanel" in script_response.text
+    assert "loadGitDiffReview" in script_response.text
+    assert "renderGitDiffSection" in script_response.text
+    assert "gitDiffReviewPayload" in script_response.text
+    assert 'api("/cli/git/diff-reviews"' in script_response.text
+    assert 'make("pre", "diff-patch"' in script_response.text
     assert "/cli/git/${action}-approvals" in script_response.text
     assert "commit_message" in script_response.text
     assert "base_branch" in script_response.text
@@ -247,6 +254,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".policy-review-section" in style_response.text
     assert ".policy-editor" in style_response.text
     assert ".git-approval-actions" in style_response.text
+    assert ".git-diff-review" in style_response.text
+    assert ".git-diff-section" in style_response.text
+    assert ".diff-patch" in style_response.text
     assert ".git-review-summary" in style_response.text
 
 

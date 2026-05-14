@@ -807,6 +807,8 @@ textarea {
 .json-details,
 .chip-list,
 .approval-review-summary,
+.git-diff-review,
+.git-diff-section,
 .git-review-summary {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -835,6 +837,9 @@ textarea {
 .changed-paths,
 .chip-list,
 .approval-review-summary,
+.git-diff-review,
+.git-diff-review-output,
+.git-diff-section,
 .review-warning-list,
 .git-review-summary {
   display: grid;
@@ -868,6 +873,15 @@ textarea {
 
 .json-details pre {
   margin-top: 10px;
+}
+
+.git-diff-section summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.diff-patch {
+  white-space: pre;
 }
 
 .setting-item strong {

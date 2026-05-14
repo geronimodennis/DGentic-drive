@@ -91,11 +91,14 @@ from dgentic.git_workflows import (
     GitPushApprovalRequest,
     GitPushRunRequest,
     GitPushRunResult,
+    GitRawDiffReview,
+    GitRawDiffReviewRequest,
     GitWorkflowCheckpoint,
     GitWorkflowCheckpointRequest,
     build_git_commit_approval_request,
     build_git_pr_approval_request,
     build_git_push_approval_request,
+    create_git_raw_diff_review,
     create_git_workflow_checkpoint,
     run_git_commit_workflow,
     run_git_pr_workflow,
@@ -1592,6 +1595,24 @@ def create_cli_git_checkpoint(
 ) -> GitWorkflowCheckpoint:
     try:
         return create_git_workflow_checkpoint(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli/git/diff-reviews", response_model=GitRawDiffReview)
+def create_cli_git_diff_review(
+    payload: GitRawDiffReviewRequest,
+    request: Request,
+) -> GitRawDiffReview:
+    try:
+        return create_git_raw_diff_review(
             _bind_principal_requester(payload, request),
             actor=_principal_actor(request),
         )

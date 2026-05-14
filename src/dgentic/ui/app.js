@@ -26,6 +26,7 @@ let latestSettingsView = null;
 let latestPolicyReviewResults = null;
 let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
+let latestGitDiffReview = null;
 let editingCliPolicyRuleId = "";
 
 function qs(selector) {
@@ -1804,6 +1805,7 @@ async function createGitCheckpoint(event) {
   const target = qs("#gitOutput");
   latestGitCheckpoint = null;
   latestGitCheckpointRequest = payload;
+  latestGitDiffReview = null;
   renderGitApprovalActions(null);
   clear(target);
   target.append(statusBox("Checking repository", payload.action, "running"));
@@ -1847,6 +1849,7 @@ function renderGitCheckpoint(checkpoint) {
   renderFindings(target, "Blockers", checkpoint.blockers || [], "blocked");
   renderFindings(target, "Warnings", checkpoint.warnings || [], "pending");
   renderChangedPaths(target, checkpoint);
+  renderGitDiffReviewPanel(target, checkpoint);
 
   const details = make("details", "json-details");
   details.append(make("summary", "", "Raw checkpoint"));
@@ -1907,6 +1910,100 @@ function renderChangedPaths(target, checkpoint) {
   for (const path of paths.slice(0, 12)) {
     box.append(make("code", "", path));
   }
+  target.append(box);
+}
+
+function renderGitDiffReviewPanel(target, checkpoint) {
+  const panel = make("div", "git-diff-review");
+  const header = make("div", "builder-row");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Raw diff review"));
+  copy.append(make("div", "item-meta", "Checkpoint-bound staged and unstaged patch preview."));
+  const button = make("button", "link-button", "Load Diff");
+  button.id = "gitDiffReviewButton";
+  button.type = "button";
+  button.addEventListener("click", () => loadGitDiffReview(checkpoint));
+  header.append(copy, button);
+  panel.append(header);
+  const output = make("div", "git-diff-review-output");
+  output.id = "gitDiffReviewOutput";
+  panel.append(output);
+  target.append(panel);
+}
+
+function gitDiffReviewPayload(checkpoint) {
+  const payload = {
+    checkpoint_digest: checkpoint.checkpoint_digest,
+    action: checkpoint.action,
+    test_evidence: latestGitCheckpointRequest?.test_evidence || [],
+    include_staged: true,
+    include_unstaged: true,
+    context_lines: 3,
+  };
+  if (latestGitCheckpointRequest?.cwd) {
+    payload.cwd = latestGitCheckpointRequest.cwd;
+  }
+  return payload;
+}
+
+async function loadGitDiffReview(checkpoint) {
+  const target = qs("#gitDiffReviewOutput");
+  clear(target);
+  target.append(statusBox("Loading raw diff", checkpoint.checkpoint_digest.slice(0, 16), "running"));
+  try {
+    latestGitDiffReview = await api("/cli/git/diff-reviews", {
+      method: "POST",
+      body: gitDiffReviewPayload(checkpoint),
+    });
+    renderGitDiffReview(target, latestGitDiffReview);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Raw diff unavailable", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderGitDiffReview(target, review) {
+  clear(target);
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Branch", review.branch || "-");
+  appendKeyValue(grid, "Head", review.head_sha ? review.head_sha.slice(0, 12) : "-");
+  appendKeyValue(grid, "Digest", review.checkpoint_digest ? review.checkpoint_digest.slice(0, 16) : "-");
+  appendKeyValue(grid, "Warnings", String((review.warnings || []).length), review.warnings?.length ? "pending" : "ok");
+  target.append(grid);
+  renderFindings(target, "Diff review warnings", review.warnings || [], "pending");
+  for (const section of review.sections || []) {
+    renderGitDiffSection(target, section);
+  }
+}
+
+function renderGitDiffSection(target, section) {
+  const box = make("details", "git-diff-section");
+  box.open = true;
+  box.append(make("summary", "", `${section.scope} diff`));
+  const meta = make("div", "chip-row");
+  meta.append(statusChip(section.redacted ? "redacted" : "ok"));
+  if (section.truncated) {
+    meta.append(statusChip("truncated", "pending"));
+  }
+  if (section.omitted_protected_paths?.length) {
+    meta.append(statusChip("protected paths omitted", "blocked"));
+  }
+  box.append(meta);
+  const info = make("div", "checkpoint-grid");
+  appendKeyValue(info, "Patch digest", section.patch_digest ? section.patch_digest.slice(0, 16) : "-");
+  appendKeyValue(info, "Returned bytes", `${section.returned_byte_count || 0} / ${section.byte_count || 0}`);
+  box.append(info);
+  if (section.omitted_protected_paths?.length) {
+    const omitted = make("div", "changed-paths");
+    omitted.append(make("div", "item-title", "Omitted paths"));
+    for (const path of section.omitted_protected_paths) {
+      omitted.append(make("code", "", path));
+    }
+    box.append(omitted);
+  }
+  const patch = make("pre", "diff-patch", section.patch || "No tracked patch content.");
+  box.append(patch);
   target.append(box);
 }
 

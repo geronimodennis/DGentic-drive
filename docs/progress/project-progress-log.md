@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010v Checkpoint-Bound Raw Git Diff Review
+
+Status: completed for the scoped raw Git diff review slice; Sprint 16 remains active for full chat workflows, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected checkpoint-bound raw Git diff review as the next user-facing Sprint 16 slice because Git checkpoint approval creation exposed the need for file-level review before commit/push/PR closeout.
+- Completed: Security/Architect recommended a read-only `/cli/git/diff-reviews` contract that revalidates the checkpoint digest, excludes untracked file content, omits protected paths, redacts secret-shaped patch text, caps output, and avoids patch bodies in logs.
+- Completed: Developer added `POST /cli/git/diff-reviews`, raw diff review response models, staged/unstaged section generation, protected-path omission, redaction/truncation flags, NUL-separated Git path parsing, and metadata-only audit events.
+- Completed: Developer added the dashboard Load Diff panel under Git checkpoints, safe `<pre>` text rendering for patch content, section metadata chips, omitted-path visibility, and error handling for stale/unavailable reviews.
+- Completed: QA added Git workflow/API coverage for staged and unstaged redaction, stale digest rejection, protected-path omission, response binding, and large patch truncation, plus auth capability and static UI wiring assertions.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can load a checkpoint-bound raw Git diff review for tracked staged and unstaged patch content, and the backend returns only fresh digest-bound, redacted, bounded sections with safe metadata.
+- Still out of scope after this slice: accept/reject AI-change artifacts, untracked file content preview, direct Git run buttons from the dashboard, branch cleanup, PR labels/reviewers/assignees/projects/templates, rollback/revert flows, allowed remote/branch policy editors, and deeper Git audit/observability.
+
+Validation:
+- Focused backend/UI validation passed: `uv run ruff format --check src\dgentic\git_workflows.py src\dgentic\api\routes.py tests\test_git_workflows.py tests\test_auth.py tests\test_ui.py`, `uv run ruff check src\dgentic\git_workflows.py src\dgentic\api\routes.py tests\test_git_workflows.py tests\test_auth.py tests\test_ui.py`, `node --check src\dgentic\ui\app.js`, `uv run pytest tests\test_git_workflows.py -q` with 55 tests, `uv run pytest tests\test_auth.py -q` with 136 tests, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49695`: `/ui/` served, `/cli/git/diff-reviews` was registered, and `/ui/app.js` exposed the Git diff review helpers.
+
 ### Sprint 16 BL-010u Structured Approval Review Summaries
 
 Status: completed for the scoped approval-review UX slice; Sprint 16 remains active for full chat workflows, full raw diff/AI-change review, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

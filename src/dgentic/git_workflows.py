@@ -24,6 +24,7 @@ GitWorkflowAction = Literal["commit", "push", "pr"]
 GIT_CHECKPOINT_TIMEOUT_SECONDS = 10
 MAX_CHANGED_PATHS = 50
 MAX_CHANGED_PATH_CHARS = 240
+MAX_DIFF_REVIEW_SECTION_BYTES = 32 * 1024
 MAX_COMMIT_MESSAGE_CHARS = 240
 MAX_PR_TITLE_CHARS = 200
 MAX_PR_BODY_CHARS = 2_000
@@ -48,6 +49,27 @@ class GitWorkflowCheckpointRequest(BaseModel):
     action: GitWorkflowAction
     cwd: Path | None = None
     test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
+class GitRawDiffReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    action: GitWorkflowAction
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    include_staged: bool = True
+    include_unstaged: bool = True
+    context_lines: int = Field(default=3, ge=0, le=20)
     requested_by: str | None = Field(default=None, max_length=256)
     agent_id: str | None = Field(default=None, max_length=256)
     agent_role: str | None = Field(default=None, max_length=256)
@@ -182,6 +204,36 @@ class GitDiffStat(BaseModel):
     insertions: int = 0
     deletions: int = 0
     summary: str = ""
+
+
+class GitRawDiffSection(BaseModel):
+    scope: Literal["staged", "unstaged"]
+    patch: str = ""
+    patch_digest: str = ""
+    redacted: bool = False
+    truncated: bool = False
+    omitted_protected_paths: list[str] = Field(default_factory=list)
+    byte_count: int = 0
+    returned_byte_count: int = 0
+
+
+class GitRawDiffReview(BaseModel):
+    action: GitWorkflowAction
+    repo_root: Path
+    cwd: Path
+    branch: str
+    head_sha: str = ""
+    checkpoint_digest: str
+    diff_stat: GitDiffStat = Field(default_factory=GitDiffStat)
+    changed_paths: list[str] = Field(default_factory=list)
+    changed_paths_truncated: bool = False
+    sections: list[GitRawDiffSection] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class GitWorkflowCheckpoint(BaseModel):
@@ -382,6 +434,74 @@ def create_git_workflow_checkpoint(
         test_evidence_count=evidence_count,
     )
     return checkpoint
+
+
+def create_git_raw_diff_review(
+    request: GitRawDiffReviewRequest,
+    *,
+    actor: str | None = None,
+) -> GitRawDiffReview:
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action=request.action,
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git diff review requires a fresh matching checkpoint digest.")
+
+    git_executable = _resolve_git_executable()
+    sections: list[GitRawDiffSection] = []
+    if request.include_staged:
+        sections.append(
+            _git_diff_review_section(
+                git_executable,
+                checkpoint.repo_root,
+                scope="staged",
+                cached=True,
+                context_lines=request.context_lines,
+            )
+        )
+    if request.include_unstaged:
+        sections.append(
+            _git_diff_review_section(
+                git_executable,
+                checkpoint.repo_root,
+                scope="unstaged",
+                cached=False,
+                context_lines=request.context_lines,
+            )
+        )
+    warnings = _diff_review_warnings(checkpoint, sections)
+    review = GitRawDiffReview(
+        action=checkpoint.action,
+        repo_root=checkpoint.repo_root,
+        cwd=checkpoint.cwd,
+        branch=checkpoint.branch,
+        head_sha=checkpoint.head_sha,
+        checkpoint_digest=checkpoint.checkpoint_digest,
+        diff_stat=checkpoint.diff_stat,
+        changed_paths=checkpoint.changed_paths,
+        changed_paths_truncated=checkpoint.changed_paths_truncated,
+        sections=sections,
+        warnings=warnings,
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+    )
+    _record_diff_review_event(
+        review,
+        actor=actor or request.requested_by,
+        test_evidence_count=len(request.test_evidence),
+    )
+    return review
 
 
 def build_git_commit_approval_request(
@@ -1488,6 +1608,90 @@ def _git_diff_digest(git_executable: str, repo_root: Path, *, cached: bool) -> s
     return f"sha256:{sha256(output.encode('utf-8')).hexdigest()}"
 
 
+def _git_diff_review_section(
+    git_executable: str,
+    repo_root: Path,
+    *,
+    scope: Literal["staged", "unstaged"],
+    cached: bool,
+    context_lines: int,
+) -> GitRawDiffSection:
+    paths = _git_diff_name_only(git_executable, repo_root, cached=cached)
+    allowed_paths: list[str] = []
+    omitted_paths: list[str] = []
+    for path in paths:
+        if _is_protected_path(path) or redact_sensitive_values(path) != path:
+            omitted_paths.append(_redact_path(path))
+        else:
+            allowed_paths.append(path)
+
+    raw_patch = ""
+    if allowed_paths:
+        args = [
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            f"--unified={context_lines}",
+        ]
+        if cached:
+            args.append("--cached")
+        args.extend(["--", *allowed_paths])
+        raw_patch = _run_git(git_executable, repo_root, args)
+
+    redacted_patch = redact_sensitive_values(raw_patch)
+    patch, truncated = _truncate_diff_review_patch(redacted_patch)
+    return GitRawDiffSection(
+        scope=scope,
+        patch=patch,
+        patch_digest=_text_digest(redacted_patch),
+        redacted=redacted_patch != raw_patch,
+        truncated=truncated,
+        omitted_protected_paths=omitted_paths,
+        byte_count=len(redacted_patch.encode("utf-8")),
+        returned_byte_count=len(patch.encode("utf-8")),
+    )
+
+
+def _git_diff_name_only(git_executable: str, repo_root: Path, *, cached: bool) -> list[str]:
+    args = ["diff", "--no-ext-diff", "--name-only", "-z"]
+    if cached:
+        args.append("--cached")
+    output = _git_optional_output(git_executable, repo_root, args)
+    return [path for path in output.split("\0") if path]
+
+
+def _truncate_diff_review_patch(patch: str) -> tuple[str, bool]:
+    encoded = patch.encode("utf-8")
+    if len(encoded) <= MAX_DIFF_REVIEW_SECTION_BYTES:
+        return patch, False
+    marker = "\n... [diff review truncated]\n"
+    budget = max(0, MAX_DIFF_REVIEW_SECTION_BYTES - len(marker.encode("utf-8")))
+    truncated = encoded[:budget].decode("utf-8", errors="ignore").rstrip()
+    return f"{truncated}{marker}", True
+
+
+def _diff_review_warnings(
+    checkpoint: GitWorkflowCheckpoint,
+    sections: list[GitRawDiffSection],
+) -> list[str]:
+    warnings: list[str] = []
+    if checkpoint.untracked_count:
+        warnings.append("Untracked file contents are not included in raw diff review.")
+    if checkpoint.blockers:
+        warnings.append("Checkpoint blockers are still present; review readiness before approval.")
+    if any(section.redacted for section in sections):
+        warnings.append("Secret-shaped patch content was redacted before returning this review.")
+    if any(section.truncated for section in sections):
+        warnings.append("Large patch content was truncated for bounded review output.")
+    if any(section.omitted_protected_paths for section in sections):
+        warnings.append("Protected or secret-shaped paths were omitted from patch content.")
+    if not sections:
+        warnings.append("No diff sections were requested.")
+    elif not any(section.patch for section in sections):
+        warnings.append("No tracked staged or unstaged patch content is available.")
+    return warnings
+
+
 def _parse_shortstat(output: str) -> GitDiffStat:
     if not output.strip():
         return GitDiffStat()
@@ -1616,6 +1820,40 @@ def _record_checkpoint_event(
             "agent_id": checkpoint.agent_id,
             "agent_role": checkpoint.agent_role,
             "task_id": checkpoint.task_id,
+        },
+    )
+
+
+def _record_diff_review_event(
+    review: GitRawDiffReview,
+    *,
+    actor: str | None,
+    test_evidence_count: int,
+) -> None:
+    event_log.record(
+        LogEventType.cli,
+        "Created git raw diff review.",
+        actor=actor or "system",
+        subject_id=review.checkpoint_digest,
+        metadata={
+            "action": review.action,
+            "repo_root": str(review.repo_root),
+            "branch": review.branch,
+            "head_sha": review.head_sha,
+            "checkpoint_digest": review.checkpoint_digest,
+            "section_count": len(review.sections),
+            "redacted_sections": sum(1 for section in review.sections if section.redacted),
+            "truncated_sections": sum(1 for section in review.sections if section.truncated),
+            "omitted_protected_path_count": sum(
+                len(section.omitted_protected_paths) for section in review.sections
+            ),
+            "returned_byte_count": sum(section.returned_byte_count for section in review.sections),
+            "warning_count": len(review.warnings),
+            "test_evidence_count": test_evidence_count,
+            "requested_by": review.requested_by,
+            "agent_id": review.agent_id,
+            "agent_role": review.agent_role,
+            "task_id": review.task_id,
         },
     )
 

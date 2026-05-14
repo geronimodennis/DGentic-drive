@@ -23,6 +23,8 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "credential_process_adapters",
         "credential_process_max_output_bytes",
         "credential_process_timeout_seconds",
+        "credential_secret_manager_adapters",
+        "credential_secret_manager_allowed_base_urls",
         "external_openai_compatible_api_key_env",
         "external_openai_compatible_base_url",
         "external_openai_compatible_credential_ref",
@@ -55,6 +57,7 @@ _MANAGED_SETTINGS_MAX_BYTES = 256 * 1024
 _JSON_STRING_SETTINGS_FIELDS = frozenset(
     {
         "credential_process_adapters",
+        "credential_secret_manager_adapters",
         "managed_credential_references",
         "managed_cli_policy_rules",
         "managed_command_recipes",
@@ -170,6 +173,8 @@ _SECRET_SETTINGS_FIELDS = frozenset(
         "approval_digest_key",
         "auth_tokens",
         "credential_process_adapters",
+        "credential_secret_manager_adapters",
+        "credential_secret_manager_allowed_base_urls",
         "credential_vault_key",
         "external_openai_compatible_api_key_env",
         "external_openai_compatible_credential_ref",
@@ -221,6 +226,8 @@ class Settings(BaseSettings):
     managed_credential_references: str = ""
     credential_vault_key: str = ""
     credential_process_adapters: str = ""
+    credential_secret_manager_adapters: str = ""
+    credential_secret_manager_allowed_base_urls: str = ""
     credential_process_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
     credential_process_max_output_bytes: int = Field(default=4096, ge=1, le=65536)
     web_retrieval_timeout_seconds: float = Field(default=10.0, ge=0.1, le=30.0)
@@ -482,6 +489,35 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
         raise ManagedSettingsError("Managed settings cannot disable already-effective auth.")
 
     for key, value in values.items():
+        if key == "credential_secret_manager_adapters":
+            from dgentic.credentials import (
+                CredentialReferenceError,
+                credential_secret_manager_adapters,
+            )
+
+            try:
+                credential_secret_manager_adapters(
+                    Settings.model_validate({**settings.model_dump(), key: value})
+                )
+            except CredentialReferenceError as exc:
+                raise ManagedSettingsError(
+                    "credential_secret_manager_adapters is invalid."
+                ) from exc
+            continue
+        if key == "credential_secret_manager_allowed_base_urls":
+            from dgentic.credentials import (
+                CredentialReferenceError,
+                credential_secret_manager_allowed_base_urls,
+            )
+
+            try:
+                credential_secret_manager_allowed_base_urls(
+                    Settings.model_validate({**settings.model_dump(), key: value})
+                )
+            except CredentialReferenceError as exc:
+                raise ManagedSettingsError(
+                    "credential_secret_manager_allowed_base_urls is invalid."
+                ) from exc
         if key == "managed_cli_policy_rules":
             _parse_managed_cli_policy_rules(value)
         if key == "managed_command_recipes":
@@ -729,7 +765,7 @@ def _parse_managed_credential_references(raw_value: str):
         seen_ids.add(record_id)
 
         source_type = normalized_record.get("source_type")
-        if source_type not in {"env", "external_process"}:
+        if source_type not in {"env", "external_process", "secret_manager"}:
             raise ManagedSettingsError("Managed credential reference source_type is invalid.")
 
         _validate_managed_credential_reference_metadata(normalized_record)

@@ -1342,6 +1342,91 @@ def test_external_process_credential_reference_lifecycle_is_metadata_only(
     assert "external-process-secret" not in state_text
 
 
+def test_secret_manager_credential_reference_lifecycle_is_metadata_only(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = production_client_with_state(tmp_path, monkeypatch)
+    create_operator(client, "operator-credential", ["credentials"])
+    credential_token = issue_auth_token(client, "operator-credential", ["credentials"])
+
+    create_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "secret_manager",
+            "adapter_id": "vault-main",
+            "secret_name": "providers/openai",
+            "label": "Vault provider",
+        },
+    )
+    ref_id = create_response.json()["id"]
+    list_response = client.get(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+    )
+    revoke_response = client.post(
+        f"/credentials/references/{ref_id}/revoke",
+        headers=bearer(credential_token["token"]),
+    )
+    invalid_mix_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "secret_manager",
+            "env_var": "DGENTIC_TEST_EXTERNAL_KEY",
+            "adapter_id": "vault-main",
+            "secret_name": "providers/openai",
+        },
+    )
+    invalid_path_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "secret_manager",
+            "adapter_id": "vault-main",
+            "secret_name": "/providers/openai",
+        },
+    )
+    raw_secret_response = client.post(
+        "/credentials/references",
+        headers=bearer(credential_token["token"]),
+        json={
+            "source_type": "secret_manager",
+            "adapter_id": "vault-main",
+            "secret_name": "providers/openai",
+            "secret_value": "vault-raw-secret",
+        },
+    )
+    state_text = (tmp_path / "state" / "credential-references.json").read_text(encoding="utf-8")
+    state_records = credential_state_records(tmp_path)
+    logs = json.dumps(
+        [event.model_dump(mode="json") for event in event_log.list(LogEventType.credential)]
+    )
+
+    assert create_response.status_code == 201
+    assert create_response.json()["source_type"] == "secret_manager"
+    assert create_response.json()["env_var"] == ""
+    assert create_response.json()["adapter_id"] == "vault-main"
+    assert create_response.json()["secret_name"] == "providers/openai"
+    assert state_records[0]["source_type"] == "secret_manager"
+    assert state_records[0]["adapter_id"] == "vault-main"
+    assert state_records[0]["secret_name"] == "providers/openai"
+    assert state_records[0]["encrypted_secret"] == ""
+    assert list_response.status_code == 200
+    assert "secret_manager" in list_response.text
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == "revoked"
+    assert invalid_mix_response.status_code == 422
+    assert invalid_path_response.status_code == 422
+    assert raw_secret_response.status_code == 400
+    assert "vault-raw-secret" not in create_response.text
+    assert "vault-raw-secret" not in list_response.text
+    assert "vault-raw-secret" not in state_text
+    assert "vault-raw-secret" not in logs
+    assert "encrypted_secret" not in create_response.text
+
+
 def test_credential_reference_list_returns_managed_and_local_sources_without_secret_echo(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

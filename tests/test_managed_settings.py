@@ -5,8 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dgentic.auth import AuthConfigurationError
+from dgentic.credentials import credential_secret_manager_adapters
 from dgentic.main import create_app
 from dgentic.network_policy import evaluate_network_domain_policy
+from dgentic.redaction import REDACTED_SECRET_MARKER
 from dgentic.settings import (
     ManagedSettingsError,
     get_effective_settings_view,
@@ -323,6 +325,169 @@ def test_managed_credential_reference_records_apply_only_from_managed_settings(
     assert records[1].secret_name == "runtime/worker"
 
 
+def test_managed_secret_manager_adapters_and_references_apply_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "credential_secret_manager_adapters": {
+                    "vault-main": {
+                        "type": "hashicorp_vault_kv2",
+                        "base_url": "https://vault.example.test/v1/",
+                        "mount": "secret",
+                        "field": "api_key",
+                        "token_env_var": "DGENTIC_VAULT_TOKEN",
+                        "timeout_seconds": 1.5,
+                        "max_response_bytes": 2048,
+                    }
+                },
+                "credential_secret_manager_allowed_base_urls": ("https://vault.example.test/v1/"),
+                "managed_credential_references": [
+                    {
+                        "id": "managed.provider-vault",
+                        "source_type": "secret_manager",
+                        "adapter_id": "vault-main",
+                        "secret_name": "providers/openai",
+                        "label": "Managed Vault provider",
+                        "purpose": "provider",
+                        "status": "active",
+                    }
+                ],
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    records = managed_credential_references()
+    adapters = credential_secret_manager_adapters(settings)
+
+    assert view.managed_fields == [
+        "credential_secret_manager_adapters",
+        "credential_secret_manager_allowed_base_urls",
+        "managed_credential_references",
+    ]
+    assert fields["credential_secret_manager_adapters"].source == "managed"
+    assert fields["credential_secret_manager_adapters"].redacted is True
+    assert fields["credential_secret_manager_adapters"].value == REDACTED_SECRET_MARKER
+    assert fields["credential_secret_manager_allowed_base_urls"].source == "managed"
+    assert fields["credential_secret_manager_allowed_base_urls"].redacted is True
+    assert fields["credential_secret_manager_allowed_base_urls"].value == REDACTED_SECRET_MARKER
+    assert fields["managed_credential_references"].source == "managed"
+    assert fields["managed_credential_references"].redacted is True
+    assert fields["managed_credential_references"].value == REDACTED_SECRET_MARKER
+    assert records[0].source == "managed"
+    assert records[0].source_type == "secret_manager"
+    assert records[0].adapter_id == "vault-main"
+    assert records[0].secret_name == "providers/openai"
+    assert adapters["vault-main"].base_url == "https://vault.example.test/v1"
+    assert adapters["vault-main"].field == "api_key"
+    assert adapters["vault-main"].token_env_var == "DGENTIC_VAULT_TOKEN"
+    assert "DGENTIC_VAULT_TOKEN" in settings.credential_secret_manager_adapters
+
+
+@pytest.mark.parametrize(
+    "adapters_payload",
+    [
+        {"vault/main": {"base_url": "https://vault.example.test", "token_env_var": "VAULT_TOKEN"}},
+        {"vault-main": "https://vault.example.test"},
+        {"vault-main": {"base_url": "http://vault.example.test", "token_env_var": "VAULT_TOKEN"}},
+        {
+            "vault-main": {
+                "base_url": "https://user:pass@vault.example.test",
+                "token_env_var": "VAULT_TOKEN",
+            }
+        },
+        {
+            "vault-main": {
+                "base_url": "https://vault.example.test?token=raw",
+                "token_env_var": "VAULT_TOKEN",
+            }
+        },
+        {
+            "vault-main": {
+                "base_url": "https://vault.example.test",
+                "token_env_var": "not a safe env",
+            }
+        },
+        {
+            "vault-main": {
+                "base_url": "https://vault.example.test",
+                "mount": "../secret",
+                "token_env_var": "VAULT_TOKEN",
+            }
+        },
+        {
+            "vault-main": {
+                "base_url": "https://vault.example.test",
+                "mount": "secret/./team",
+                "token_env_var": "VAULT_TOKEN",
+            }
+        },
+        {
+            "vault-main": {
+                "type": "aws_secrets_manager",
+                "base_url": "https://vault.example.test",
+                "token_env_var": "VAULT_TOKEN",
+            }
+        },
+        {
+            "vault-main": {
+                "base_url": "https://vault.example.test",
+                "token_env_var": "VAULT_TOKEN",
+                "unexpected": True,
+            }
+        },
+    ],
+)
+def test_managed_secret_manager_adapters_fail_closed(
+    tmp_path,
+    monkeypatch,
+    adapters_payload,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"credential_secret_manager_adapters": adapters_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match="credential_secret_manager_adapters"):
+        get_settings()
+
+
+@pytest.mark.parametrize(
+    "allowed_urls",
+    [
+        "http://vault.example.test",
+        "https://user:pass@vault.example.test",
+        "https://vault.example.test?token=raw",
+        "https://vault.example.test/TOKEN=raw-secret",
+    ],
+)
+def test_managed_secret_manager_allowed_base_urls_fail_closed(
+    tmp_path,
+    monkeypatch,
+    allowed_urls: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"credential_secret_manager_allowed_base_urls": allowed_urls}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError, match="credential_secret_manager_allowed_base_urls"):
+        get_settings()
+
+
 @pytest.mark.parametrize(
     ("records_payload", "error_match"),
     [
@@ -637,6 +802,46 @@ def test_managed_plugin_component_records_fail_closed(
                 }
             ],
             "source_type is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "managed.vault-mix",
+                    "source_type": "secret_manager",
+                    "env_var": "DGENTIC_KEY",
+                    "adapter_id": "vault-main",
+                    "secret_name": "providers/openai",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "Managed credential reference is invalid",
+        ),
+        (
+            [
+                {
+                    "id": "managed.vault-secret-name",
+                    "source_type": "secret_manager",
+                    "adapter_id": "vault-main",
+                    "secret_name": "TOKEN=raw-secret",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "secret-shaped",
+        ),
+        (
+            [
+                {
+                    "id": "managed.vault-bad-path",
+                    "source_type": "secret_manager",
+                    "adapter_id": "vault-main",
+                    "secret_name": "/providers/openai",
+                    "purpose": "provider",
+                    "status": "active",
+                }
+            ],
+            "Managed credential reference is invalid",
         ),
         (
             [

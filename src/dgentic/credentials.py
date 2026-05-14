@@ -5,12 +5,16 @@ import subprocess
 import threading
 from datetime import UTC, datetime
 from hashlib import sha256
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dgentic.events import event_log
 from dgentic.redaction import redact_sensitive_values
@@ -21,9 +25,12 @@ from dgentic.storage import JsonCollection
 CREDENTIAL_ENV_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 CREDENTIAL_ADAPTER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 CREDENTIAL_SECRET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.:/@-]{1,200}$")
+CREDENTIAL_SECRET_PATH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@/-]{0,199}$")
+CREDENTIAL_SECRET_MANAGER_FIELD_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
 CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES = 64 * 1024
-CredentialSourceType = Literal["env", "external_process", "local_vault"]
+CredentialSourceType = Literal["env", "external_process", "local_vault", "secret_manager"]
 CredentialReferenceSource = Literal["local", "managed"]
+CredentialSecretManagerType = Literal["hashicorp_vault_kv2"]
 
 
 class CredentialReferenceError(RuntimeError):
@@ -40,6 +47,46 @@ class CredentialResolutionError(CredentialReferenceError):
 
 class CredentialProcessAdapter(BaseModel):
     argv: list[str] = Field(min_length=1, max_length=20)
+
+
+class CredentialSecretManagerAdapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: CredentialSecretManagerType = "hashicorp_vault_kv2"
+    base_url: str = Field(min_length=1, max_length=512)
+    mount: str = Field(default="secret", min_length=1, max_length=120)
+    field: str = Field(default="value", min_length=1, max_length=128)
+    token_env_var: str = Field(min_length=1, max_length=128)
+    timeout_seconds: float = Field(default=5.0, ge=0.1, le=30.0)
+    max_response_bytes: int = Field(default=4096, ge=1, le=65536)
+
+    @field_validator("base_url")
+    @classmethod
+    def base_url_must_be_safe(cls, value: str) -> str:
+        return _normalize_secret_manager_base_url(value)
+
+    @field_validator("mount")
+    @classmethod
+    def mount_must_be_safe_path(cls, value: str) -> str:
+        return _validate_secret_manager_path(value, field_name="mount")
+
+    @field_validator("field")
+    @classmethod
+    def field_must_be_safe_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not CREDENTIAL_SECRET_MANAGER_FIELD_PATTERN.fullmatch(normalized):
+            raise ValueError("field contains unsupported characters.")
+        if redact_sensitive_values(normalized) != normalized:
+            raise ValueError("field contains secret-shaped text.")
+        return normalized
+
+    @field_validator("token_env_var")
+    @classmethod
+    def token_env_var_must_be_safe_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not CREDENTIAL_ENV_PATTERN.fullmatch(normalized):
+            raise ValueError("token_env_var must be a valid environment variable name.")
+        return normalized
 
 
 class CredentialReferenceRequest(BaseModel):
@@ -360,6 +407,13 @@ def credential_secret_for_reference(
         return _external_process_secret(record, settings=settings or get_settings())
     if record.source_type == "local_vault":
         return _local_vault_secret(record, settings=settings or get_settings())
+    if record.source_type == "secret_manager":
+        credential_environ = os.environ if environ is None else environ
+        return _secret_manager_secret(
+            record,
+            settings=settings or get_settings(),
+            environ=credential_environ,
+        )
     raise CredentialConfigurationError("Credential reference source is not supported.")
 
 
@@ -386,6 +440,16 @@ def credential_identity_for_reference(
         _credential_vault_fernet(settings or get_settings())
         encrypted_secret_digest = sha256(record.encrypted_secret.encode("utf-8")).hexdigest()[:16]
         return f"credential-reference:{credential_ref_id}:local_vault:{encrypted_secret_digest}"
+    if record.source_type == "secret_manager":
+        adapter_digest = _secret_manager_adapter_digest(
+            record.adapter_id,
+            settings=settings or get_settings(),
+        )
+        secret_name_digest = sha256(record.secret_name.encode("utf-8")).hexdigest()[:16]
+        return (
+            f"credential-reference:{credential_ref_id}:secret_manager:"
+            f"{record.adapter_id}:{secret_name_digest}:{adapter_digest}"
+        )
     raise CredentialConfigurationError("Credential reference source is not supported.")
 
 
@@ -468,6 +532,67 @@ def _redact_credential_label(value: str) -> str:
     return redact_sensitive_values(value.strip())
 
 
+def _normalize_secret_manager_base_url(value: str) -> str:
+    normalized = value.strip()
+    try:
+        parts = urlsplit(normalized)
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("base_url is invalid.") from exc
+    if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+        raise ValueError("base_url must use http or https with a host.")
+    if parts.username or parts.password:
+        raise ValueError("base_url must not include credentials.")
+    if parts.query or parts.fragment:
+        raise ValueError("base_url must not include query or fragment.")
+    if redact_sensitive_values(normalized) != normalized:
+        raise ValueError("base_url contains secret-shaped text.")
+    hostname = parts.hostname.lower()
+    if parts.scheme.lower() != "https" and not _is_local_secret_manager_host(hostname):
+        raise ValueError("base_url must use https unless it targets localhost.")
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None:
+        netloc = f"[{hostname}]:{port}" if ":" in hostname else f"{hostname}:{port}"
+    path = parts.path.rstrip("/")
+    if path:
+        path_parts = path.lstrip("/").split("/")
+        if any(
+            part in {"", ".", ".."} or not CREDENTIAL_SECRET_PATH_PATTERN.fullmatch(part)
+            for part in path_parts
+        ):
+            raise ValueError("base_url path is invalid.")
+        path = "/" + "/".join(path_parts)
+    return urlunsplit((parts.scheme.lower(), netloc, path, "", ""))
+
+
+def _is_local_secret_manager_host(hostname: str) -> bool:
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_secret_manager_path(value: str, *, field_name: str) -> str:
+    raw_value = value.strip()
+    normalized = raw_value.strip("/")
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty.")
+    if not CREDENTIAL_SECRET_PATH_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{field_name} contains unsupported characters.")
+    path_segments = normalized.split("/")
+    if (
+        any(part in {"", ".", ".."} for part in path_segments)
+        or "//" in normalized
+        or raw_value != normalized
+    ):
+        raise ValueError(f"{field_name} contains unsupported path syntax.")
+    if redact_sensitive_values(normalized) != normalized:
+        raise ValueError(f"{field_name} contains secret-shaped text.")
+    return normalized
+
+
 def _credential_reference_for_use(
     credential_ref_id: str,
     *,
@@ -503,6 +628,13 @@ def _validate_source_fields(
             raise ValueError("env_var is only valid for env credential references.")
         if not adapter_id or not secret_name:
             raise ValueError("Invalid credential source fields.")
+        return
+    if source_type == "secret_manager":
+        if env_var:
+            raise ValueError("env_var is only valid for env credential references.")
+        if not adapter_id or not secret_name:
+            raise ValueError("Invalid credential source fields.")
+        _validate_secret_manager_path(secret_name, field_name="secret_name")
         return
     if source_type == "local_vault":
         if env_var or adapter_id or secret_name:
@@ -659,6 +791,237 @@ def _process_adapter_digest(adapter_id: str, *, settings: Settings) -> str:
         raise CredentialConfigurationError("Credential process adapter is not configured.")
     payload = json.dumps(adapter.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def credential_secret_manager_adapters(
+    settings: Settings | None = None,
+) -> dict[str, CredentialSecretManagerAdapter]:
+    return _credential_secret_manager_adapters(settings or get_settings())
+
+
+def credential_secret_manager_allowed_base_urls(settings: Settings | None = None) -> set[str]:
+    active_settings = settings or get_settings()
+    raw_config = active_settings.credential_secret_manager_allowed_base_urls.strip()
+    if not raw_config:
+        return set()
+    allowed_urls: set[str] = set()
+    for raw_url in raw_config.split(","):
+        if not raw_url.strip():
+            continue
+        try:
+            allowed_urls.add(_normalize_secret_manager_base_url(raw_url))
+        except ValueError as exc:
+            raise CredentialConfigurationError(
+                "Credential secret-manager allowed base URLs are invalid."
+            ) from exc
+    return allowed_urls
+
+
+def _credential_secret_manager_adapters(
+    settings: Settings,
+) -> dict[str, CredentialSecretManagerAdapter]:
+    raw_config = settings.credential_secret_manager_adapters.strip()
+    if not raw_config:
+        return {}
+    try:
+        parsed = json.loads(raw_config)
+    except json.JSONDecodeError as exc:
+        raise CredentialConfigurationError(
+            "Credential secret-manager adapters are not configured."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise CredentialConfigurationError("Credential secret-manager adapters are not configured.")
+
+    adapters: dict[str, CredentialSecretManagerAdapter] = {}
+    for adapter_id, adapter_config in parsed.items():
+        if not isinstance(adapter_id, str) or not CREDENTIAL_ADAPTER_ID_PATTERN.fullmatch(
+            adapter_id
+        ):
+            raise CredentialConfigurationError(
+                "Credential secret-manager adapters are not configured."
+            )
+        if not isinstance(adapter_config, dict):
+            raise CredentialConfigurationError(
+                "Credential secret-manager adapters are not configured."
+            )
+        try:
+            adapter = CredentialSecretManagerAdapter.model_validate(adapter_config)
+        except ValueError as exc:
+            raise CredentialConfigurationError(
+                "Credential secret-manager adapters are not configured."
+            ) from exc
+        adapters[adapter_id] = adapter
+    return adapters
+
+
+def _secret_manager_adapter_for_record(
+    record: CredentialReferenceRecord,
+    *,
+    settings: Settings,
+) -> CredentialSecretManagerAdapter:
+    adapter = _credential_secret_manager_adapters(settings).get(record.adapter_id)
+    if adapter is None:
+        raise CredentialConfigurationError("Credential secret-manager adapter is not configured.")
+    return adapter
+
+
+def _secret_manager_adapter_digest(adapter_id: str, *, settings: Settings) -> str:
+    adapter = _credential_secret_manager_adapters(settings).get(adapter_id)
+    if adapter is None:
+        raise CredentialConfigurationError("Credential secret-manager adapter is not configured.")
+    _validate_secret_manager_egress(adapter, settings=settings)
+    payload = json.dumps(adapter.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _validate_secret_manager_egress(
+    adapter: CredentialSecretManagerAdapter,
+    *,
+    settings: Settings,
+) -> None:
+    allowed_urls = credential_secret_manager_allowed_base_urls(settings)
+    if adapter.base_url not in allowed_urls:
+        raise CredentialConfigurationError("Credential secret-manager base_url is not allowed.")
+    try:
+        from dgentic.network_policy import (
+            NetworkDomainPolicyError,
+            evaluate_network_domain_policy,
+        )
+
+        decision = evaluate_network_domain_policy(
+            adapter.base_url,
+            settings=settings,
+            action="credential_secret",
+        )
+    except NetworkDomainPolicyError as exc:
+        raise CredentialConfigurationError(
+            "Credential secret-manager egress policy is invalid."
+        ) from exc
+    if decision.mode == "deny":
+        raise CredentialConfigurationError(
+            "Credential secret-manager domain is denied by network policy."
+        )
+    if decision.mode == "approval_required":
+        raise CredentialConfigurationError(
+            "Credential secret-manager domain requires network approval."
+        )
+
+
+class _NoCredentialSecretRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> None:
+        raise CredentialResolutionError("Credential secret-manager adapter failed.")
+
+
+_CREDENTIAL_SECRET_OPENER = build_opener(_NoCredentialSecretRedirectHandler, ProxyHandler({}))
+
+
+def _secret_manager_secret(
+    record: CredentialReferenceRecord,
+    *,
+    settings: Settings,
+    environ: Any,
+) -> str:
+    adapter = _secret_manager_adapter_for_record(record, settings=settings)
+    if adapter.type != "hashicorp_vault_kv2":
+        raise CredentialConfigurationError("Credential secret-manager adapter is not configured.")
+    _validate_secret_manager_egress(adapter, settings=settings)
+    token_value = environ.get(adapter.token_env_var, "")
+    if not isinstance(token_value, str) or not token_value.strip():
+        raise CredentialResolutionError("Credential secret-manager adapter failed.")
+    token = token_value.strip()
+    url = _vault_kv2_secret_url(adapter, record.secret_name)
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "X-Vault-Token": token,
+        },
+        method="GET",
+    )
+    try:
+        response = _CREDENTIAL_SECRET_OPENER.open(request, timeout=adapter.timeout_seconds)
+        try:
+            raw_status = getattr(response, "status", None)
+            if raw_status is None:
+                raw_status = response.getcode()
+            status_code = int(raw_status)
+            if status_code < 200 or status_code >= 300:
+                raise CredentialResolutionError("Credential secret-manager adapter failed.")
+            raw_body = _read_bounded_secret_response(response, adapter.max_response_bytes)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+    except CredentialResolutionError:
+        raise
+    except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
+        raise CredentialResolutionError("Credential secret-manager adapter failed.") from exc
+    return _vault_kv2_secret_from_response(raw_body, field_name=adapter.field)
+
+
+def _vault_kv2_secret_url(adapter: CredentialSecretManagerAdapter, secret_name: str) -> str:
+    base_parts = urlsplit(adapter.base_url)
+    base_path = base_parts.path.strip("/")
+    path_parts: list[str] = []
+    if base_path:
+        path_parts.extend(base_path.split("/"))
+    if not path_parts or path_parts[-1] != "v1":
+        path_parts.append("v1")
+    path_parts.extend(adapter.mount.split("/"))
+    path_parts.append("data")
+    path_parts.extend(secret_name.split("/"))
+    encoded_path = "/" + "/".join(quote(part, safe="") for part in path_parts)
+    return urlunsplit(
+        (
+            base_parts.scheme,
+            base_parts.netloc,
+            encoded_path,
+            "",
+            "",
+        )
+    )
+
+
+def _read_bounded_secret_response(response: Any, max_response_bytes: int) -> bytes:
+    raw_body = response.read(max_response_bytes + 1)
+    if not isinstance(raw_body, bytes) or len(raw_body) > max_response_bytes:
+        raise CredentialResolutionError("Credential secret-manager adapter output is invalid.")
+    return raw_body
+
+
+def _vault_kv2_secret_from_response(raw_body: bytes, *, field_name: str) -> str:
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CredentialResolutionError(
+            "Credential secret-manager adapter output is invalid."
+        ) from exc
+    try:
+        secret_value = payload["data"]["data"][field_name]
+    except (KeyError, TypeError) as exc:
+        raise CredentialResolutionError(
+            "Credential secret-manager adapter output is invalid."
+        ) from exc
+    if not isinstance(secret_value, str):
+        raise CredentialResolutionError("Credential secret-manager adapter output is invalid.")
+    secret = secret_value.strip()
+    if (
+        not secret
+        or "\n" in secret
+        or "\r" in secret
+        or "\x00" in secret
+        or len(secret.encode("utf-8")) > CREDENTIAL_LOCAL_VAULT_SECRET_MAX_BYTES
+    ):
+        raise CredentialResolutionError("Credential secret-manager adapter output is invalid.")
+    return secret
 
 
 def _external_process_secret(record: CredentialReferenceRecord, *, settings: Settings) -> str:

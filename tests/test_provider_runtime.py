@@ -10,6 +10,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
+from dgentic import credentials as credential_module
 from dgentic import provider_runtime, provider_transport
 from dgentic.credentials import (
     CredentialReferenceRequest,
@@ -94,6 +95,42 @@ class FakeStreamResponse:
 
     def close(self) -> None:
         self.closed = True
+
+
+class FakeVaultResponse:
+    def __init__(self, body: bytes, *, status: int = 200) -> None:
+        self.body = body
+        self.status = status
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            return self.body
+        return self.body[:size]
+
+    def getcode(self) -> int:
+        return self.status
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class RecordingVaultOpener:
+    def __init__(self, body: bytes, *, status: int = 200) -> None:
+        self.body = body
+        self.status = status
+        self.calls: list[dict] = []
+
+    def open(self, request, *, timeout: float):
+        self.calls.append(
+            {
+                "method": request.get_method(),
+                "url": request.full_url,
+                "headers": {key.lower(): value for key, value in request.header_items()},
+                "timeout": timeout,
+            }
+        )
+        return FakeVaultResponse(self.body, status=self.status)
 
 
 class BlockingCredentialEnviron:
@@ -1325,6 +1362,296 @@ def test_external_generation_uses_local_vault_credential_reference_at_transport_
     assert raw_secret not in approval_storage
     assert raw_secret not in credential_storage
     assert raw_secret not in serialized_event
+    get_settings.cache_clear()
+
+
+def test_external_generation_uses_secret_manager_credential_reference_at_transport_time(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ADAPTERS",
+        json.dumps(
+            {
+                "vault-main": {
+                    "type": "hashicorp_vault_kv2",
+                    "base_url": "https://vault.example.test/v1",
+                    "mount": "secret",
+                    "field": "api_key",
+                    "token_env_var": "DGENTIC_VAULT_TOKEN",
+                    "timeout_seconds": 2.5,
+                    "max_response_bytes": 2048,
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ALLOWED_BASE_URLS",
+        "https://vault.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_VAULT_TOKEN", "host-vault-token-secret")
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(
+            source_type="secret_manager",
+            adapter_id="vault-main",
+            secret_name="providers/openai",
+            label="Vault provider",
+        )
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    vault_opener = RecordingVaultOpener(
+        json.dumps({"data": {"data": {"api_key": "external-vault-kv-secret"}}}).encode("utf-8")
+    )
+    tracked_credentials = TrackingCredentialEnviron(
+        key="DGENTIC_VAULT_TOKEN",
+        value="vault-token-secret",
+    )
+    event_log = RecordingEventLog()
+    calls: list[dict] = []
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        calls.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return FakeResponse(lm_studio_response("Hello from Vault KV credential."))
+
+    monkeypatch.setattr(credential_module._CREDENTIAL_SECRET_OPENER, "open", vault_opener.open)
+    monkeypatch.setattr(provider_runtime, "event_log", event_log)
+    monkeypatch.setattr(provider_runtime, "environ", tracked_credentials)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+
+    assert vault_opener.calls == []
+
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+    result = generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+    approval_storage = (tmp_path / "state" / "provider-approvals.json").read_text(encoding="utf-8")
+    credential_storage = (tmp_path / "state" / "credential-references.json").read_text(
+        encoding="utf-8"
+    )
+    serialized_event = json.dumps(event_log.records, sort_keys=True, default=str)
+
+    assert result.content == "Hello from Vault KV credential."
+    assert vault_opener.calls == [
+        {
+            "method": "GET",
+            "url": "https://vault.example.test/v1/secret/data/providers/openai",
+            "headers": {
+                "accept": "application/json",
+                "x-vault-token": "vault-token-secret",
+            },
+            "timeout": 2.5,
+        }
+    ]
+    assert tracked_credentials.calls == ["DGENTIC_VAULT_TOKEN"]
+    assert calls == [
+        {
+            "url": "https://provider.example.test/v1/chat/completions",
+            "authorization": "Bearer external-vault-kv-secret",
+            "timeout_seconds": 60.0,
+        }
+    ]
+    assert "external-vault-kv-secret" not in approval_storage
+    assert "external-vault-kv-secret" not in credential_storage
+    assert "external-vault-kv-secret" not in serialized_event
+    assert "vault-token-secret" not in approval_storage
+    assert "vault-token-secret" not in credential_storage
+    assert "vault-token-secret" not in serialized_event
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("vault_body", "token_value", "expected_vault_calls"),
+    [
+        (b'{"data":{"data":{"api_key":"vault-secret"}}}', "", 0),
+        (b"not-json", "vault-token-secret", 1),
+        (b'{"data":{"data":{"other":"vault-secret"}}}', "vault-token-secret", 1),
+        (b'{"data":{"data":{"api_key":"line-one\\nline-two"}}}', "vault-token-secret", 1),
+        (b'{"data":{"data":{"api_key":"oversized-secret-value"}}}', "vault-token-secret", 1),
+    ],
+)
+def test_secret_manager_credential_failure_preserves_provider_approval(
+    tmp_path,
+    monkeypatch,
+    vault_body: bytes,
+    token_value: str,
+    expected_vault_calls: int,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ADAPTERS",
+        json.dumps(
+            {
+                "vault-main": {
+                    "base_url": "https://vault.example.test",
+                    "mount": "secret",
+                    "field": "api_key",
+                    "token_env_var": "DGENTIC_VAULT_TOKEN",
+                    "timeout_seconds": 1.0,
+                    "max_response_bytes": 32,
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ALLOWED_BASE_URLS",
+        "https://vault.example.test",
+    )
+    if token_value:
+        monkeypatch.setenv("DGENTIC_VAULT_TOKEN", token_value)
+    else:
+        monkeypatch.delenv("DGENTIC_VAULT_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(
+            source_type="secret_manager",
+            adapter_id="vault-main",
+            secret_name="providers/openai",
+        )
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    vault_opener = RecordingVaultOpener(vault_body)
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        raise AssertionError("transport should not be called when Vault resolution fails")
+
+    monkeypatch.setattr(credential_module._CREDENTIAL_SECRET_OPENER, "open", vault_opener.open)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+
+    review = provider_runtime.get_provider_approval_review(approval.id)
+    credential_storage = (tmp_path / "state" / "credential-references.json").read_text(
+        encoding="utf-8"
+    )
+    assert len(vault_opener.calls) == expected_vault_calls
+    assert review.status == provider_runtime.ProviderApprovalStatus.approved
+    assert review.executed_at is None
+    assert "vault-secret" not in credential_storage
+    assert "vault-token-secret" not in credential_storage
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("policy_mode", ["deny", "approval_required"])
+def test_secret_manager_credential_blocks_policy_restricted_vault_egress_before_token_lookup(
+    tmp_path,
+    monkeypatch,
+    policy_mode: str,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ADAPTERS",
+        json.dumps(
+            {
+                "vault-main": {
+                    "base_url": "https://vault.example.test",
+                    "mount": "secret",
+                    "field": "api_key",
+                    "token_env_var": "DGENTIC_VAULT_TOKEN",
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_CREDENTIAL_SECRET_MANAGER_ALLOWED_BASE_URLS",
+        "https://vault.example.test",
+    )
+    monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-test")
+    get_settings.cache_clear()
+    credential_ref = create_credential_reference(
+        CredentialReferenceRequest(
+            source_type="secret_manager",
+            adapter_id="vault-main",
+            secret_name="providers/openai",
+        )
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_CREDENTIAL_REF", credential_ref.id)
+    get_settings.cache_clear()
+    request = ProviderGenerationRequest(
+        provider_id=EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="gpt-test",
+        messages=[{"role": "user", "content": "Say hello."}],
+        requested_by="operator",
+    )
+    approval = provider_runtime.create_provider_approval(
+        EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID,
+        request,
+    )
+    provider_runtime.approve_provider_approval(approval.id, decided_by="reviewer")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "vault.example.test", "mode": policy_mode}]}),
+    )
+    get_settings.cache_clear()
+    blocked_credentials = BlockingCredentialEnviron()
+    vault_opener = RecordingVaultOpener(
+        json.dumps({"data": {"data": {"api_key": "external-vault-kv-secret"}}}).encode("utf-8")
+    )
+
+    def fake_open_provider_request(request, *, timeout_seconds: float):
+        raise AssertionError("transport should not be called when Vault egress is blocked")
+
+    monkeypatch.setattr(provider_runtime, "environ", blocked_credentials)
+    monkeypatch.setattr(credential_module._CREDENTIAL_SECRET_OPENER, "open", vault_opener.open)
+    monkeypatch.setattr(provider_transport, "open_provider_request", fake_open_provider_request)
+
+    with pytest.raises(provider_runtime.ProviderConfigurationError):
+        generate_provider_completion(request.model_copy(update={"approval_id": approval.id}))
+
+    review = provider_runtime.get_provider_approval_review(approval.id)
+    assert blocked_credentials.calls == []
+    assert vault_opener.calls == []
+    assert review.status == provider_runtime.ProviderApprovalStatus.approved
+    assert review.executed_at is None
     get_settings.cache_clear()
 
 

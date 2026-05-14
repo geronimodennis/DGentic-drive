@@ -4,6 +4,41 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009au HashiCorp Vault KV Credential Adapter
+
+Status: completed for the scoped HashiCorp Vault KV v2 credential adapter slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, additional secret-manager adapters beyond HashiCorp Vault KV v2, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM resumed Sprint 15 after BL-009at and selected Full Sprint mode because credential resolution and secret-manager egress are security-sensitive.
+- Completed: Architect/Security scoped one first-class adapter for HashiCorp Vault KV v2 over HTTP, with metadata-only references, explicit base URL allowlists, network-policy checks, no redirects/proxies, no inherited token persistence, and no executable plugin/SDK loading.
+- Completed: Developer added `secret_manager` credential references, `credential_secret_manager_adapters`, `credential_secret_manager_allowed_base_urls`, Vault KV v2 URL construction, bounded Vault response parsing, sanitized environment token lookup, and provider/runtime credential identity support.
+- Completed: Security review found and Developer fixed three pre-commit issues: Vault egress now requires exact allowed base URLs plus deny/approval-required network-policy blocking before token lookup, secret-manager token lookup honors the caller-supplied sanitized environment mapping, and Vault mount/secret paths reject `.`/`..`/empty segments plus secret-shaped metadata.
+- Completed: QA added managed-settings, credential API, and provider runtime coverage for local and managed secret-manager reference metadata, fail-closed adapter/reference validation, Vault request URL/header behavior, no raw token/secret persistence, provider approval preservation on credential failure, and policy-restricted Vault egress before token lookup.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `source_type: "secret_manager"` credential references persist only adapter id and safe secret-name metadata for local and deployment-managed records.
+- Implemented in this slice: `credential_secret_manager_adapters` supports `hashicorp_vault_kv2` adapters with safe HTTPS/localhost base URLs, safe mount/field/token-env metadata, bounded timeouts, and bounded response size.
+- Implemented in this slice: `credential_secret_manager_allowed_base_urls` must include the exact normalized Vault base URL before a Vault adapter can be used.
+- Implemented in this slice: Vault KV v2 resolution happens at provider/runtime transport time, reads the Vault token only from the configured environment variable, calls `/v1/[mount]/data/[secret_name]`, expects `{"data":{"data":{"field":"secret"}}}`, rejects invalid or unsafe secret values, and never stores the Vault token or resolved secret in credential state, provider approvals, API responses, or audit events.
+- Implemented in this slice: Vault HTTP transport blocks redirects, disables proxies, and fails closed when network policy denies or requires approval for the Vault host because credential resolution has no network approval context.
+- Still out of scope after this slice: managed KMS custody, Vault token lifecycle management, Vault namespaces/enterprise features, cloud secret-manager adapters beyond HashiCorp Vault KV v2, OS-level egress isolation, and UI/CLI/VS Code client flows.
+
+Validation:
+- Focused secret-manager managed-settings gate passed: `python -m pytest tests\test_managed_settings.py -q -k "secret_manager or managed_credential_reference_records_fail_closed" --maxfail=1 -x` with 27 tests and 55 deselected.
+- Focused secret-manager auth/API gate passed: `python -m pytest tests\test_auth.py -q -k "secret_manager_credential_reference" --maxfail=1 -x` with 1 test and 128 deselected.
+- Focused secret-manager provider runtime gate passed: `python -m pytest tests\test_provider_runtime.py -q -k "secret_manager_credential" --maxfail=1 -x` with 8 tests and 125 deselected.
+- Combined credential/settings/provider gate passed: `python -m pytest tests\test_managed_settings.py tests\test_auth.py tests\test_provider_runtime.py -q -k "secret_manager or credential_reference or managed_settings" --maxfail=1 -x` with 108 tests and 236 deselected.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Affected suite gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_auth.py tests\test_provider_runtime.py tests\test_api.py --maxfail=1 -x` with 554 tests.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,294 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009at Direct Git PR Runner
 
 Status: completed for the scoped direct GitHub PR creation runner slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, first-class secret-manager adapters beyond the generic process-adapter bridge, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.

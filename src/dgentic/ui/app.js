@@ -2011,6 +2011,10 @@ function gitApprovalEndpoint(action) {
   return `/cli/git/${action}-approvals`;
 }
 
+function gitRunEndpoint(action) {
+  return `/cli/git/${action}-runs`;
+}
+
 function gitApprovalTimeout() {
   const timeout = Number(qs("#gitApprovalTimeoutInput").value || 30);
   return Number.isFinite(timeout) ? timeout : 30;
@@ -2039,10 +2043,25 @@ function gitApprovalPayload(checkpoint) {
   return payload;
 }
 
+function gitRunPayload(checkpoint) {
+  return gitApprovalPayload(checkpoint);
+}
+
+function validateGitCloseoutFields(checkpoint) {
+  if (checkpoint.action === "commit" && !qs("#gitCommitMessageInput").value.trim()) {
+    throw new Error("Commit message is required.");
+  }
+  if (checkpoint.action === "pr" && !qs("#gitPrTitleInput").value.trim()) {
+    throw new Error("PR title is required.");
+  }
+}
+
 function renderGitApprovalActions(checkpoint) {
   const panel = qs("#gitApprovalActions");
-  const output = qs("#gitApprovalOutput");
-  clear(output);
+  const approvalOutput = qs("#gitApprovalOutput");
+  const runOutput = qs("#gitRunOutput");
+  clear(approvalOutput);
+  clear(runOutput);
   if (!checkpoint) {
     panel.hidden = true;
     return;
@@ -2055,6 +2074,11 @@ function renderGitApprovalActions(checkpoint) {
     push: "Push Approval",
     pr: "PR Approval",
   };
+  const runLabels = {
+    commit: "Run Commit Now",
+    push: "Run Push Now",
+    pr: "Run PR Now",
+  };
   qs("#gitApprovalSummary").textContent = actionLabels[checkpoint.action] || "Checkpoint Approval Actions";
   qs("#gitCommitMessageField").hidden = checkpoint.action !== "commit";
   qs("#gitCommitMessageInput").required = checkpoint.action === "commit";
@@ -2064,8 +2088,13 @@ function renderGitApprovalActions(checkpoint) {
   qs("#gitPrOptionsField").hidden = checkpoint.action !== "pr";
   qs("#gitApprovalSubmitLabel").textContent = `Create ${actionLabels[checkpoint.action] || "Git"} Approval`;
   qs("#gitApprovalSubmitButton").disabled = !checkpoint.ready;
+  qs("#gitRunSubmitLabel").textContent = runLabels[checkpoint.action] || "Run Git Now";
+  qs("#gitRunSubmitButton").disabled = !checkpoint.ready;
   if (!checkpoint.ready) {
-    output.append(statusBox("Approval unavailable", "Resolve checkpoint blockers before creating a Git approval.", "blocked"));
+    approvalOutput.append(
+      statusBox("Approval unavailable", "Resolve checkpoint blockers before creating a Git approval.", "blocked"),
+    );
+    runOutput.append(statusBox("Direct run unavailable", "Resolve checkpoint blockers before running Git.", "blocked"));
   }
 }
 
@@ -2097,6 +2126,80 @@ async function createGitApproval(event) {
     target.append(statusBox("Git approval failed", error.message, "failed"));
     showToast(error.message);
   }
+}
+
+async function runGitWorkflow() {
+  if (!latestGitCheckpoint) {
+    return;
+  }
+  const target = qs("#gitRunOutput");
+  if (!latestGitCheckpoint.ready) {
+    clear(target);
+    target.append(statusBox("Direct run unavailable", "Resolve checkpoint blockers before running Git.", "blocked"));
+    return;
+  }
+  let payload = {};
+  try {
+    validateGitCloseoutFields(latestGitCheckpoint);
+    payload = gitRunPayload(latestGitCheckpoint);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Git run invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  const endpoint = gitRunEndpoint(latestGitCheckpoint.action);
+  clear(target);
+  target.append(statusBox("Running checkpoint-bound Git action", latestGitCheckpoint.checkpoint_digest.slice(0, 16), "running"));
+  try {
+    const result = await api(endpoint, { method: "POST", body: payload });
+    clear(target);
+    renderGitRunResult(target, result);
+    latestGitCheckpoint = null;
+    latestGitDiffReview = null;
+    qs("#gitApprovalSubmitButton").disabled = true;
+    qs("#gitRunSubmitButton").disabled = true;
+    await Promise.all([loadTasks(), loadCliRuns()]);
+    showToast("Git workflow run completed.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Git run failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderGitRunResult(target, result) {
+  const box = make("div", "git-run-summary");
+  box.append(statusBox("Git run completed", result.action || "git", "ready"));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Action", result.action || "-");
+  appendKeyValue(grid, "Branch", result.branch || "-");
+  appendKeyValue(grid, "Digest", result.checkpoint_digest ? result.checkpoint_digest.slice(0, 16) : "-");
+  appendKeyValue(grid, "Exit code", String(result.exit_code ?? "-"));
+  appendKeyValue(grid, "Duration", `${result.duration_ms ?? 0} ms`);
+  if (result.action === "commit") {
+    appendKeyValue(grid, "Head before", result.head_before ? result.head_before.slice(0, 12) : "-");
+    appendKeyValue(grid, "Head after", result.head_after ? result.head_after.slice(0, 12) : "-");
+    appendKeyValue(grid, "Message digest", result.commit_message_digest ? result.commit_message_digest.slice(0, 16) : "-");
+  } else if (result.action === "push") {
+    appendKeyValue(grid, "Upstream", result.upstream || "-");
+    appendKeyValue(grid, "Remote digest", result.remote_url_digest ? result.remote_url_digest.slice(0, 16) : "-");
+    appendKeyValue(grid, "Ahead before / after", `${result.ahead_before ?? "-"} / ${result.ahead_after ?? "-"}`);
+    appendKeyValue(grid, "Behind before / after", `${result.behind_before ?? "-"} / ${result.behind_after ?? "-"}`);
+  } else if (result.action === "pr") {
+    appendKeyValue(grid, "Head branch", result.head_branch || "-");
+    appendKeyValue(grid, "Base branch", result.base_branch || "-");
+    appendKeyValue(grid, "Draft", result.draft ? "Yes" : "No");
+    appendKeyValue(grid, "Title digest", result.title_digest ? result.title_digest.slice(0, 16) : "-");
+    appendKeyValue(grid, "Body digest", result.body_digest ? result.body_digest.slice(0, 16) : "-");
+    appendKeyValue(grid, "PR URL", result.pr_url || "-");
+  }
+  box.append(grid);
+  const details = make("details", "json-details");
+  details.append(make("summary", "", "Raw run metadata"));
+  details.append(jsonBlock(result));
+  box.append(details);
+  target.append(box);
 }
 
 function projectPayload() {
@@ -3124,6 +3227,7 @@ function bindEvents() {
   });
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#gitApprovalForm").addEventListener("submit", createGitApproval);
+  qs("#gitRunSubmitButton").addEventListener("click", runGitWorkflow);
   qs("#logFilter").addEventListener("change", loadLogs);
   qs("#approvalSourceInput").addEventListener("change", () => {
     approvalSource = qs("#approvalSourceInput").value;

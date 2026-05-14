@@ -427,6 +427,18 @@ textarea {
   margin-top: 10px;
 }
 
+.direct-run-button {
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.git-run-summary {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
 .recipe-parameter-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

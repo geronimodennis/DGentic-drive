@@ -37,6 +37,9 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "gitCommitMessageInput" in response.text
     assert "gitPrTitleInput" in response.text
     assert "gitApprovalSubmitLabel" in response.text
+    assert "gitRunSubmitButton" in response.text
+    assert "gitRunSubmitLabel" in response.text
+    assert "gitRunOutput" in response.text
     assert "Rules And Plugins" in response.text
     assert "policyReviewSummary" in response.text
     assert "Review Summary" in response.text
@@ -181,6 +184,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "createGitApproval" in script_response.text
     assert "gitApprovalPayload" in script_response.text
     assert "gitApprovalEndpoint" in script_response.text
+    assert "gitRunEndpoint" in script_response.text
+    assert "gitRunPayload" in script_response.text
+    assert "validateGitCloseoutFields" in script_response.text
+    assert "runGitWorkflow" in script_response.text
+    assert "renderGitRunResult" in script_response.text
     assert "latestGitDiffReview" in script_response.text
     assert "renderGitDiffReviewPanel" in script_response.text
     assert "loadGitDiffReview" in script_response.text
@@ -189,11 +197,16 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/cli/git/diff-reviews"' in script_response.text
     assert 'make("pre", "diff-patch"' in script_response.text
     assert "/cli/git/${action}-approvals" in script_response.text
+    assert "/cli/git/${action}-runs" in script_response.text
+    assert 'api(endpoint, { method: "POST", body: payload })' in script_response.text
     assert "commit_message" in script_response.text
     assert "base_branch" in script_response.text
     assert "setApprovalFilterState" in script_response.text
     assert 'setApprovalFilterState("cli", "pending")' in script_response.text
     assert 'qs("#gitApprovalForm").addEventListener("submit", createGitApproval)' in (
+        script_response.text
+    )
+    assert 'qs("#gitRunSubmitButton").addEventListener("click", runGitWorkflow)' in (
         script_response.text
     )
     assert "AI change review" in script_response.text
@@ -254,6 +267,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".policy-review-section" in style_response.text
     assert ".policy-editor" in style_response.text
     assert ".git-approval-actions" in style_response.text
+    assert ".direct-run-button" in style_response.text
+    assert ".git-run-summary" in style_response.text
     assert ".git-diff-review" in style_response.text
     assert ".git-diff-section" in style_response.text
     assert ".diff-patch" in style_response.text

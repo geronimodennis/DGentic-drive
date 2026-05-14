@@ -7,8 +7,8 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010v checkpoint-bound raw Git diff review is implemented and validation-clean.
-- Latest completed slice: BL-010v, dashboard Git checkpoints can load a fresh checkpoint-bound raw diff review with staged/unstaged sections, redaction/truncation markers, protected-path omission visibility, and metadata-only audit logging.
+- Latest stable implementation checkpoint: BL-010w checkpoint review-to-run Git actions are implemented and validation-clean.
+- Latest completed slice: BL-010w, dashboard Git checkpoints now expose direct checkpoint-bound Run Commit, Run Push, and Run PR actions beside the existing approval path, using the existing guarded backend runners and safe metadata-only result rendering.
 - Current objective: continue deepening the Sprint 16 user-facing UI, with full chat/task workflows, accept/reject AI-change artifacts, broader editable settings and policy workflows, broader non-CLI approval execution UX, end-to-end approval scenario coverage, and broader browser validation next, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
@@ -32,6 +32,7 @@ Current implemented Git foundation:
 - Checkpoint-bound raw Git diff review for tracked staged/unstaged content, with protected-path omission, redaction, truncation, and no untracked file content.
 - Checkpoint-bound commit, push, and PR approval creation.
 - Direct checkpoint-bound local commit, configured-upstream push, and GitHub PR creation runners.
+- Dashboard review-to-run controls for the direct checkpoint-bound Git runners.
 - Authenticated actor binding, protected branch/file checks, secret-shaped staged-addition checks, workflow revalidation, and safe audit metadata.
 
 Remaining Git roadmap:
@@ -58,7 +59,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a through BL-010v implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, and freshness surfaces. Active with BL-010a through BL-010w implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

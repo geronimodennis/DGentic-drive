@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010w Checkpoint Review-To-Run Git Actions
+
+Status: completed for the scoped Git review-to-run UI slice; Sprint 16 remains active for full chat workflows, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected direct checkpoint-bound Git run controls as the next user-facing Sprint 16 slice because BL-010v made raw checkpoint-bound review available and the backend already exposes guarded direct commit, push, and PR runners.
+- Completed: Explorer confirmed the smallest safe scope is UI wiring around existing `/cli/git/commit-runs`, `/cli/git/push-runs`, and `/cli/git/pr-runs`, with branch cleanup, PR metadata expansion, rollback/revert, and arbitrary Git commands kept deferred.
+- Completed: Developer added a direct Run Now control beside Git approval creation, reusing the current checkpoint digest, evidence, commit message, timeout, and PR fields.
+- Completed: Developer added direct Git run endpoint/payload helpers, blocked-checkpoint disabling, commit/PR required-field validation for the direct button, safe metadata result rendering, and post-run button disabling so stale checkpoint state is not reused.
+- Completed: QA extended static UI coverage for the direct-run controls, endpoint routing, shared payload helper, result renderer, event binding, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can run the existing checkpoint-bound direct Git commit, push, and PR workflows after a ready checkpoint, using safe backend revalidation and displaying metadata-only results.
+- Still out of scope after this slice: `git add`, untracked file preview, accept/reject AI-change artifacts, direct non-Git approval replay, branch cleanup, PR labels/reviewers/assignees/projects/templates, rollback/revert flows, allowed remote/branch policy editors, and deeper Git audit/observability.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49696`: `/ui/` served the direct Git run control and the direct Git run routes were registered.
+
 ### Sprint 16 BL-010v Checkpoint-Bound Raw Git Diff Review
 
 Status: completed for the scoped raw Git diff review slice; Sprint 16 remains active for full chat workflows, accept/reject AI-change artifact workflows, broader editable settings and policy workflows, broader non-CLI approval execution UX, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

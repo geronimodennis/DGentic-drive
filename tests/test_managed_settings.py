@@ -17,6 +17,7 @@ from dgentic.settings import (
     managed_command_recipes,
     managed_credential_references,
     managed_hook_policy_rules,
+    managed_network_domain_policy_rules,
     managed_plugin_component_records,
     managed_plugin_trust_records,
     managed_policy_locks,
@@ -111,6 +112,7 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
                 "managed_policy_locks": [
                     "cli-policy",
                     "hook policy",
+                    "network policy",
                     "plugin components",
                     "plugin hook policies",
                 ]
@@ -122,6 +124,7 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
 
     assert managed_policy_locks() == frozenset(
         {"cli_policy", "hook_policy", "plugin_components", "plugin_hook_policies"}
+        | {"network_policy"}
     )
     with pytest.raises(PermissionError, match="cli_policy"):
         require_managed_policy_surface_mutable("cli_policy")
@@ -129,7 +132,157 @@ def test_managed_policy_locks_apply_only_from_managed_settings(tmp_path, monkeyp
         require_managed_policy_surface_mutable("plugin_hook_policies")
     with pytest.raises(PermissionError, match="plugin_components"):
         require_managed_policy_surface_mutable("plugin_components")
+    with pytest.raises(PermissionError, match="network_policy"):
+        require_managed_policy_surface_mutable("network_policy")
     require_managed_policy_surface_mutable("command_recipes")
+
+
+def test_managed_network_domain_policy_rules_apply_only_from_managed_settings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_NETWORK_DOMAIN_POLICY_RULES",
+        json.dumps(
+            [
+                {
+                    "id": "env.network-deny",
+                    "domain": "env.example.test",
+                    "mode": "deny",
+                }
+            ]
+        ),
+    )
+
+    assert managed_network_domain_policy_rules() == ()
+    env_decision = evaluate_network_domain_policy("https://env.example.test/v1")
+    assert env_decision.mode == "allow"
+
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {
+            "settings": {
+                "managed_network_domain_policy_rules": [
+                    {
+                        "id": "managed.wildcard-deny",
+                        "domain": "*.corp.example.test",
+                        "mode": "deny",
+                        "reason": "Managed wildcard deny.",
+                        "priority": 20,
+                    },
+                    {
+                        "id": "managed.exact-allow",
+                        "domain": "api.corp.example.test",
+                        "mode": "allow",
+                        "reason": "Managed exact allow.",
+                        "priority": 20,
+                    },
+                    {
+                        "id": "managed.disabled-deny",
+                        "domain": "disabled.example.test",
+                        "mode": "deny",
+                        "enabled": False,
+                    },
+                ]
+            }
+        },
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    view = get_effective_settings_view()
+    fields = {item.name: item for item in view.settings}
+    records = managed_network_domain_policy_rules()
+    exact = evaluate_network_domain_policy("https://api.corp.example.test/v1")
+    wildcard = evaluate_network_domain_policy("https://worker.corp.example.test/v1")
+    disabled = evaluate_network_domain_policy("https://disabled.example.test/v1")
+
+    assert json.loads(settings.managed_network_domain_policy_rules)[0]["id"] == (
+        "managed.wildcard-deny"
+    )
+    assert fields["managed_network_domain_policy_rules"].source == "managed"
+    assert view.managed_fields == ["managed_network_domain_policy_rules"]
+    assert [record.id for record in records] == [
+        "managed.exact-allow",
+        "managed.wildcard-deny",
+        "managed.disabled-deny",
+    ]
+    assert exact.mode == "allow"
+    assert exact.matched_rule_id == "managed.exact-allow"
+    assert exact.matched_rule_source == "managed"
+    assert wildcard.mode == "deny"
+    assert wildcard.matched_rule_id == "managed.wildcard-deny"
+    assert disabled.mode == "allow"
+    assert disabled.matched_rule_id is None
+
+
+@pytest.mark.parametrize(
+    "rules_payload",
+    [
+        {"id": "not-a-list"},
+        ["not-an-object"],
+        [{"id": "managed.unknown", "domain": "api.example.test", "mode": "deny", "extra": True}],
+        [{"domain": "api.example.test", "mode": "deny"}],
+        [{"id": "managed.bad-domain", "domain": "bad/path", "mode": "deny"}],
+        [{"id": "managed.bad-mode", "domain": "api.example.test", "mode": "prompt"}],
+        [
+            {"id": "managed.duplicate", "domain": "api.example.test", "mode": "deny"},
+            {"id": "managed.duplicate", "domain": "other.example.test", "mode": "deny"},
+        ],
+        [
+            {"id": "managed.one", "domain": "api.example.test", "mode": "deny"},
+            {"id": "managed.two", "domain": "API.EXAMPLE.TEST.", "mode": "allow"},
+        ],
+        [
+            {
+                "id": "managed.secret-reason",
+                "domain": "api.example.test",
+                "mode": "deny",
+                "reason": "TOKEN=raw-secret",
+            }
+        ],
+        [
+            {
+                "id": "managed.bad-enabled",
+                "domain": "api.example.test",
+                "mode": "deny",
+                "enabled": "yes",
+            }
+        ],
+        [
+            {
+                "id": "managed.bad-priority",
+                "domain": "api.example.test",
+                "mode": "deny",
+                "priority": 10_001,
+            }
+        ],
+        [
+            {
+                "id": f"managed.too-many-{index}",
+                "domain": f"host-{index}.example.test",
+                "mode": "deny",
+            }
+            for index in range(101)
+        ],
+    ],
+)
+def test_managed_network_domain_policy_rules_fail_closed(
+    tmp_path,
+    monkeypatch,
+    rules_payload,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    managed_path, _raw_payload = _write_managed_settings(
+        tmp_path,
+        {"settings": {"managed_network_domain_policy_rules": rules_payload}},
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+
+    with pytest.raises(ManagedSettingsError):
+        get_settings()
 
 
 def test_managed_plugin_trust_records_apply_only_from_managed_settings(

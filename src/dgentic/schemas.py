@@ -751,6 +751,8 @@ class NetworkPolicyDecision(BaseModel):
     host: str
     mode: Literal["allow", "deny", "approval_required", "audit"]
     matched_domain: str | None = None
+    matched_rule_id: str | None = None
+    matched_rule_source: Literal["local", "managed"] | None = None
     reason: str
     hook_policy: HookPolicyDecision | None = None
 

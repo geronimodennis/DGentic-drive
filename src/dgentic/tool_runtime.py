@@ -1472,12 +1472,12 @@ def _subprocess_env(*, network_approval: NetworkApproval | None = None) -> dict[
 
 
 def _tool_runner_network_policy(*, network_approval: NetworkApproval | None = None) -> str:
-    if network_approval is None and not get_settings().network_domain_policy.strip():
-        return ""
     try:
         policy = network_domain_policy()
     except NetworkDomainPolicyError as exc:
         raise PermissionError("Network domain policy is invalid.") from exc
+    if network_approval is None and policy.default_mode == "allow" and not policy.rules:
+        return ""
     payload = {
         "default_mode": policy.default_mode,
         "rules": [

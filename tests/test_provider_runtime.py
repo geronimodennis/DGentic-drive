@@ -2485,6 +2485,62 @@ def test_provider_generation_rejects_network_domain_policy_before_transport(
     get_settings.cache_clear()
 
 
+def test_provider_generation_rejects_managed_network_policy_before_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_network_domain_policy_rules": [
+                        {
+                            "id": "managed.provider-deny",
+                            "domain": "provider.example.test",
+                            "mode": "deny",
+                            "reason": "Managed provider deny.",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    monkeypatch.setenv("DGENTIC_LM_STUDIO_BASE_URL", "http://provider.example.test:1234")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps({"rules": [{"domain": "provider.example.test", "mode": "allow"}]}),
+    )
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def fake_post_json(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        headers: dict | None = None,
+    ) -> dict:
+        calls.append(url)
+        raise AssertionError("transport should not be called")
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_post_json)
+
+    with pytest.raises(provider_runtime.ProviderEgressPolicyError, match="denied"):
+        generate_provider_completion(
+            ProviderGenerationRequest(
+                provider_id="lm-studio",
+                model="local-model",
+                messages=[{"role": "user", "content": "Say hello."}],
+            )
+        )
+
+    assert calls == []
+    get_settings.cache_clear()
+
+
 def test_provider_generation_accepts_bound_network_approval_before_transport(
     tmp_path,
     monkeypatch,

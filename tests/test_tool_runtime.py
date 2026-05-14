@@ -1289,6 +1289,61 @@ def test_execute_tool_enforces_network_domain_policy_in_subprocess(
     assert stored.failure_count == 1
 
 
+def test_execute_tool_enforces_managed_network_policy_without_metadata_leak(
+    local_tool_state: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    root_dir, _data_dir = local_tool_state
+    managed_path = root_dir / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_network_domain_policy_rules": [
+                        {
+                            "id": "managed.generated-tool-deny",
+                            "domain": "blocked.example.test",
+                            "mode": "deny",
+                            "reason": "Managed generated tool deny.",
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    _write_tool(
+        root_dir,
+        "managed-network-deny-tool",
+        tool_source=(
+            "import socket\n\n"
+            "def run(payload):\n"
+            "    socket.create_connection(('blocked.example.test', 443), timeout=1)\n"
+            "    return {'ok': True}\n"
+        ),
+    )
+    register_tool(
+        ToolManifest(
+            name="managed-network-deny-tool",
+            description="Managed network policy should stop outbound sockets.",
+            entrypoint="localmcp/managed-network-deny-tool/tool.py",
+            permission_mode=PermissionMode.autopilot_safe,
+        )
+    )
+
+    result = execute_tool("managed-network-deny-tool", {})
+    serialized = result.model_dump_json()
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.parsed_output is None
+    assert "blocked by DGentic network policy" in result.stderr
+    assert "managed.generated-tool-deny" not in serialized
+    assert "Managed generated tool deny" not in serialized
+
+
 def test_execute_tool_enforces_network_domain_policy_for_raw_socket_connect(
     local_tool_state: tuple[Path, Path],
     monkeypatch,

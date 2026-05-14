@@ -190,6 +190,26 @@ HashiCorp Vault KV v2 credential adapters can also be declared through managed s
 }
 ```
 
+Deployment-owned network rules can be declared with `managed_network_domain_policy_rules`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, evaluate before local `network_domain_policy.rules`, and are useful when provider, web retrieval, generated-tool, or Vault egress policy must be centrally enforced. Each record needs a stable non-secret `id`, an exact host or `*.example.test` domain, and a mode of `allow`, `audit`, `deny`, or `approval_required`; optional `reason`, `enabled`, and `priority` fields control review text, rollout toggles, and ordering:
+
+```json
+{
+  "settings": {
+    "managed_network_domain_policy_rules": [
+      {
+        "id": "managed.provider-egress",
+        "domain": "provider.example.test",
+        "mode": "approval_required",
+        "reason": "Deployment review required for provider egress.",
+        "priority": 10
+      }
+    ]
+  }
+}
+```
+
+Network policy decisions include safe `matched_rule_id` and `matched_rule_source` metadata, and approval bindings are invalidated when the effective managed rule identity, mode, reason, priority, domain, or enabled state changes. Generated tools receive only a sanitized domain/mode policy handoff, not managed ids, reasons, settings paths, or approval digests.
+
 Managed settings can also pin plugin trust to exact manifest digests through `managed_plugin_trust_records`. These records are honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, reported with `trust_source: "managed"` by `GET /plugins`, override local `plugin-trust.json` records for the same plugin id, reject local trust mutation as read-only, and become `stale` when the manifest bytes change:
 
 ```json

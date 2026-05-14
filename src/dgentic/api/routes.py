@@ -1117,11 +1117,13 @@ def check_network_policy(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return NetworkPolicyDecision(
         allowed=decision.allowed,
-        url=decision.url,
+        url=safe_network_url_for_review(decision.url),
         host=decision.host,
         mode=decision.mode,
         matched_domain=decision.matched_domain,
-        reason=decision.reason,
+        matched_rule_id=decision.matched_rule_id,
+        matched_rule_source=decision.matched_rule_source,
+        reason=redact_sensitive_values(decision.reason),
         hook_policy=decision.hook_policy,
     )
 
@@ -1221,6 +1223,8 @@ def check_web_retrieval_network_policy(
         host=decision.host,
         mode=decision.mode,
         matched_domain=decision.matched_domain,
+        matched_rule_id=decision.matched_rule_id,
+        matched_rule_source=decision.matched_rule_source,
         reason=redact_sensitive_values(decision.reason),
         hook_policy=decision.hook_policy,
     )
@@ -1277,6 +1281,8 @@ def authorize_web_retrieval_network_policy(
         host=decision.host,
         mode=decision.mode,
         matched_domain=decision.matched_domain,
+        matched_rule_id=decision.matched_rule_id,
+        matched_rule_source=decision.matched_rule_source,
         reason=redact_sensitive_values(decision.reason),
         hook_policy=decision.hook_policy,
     )

@@ -1869,7 +1869,7 @@ def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
                     {
                         "domain": "blocked.example.test",
                         "mode": "deny",
-                        "reason": "Blocked by QA policy.",
+                        "reason": "Blocked by QA policy TOKEN=network-secret.",
                     }
                 ]
             }
@@ -1880,7 +1880,12 @@ def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
 
     response = client.post(
         "/guardrails/network",
-        json={"url": "https://blocked.example.test/v1/chat/completions"},
+        json={
+            "url": (
+                "https://blocked.example.test/v1/chat/completions"
+                "?api_key=url-secret#token=fragment-secret"
+            )
+        },
     )
 
     assert response.status_code == 200
@@ -1890,9 +1895,14 @@ def test_guardrails_network_returns_policy_decision(monkeypatch) -> None:
         "host": "blocked.example.test",
         "mode": "deny",
         "matched_domain": "blocked.example.test",
-        "reason": "Blocked by QA policy.",
+        "matched_rule_id": None,
+        "matched_rule_source": "local",
+        "reason": "Blocked by QA policy TOKEN=[REDACTED]",
         "hook_policy": None,
     }
+    assert "network-secret" not in response.text
+    assert "url-secret" not in response.text
+    assert "fragment-secret" not in response.text
     get_settings.cache_clear()
 
 

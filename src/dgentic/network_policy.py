@@ -21,10 +21,11 @@ from dgentic.orchestration import (
 )
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import HookPolicyDecision, HookPolicySurface, LogEventType, PermissionMode
-from dgentic.settings import get_settings
+from dgentic.settings import get_settings, managed_network_domain_policy_rules
 from dgentic.storage import JsonCollection
 
 NetworkPolicyMode = Literal["allow", "deny", "approval_required", "audit"]
+NetworkPolicyRuleSource = Literal["local", "managed"]
 DEFAULT_NETWORK_POLICY_MODE: NetworkPolicyMode = "allow"
 DOMAIN_PATTERN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 NETWORK_APPROVAL_DIGEST_PREFIX = "hmac-sha256:"
@@ -59,6 +60,8 @@ class NetworkDomainPolicyDecision:
     host: str
     mode: NetworkPolicyMode
     matched_domain: str | None = None
+    matched_rule_id: str | None = None
+    matched_rule_source: NetworkPolicyRuleSource | None = None
     reason: str = ""
     hook_policy: HookPolicyDecision | None = None
 
@@ -72,6 +75,10 @@ class NetworkDomainRule:
     domain: str
     mode: NetworkPolicyMode
     reason: str = ""
+    id: str | None = None
+    source: NetworkPolicyRuleSource = "local"
+    priority: int = 100
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -194,7 +201,9 @@ def evaluate_network_domain_policy(
                     host=host,
                     mode=rule.mode,
                     matched_domain=rule.domain,
-                    reason=rule.reason or f"Matched network domain policy rule for {rule.domain}.",
+                    matched_rule_id=rule.id,
+                    matched_rule_source=rule.source,
+                    reason=rule.reason or _default_rule_reason(rule),
                 ),
                 actor=actor,
                 action=action,
@@ -257,6 +266,8 @@ def _apply_hook_policy_to_network_decision(
         host=decision.host,
         mode=mode,
         matched_domain=decision.matched_domain,
+        matched_rule_id=decision.matched_rule_id,
+        matched_rule_source=decision.matched_rule_source,
         reason=reason,
         hook_policy=hook_decision,
     )
@@ -272,9 +283,22 @@ def _permission_mode_for_network_mode(mode: NetworkPolicyMode) -> PermissionMode
 
 def network_domain_policy(settings: Any | None = None) -> NetworkDomainPolicy:
     active_settings = settings if settings is not None else get_settings()
+    managed_rules = tuple(
+        NetworkDomainRule(
+            id=record.id,
+            domain=record.domain,
+            mode=record.mode,
+            reason=record.reason,
+            enabled=record.enabled,
+            priority=record.priority,
+            source="managed",
+        )
+        for record in managed_network_domain_policy_rules(active_settings)
+        if record.enabled
+    )
     raw_config = active_settings.network_domain_policy.strip()
     if not raw_config:
-        return NetworkDomainPolicy()
+        return NetworkDomainPolicy(rules=managed_rules)
     try:
         payload = json.loads(raw_config)
     except json.JSONDecodeError as exc:
@@ -288,7 +312,7 @@ def network_domain_policy(settings: Any | None = None) -> NetworkDomainPolicy:
         raise NetworkDomainPolicyError("Network domain policy rules must be a list.")
 
     rules = tuple(_parse_rule(rule) for rule in raw_rules)
-    return NetworkDomainPolicy(default_mode=default_mode, rules=rules)
+    return NetworkDomainPolicy(default_mode=default_mode, rules=(*managed_rules, *rules))
 
 
 def create_network_approval(
@@ -635,16 +659,42 @@ def network_policy_decision_digest(
     return _network_hmac_digest(
         _canonical_json(
             {
-                "network_domain_policy": active_settings.network_domain_policy.strip(),
+                "network_policy_revision": network_policy_revision_digest(active_settings),
                 "host": decision.host,
                 "mode": decision.mode,
                 "matched_domain": decision.matched_domain,
+                "matched_rule_id": decision.matched_rule_id,
+                "matched_rule_source": decision.matched_rule_source,
                 "reason": decision.reason,
                 "hook_policy": (
                     decision.hook_policy.model_dump(mode="json")
                     if decision.hook_policy is not None
                     else None
                 ),
+            }
+        )
+    )
+
+
+def network_policy_revision_digest(settings: Any | None = None) -> str:
+    active_settings = settings if settings is not None else get_settings()
+    policy = network_domain_policy(active_settings)
+    return _network_hmac_digest(
+        _canonical_json(
+            {
+                "schema_version": 1,
+                "default_mode": policy.default_mode,
+                "rules": [
+                    {
+                        "id": rule.id,
+                        "source": rule.source,
+                        "domain": rule.domain,
+                        "mode": rule.mode,
+                        "priority": rule.priority,
+                        "reason": rule.reason,
+                    }
+                    for rule in policy.rules
+                ],
             }
         )
     )
@@ -687,6 +737,12 @@ def _parse_rule(raw_rule: Any) -> NetworkDomainRule:
     if not isinstance(reason, str):
         raise NetworkDomainPolicyError("Network domain policy rule reason must be a string.")
     return NetworkDomainRule(domain=domain, mode=mode, reason=reason.strip())
+
+
+def _default_rule_reason(rule: NetworkDomainRule) -> str:
+    if rule.source == "managed" and rule.id:
+        return f"Matched managed network domain policy rule {rule.id} for {rule.domain}."
+    return f"Matched network domain policy rule for {rule.domain}."
 
 
 def _normalize_mode(value: Any) -> NetworkPolicyMode:

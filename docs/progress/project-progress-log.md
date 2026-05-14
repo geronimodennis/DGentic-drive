@@ -4,6 +4,38 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 ## 2026-05-13
 
+### Sprint 15 BL-009av Managed Network-Domain Policy Rule Records
+
+Status: completed for the scoped managed network-domain policy rule record slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, additional secret-manager adapters beyond HashiCorp Vault KV v2, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and broader managed policy-source controls beyond credential/CLI/hook/network/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.
+
+Current story:
+- BL-009: Production Identity, Secret Management, And Network Guardrails.
+
+Checklist:
+- Completed: PM resumed Sprint 15 after BL-009au, pulled latest `origin/main`, confirmed role-boundary governance, and selected Full Sprint mode because managed network policy affects provider, web retrieval, generated-tool, and credential secret-manager egress.
+- Completed: Security/Reviewer scout identified the safe slice as `managed_network_domain_policy_rules`, with managed-only loading, stable ids, strict validation, managed-before-local precedence, safe decision metadata, canonical policy drift binding, sanitized generated-tool handoff, and generic network guardrail response redaction.
+- Completed: Developer added managed network-domain record parsing, effective policy merging, safe matched-rule source/id decision metadata, canonical effective network-policy revision digests for approval binding, generated-tool managed-rule handoff, and generic `/guardrails/network` URL/reason redaction.
+- Completed: QA added managed-settings, network approval drift, provider runtime, generated-tool subprocess, and API redaction coverage.
+- Completed: PM updated README, architecture, developer setup, usage docs, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `managed_network_domain_policy_rules` is honored only from `DGENTIC_MANAGED_SETTINGS_FILE`, supports stable `id`, exact/wildcard `domain`, `mode`, optional non-secret `reason`, `enabled`, and `priority`, sorts exact domains ahead of wildcard rules at equal priority, and fails closed for malformed records, unknown fields, duplicate ids/domains, invalid domains or modes, invalid priorities/enabled flags, too many records, and secret-shaped text.
+- Implemented in this slice: managed network rules evaluate before local/environment `network_domain_policy.rules`; unmatched hosts still fall through to existing local rules and default mode.
+- Implemented in this slice: network decisions now expose safe `matched_rule_id` and `matched_rule_source` metadata, and network approval policy digests bind the canonical effective policy revision plus matched rule metadata so rule identity/mode/domain/reason/priority/enabled changes stale existing approvals.
+- Implemented in this slice: generated-tool subprocess network policy handoff now includes managed-only policies, but still sends only default mode, domain/mode rules, and approved endpoints, with no managed ids, reasons, settings paths, or approval digests.
+- Implemented in this slice: generic `/guardrails/network` responses now mirror web retrieval response safety by returning a sanitized URL preview and redacted reason text.
+- Still out of scope after this slice: OS-level/non-Python egress isolation, mutable network policy APIs, and broader policy-source records for future executable plugin loading surfaces.
+
+Validation:
+- Focused managed network policy gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_network_policy.py -k "managed_network_domain_policy_rules or managed_network or network_domain_policy or network_policy" --maxfail=1 -x` with 27 tests and 82 deselected.
+- Focused provider/tool/API managed network gate passed: `python -m pytest -q tests\test_provider_runtime.py tests\test_tool_runtime.py tests\test_api.py -k "managed_network_policy or guardrails_network_returns_policy_decision or network_domain_policy" --maxfail=1 -x` with 12 tests and 391 deselected.
+- Affected suite gate passed: `python -m pytest -q tests\test_managed_settings.py tests\test_network_policy.py tests\test_provider_runtime.py tests\test_tool_runtime.py tests\test_api.py --maxfail=1 -x` with 512 tests.
+- Full lint/format/diff hygiene gates passed: `python -m ruff check .`, `python -m ruff format --check .`, and `git diff --check`.
+- Full regression gate passed: `python -m pytest -q --maxfail=1 -x` with 1,311 tests and 2 skipped.
+
+Next:
+- Commit and push this stable Sprint 15 checkpoint, then continue Sprint 15 with the next highest-risk remaining item.
+
 ### Sprint 15 BL-009au HashiCorp Vault KV Credential Adapter
 
 Status: completed for the scoped HashiCorp Vault KV v2 credential adapter slice; Sprint 15 remains active for richer production identity workflows beyond persisted operators and operator groups, managed KMS integration beyond supplied-key local vault rotation, additional secret-manager adapters beyond HashiCorp Vault KV v2, OS-level/non-Python generated-tool egress isolation, plugin hook-code/tool/agent/skill loading governance beyond declarative command recipes, hook policies, and inert reference records, and broader managed policy-source controls beyond credential/CLI/hook/command-recipe/plugin-trust/plugin-component policy records and coarse surface locks.

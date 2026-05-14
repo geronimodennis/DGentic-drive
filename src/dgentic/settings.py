@@ -34,6 +34,7 @@ _MANAGED_SETTINGS_ALLOWED_FIELDS = frozenset(
         "managed_cli_policy_rules",
         "managed_command_recipes",
         "managed_hook_policy_rules",
+        "managed_network_domain_policy_rules",
         "managed_policy_locks",
         "managed_plugin_component_records",
         "managed_plugin_trust_records",
@@ -62,6 +63,7 @@ _JSON_STRING_SETTINGS_FIELDS = frozenset(
         "managed_cli_policy_rules",
         "managed_command_recipes",
         "managed_hook_policy_rules",
+        "managed_network_domain_policy_rules",
         "managed_policy_locks",
         "managed_plugin_component_records",
         "managed_plugin_trust_records",
@@ -130,6 +132,21 @@ _MANAGED_HOOK_POLICY_RULE_ALLOWED_FIELDS = frozenset(
         "priority",
     }
 )
+_MANAGED_NETWORK_DOMAIN_POLICY_RULE_MAX_COUNT = 100
+_MANAGED_NETWORK_DOMAIN_POLICY_RULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
+_MANAGED_NETWORK_DOMAIN_PATTERN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
+_MANAGED_NETWORK_DOMAIN_POLICY_RULE_ALLOWED_FIELDS = frozenset(
+    {
+        "id",
+        "domain",
+        "mode",
+        "reason",
+        "enabled",
+        "priority",
+    }
+)
+_MANAGED_NETWORK_POLICY_MODES = frozenset({"allow", "deny", "approval_required", "audit"})
+_MANAGED_NETWORK_RULE_REASON_MAX_CHARS = 500
 _MANAGED_PLUGIN_TRUST_RECORD_MAX_COUNT = 100
 _MANAGED_PLUGIN_COMPONENT_RECORD_MAX_COUNT = 200
 _MANAGED_PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
@@ -162,6 +179,7 @@ MANAGED_POLICY_LOCK_SURFACES = frozenset(
         "cli_policy",
         "command_recipes",
         "hook_policy",
+        "network_policy",
         "plugin_command_recipes",
         "plugin_components",
         "plugin_hook_policies",
@@ -203,6 +221,7 @@ class Settings(BaseSettings):
     managed_cli_policy_rules: str = ""
     managed_command_recipes: str = ""
     managed_hook_policy_rules: str = ""
+    managed_network_domain_policy_rules: str = ""
     managed_policy_locks: str = ""
     managed_plugin_component_records: str = ""
     managed_plugin_trust_records: str = ""
@@ -282,6 +301,17 @@ class ManagedPluginTrustRecord:
     status: Literal["trusted", "blocked"]
     reason: str = ""
     decided_by: str = "managed"
+
+
+@dataclass(frozen=True)
+class ManagedNetworkDomainPolicyRuleRecord:
+    id: str
+    domain: str
+    mode: Literal["allow", "deny", "approval_required", "audit"]
+    reason: str = ""
+    enabled: bool = True
+    priority: int = 100
+    source: Literal["managed"] = "managed"
 
 
 @dataclass(frozen=True)
@@ -376,6 +406,24 @@ def managed_hook_policy_rules():
     if metadata.sources.get("managed_hook_policy_rules") != "managed":
         return tuple()
     return _parse_managed_hook_policy_rules(get_settings().managed_hook_policy_rules)
+
+
+def managed_network_domain_policy_rules(settings: Settings | None = None):
+    if settings is None:
+        metadata = get_settings_source_metadata()
+        active_settings = get_settings()
+    else:
+        metadata = _LAST_SETTINGS_SOURCE_METADATA
+        if metadata.sources.get("managed_network_domain_policy_rules") != "managed":
+            return tuple()
+        active_settings = get_settings()
+        if settings is not active_settings:
+            return tuple()
+    if metadata.sources.get("managed_network_domain_policy_rules") != "managed":
+        return tuple()
+    return _parse_managed_network_domain_policy_rules(
+        active_settings.managed_network_domain_policy_rules
+    )
 
 
 def managed_plugin_trust_records() -> tuple[ManagedPluginTrustRecord, ...]:
@@ -527,6 +575,8 @@ def _validate_managed_settings_ceiling(settings: Settings, values: dict[str, Any
             continue
         if key == "managed_hook_policy_rules":
             _parse_managed_hook_policy_rules(value)
+        if key == "managed_network_domain_policy_rules":
+            _parse_managed_network_domain_policy_rules(value)
         if key == "managed_plugin_component_records":
             _parse_managed_plugin_component_records(value)
         if key == "managed_plugin_trust_records":
@@ -796,6 +846,152 @@ def _validate_managed_credential_reference_metadata(record: dict[str, Any]) -> N
             raise ManagedSettingsError("Managed credential reference metadata is invalid.")
         if redact_sensitive_values(value.strip()) != value.strip():
             raise ManagedSettingsError("Managed credential reference contains secret-shaped text.")
+
+
+def _parse_managed_network_domain_policy_rules(
+    raw_value: str,
+) -> tuple[ManagedNetworkDomainPolicyRuleRecord, ...]:
+    raw_text = raw_value.strip()
+    if not raw_text:
+        return tuple()
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ManagedSettingsError(
+            "managed_network_domain_policy_rules must be valid JSON."
+        ) from exc
+    if not isinstance(parsed, list):
+        raise ManagedSettingsError("managed_network_domain_policy_rules must be a list.")
+    if len(parsed) > _MANAGED_NETWORK_DOMAIN_POLICY_RULE_MAX_COUNT:
+        raise ManagedSettingsError("managed_network_domain_policy_rules declares too many rules.")
+
+    rules: list[ManagedNetworkDomainPolicyRuleRecord] = []
+    seen_ids: set[str] = set()
+    seen_domains: set[str] = set()
+    for raw_rule in parsed:
+        if not isinstance(raw_rule, dict):
+            raise ManagedSettingsError(
+                "managed_network_domain_policy_rules entries must be objects."
+            )
+        normalized_rule: dict[str, Any] = {}
+        for raw_key, value in raw_rule.items():
+            key = _normalize_managed_settings_key(str(raw_key))
+            if key in normalized_rule:
+                raise ManagedSettingsError(
+                    f"Duplicate managed network domain policy rule field: {key}"
+                )
+            normalized_rule[key] = value
+        unknown_fields = sorted(
+            set(normalized_rule) - _MANAGED_NETWORK_DOMAIN_POLICY_RULE_ALLOWED_FIELDS
+        )
+        if unknown_fields:
+            raise ManagedSettingsError(
+                f"Unknown managed network domain policy rule field: {unknown_fields[0]}"
+            )
+
+        rule_id = _normalize_managed_network_rule_id(normalized_rule.get("id"))
+        if rule_id in seen_ids:
+            raise ManagedSettingsError(
+                f"Duplicate managed network domain policy rule id: {rule_id}"
+            )
+        seen_ids.add(rule_id)
+
+        domain = _normalize_managed_network_rule_domain(normalized_rule.get("domain"))
+        if domain in seen_domains:
+            raise ManagedSettingsError(
+                f"Duplicate managed network domain policy rule domain: {domain}"
+            )
+        seen_domains.add(domain)
+
+        rules.append(
+            ManagedNetworkDomainPolicyRuleRecord(
+                id=rule_id,
+                domain=domain,
+                mode=_normalize_managed_network_rule_mode(normalized_rule.get("mode")),
+                reason=_normalize_managed_network_rule_reason(normalized_rule.get("reason", "")),
+                enabled=_normalize_managed_network_rule_enabled(
+                    normalized_rule.get("enabled", True)
+                ),
+                priority=_normalize_managed_network_rule_priority(
+                    normalized_rule.get("priority", 100)
+                ),
+            )
+        )
+    return tuple(sorted(rules, key=_managed_network_rule_sort_key))
+
+
+def _normalize_managed_network_rule_id(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ManagedSettingsError("Managed network domain policy rule id is invalid.")
+    rule_id = value.strip()
+    if (
+        not rule_id
+        or not _MANAGED_NETWORK_DOMAIN_POLICY_RULE_ID_RE.fullmatch(rule_id)
+        or redact_sensitive_values(rule_id) != rule_id
+    ):
+        raise ManagedSettingsError("Managed network domain policy rule id is invalid.")
+    return rule_id
+
+
+def _normalize_managed_network_rule_domain(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ManagedSettingsError("Managed network domain policy rule domain must be a string.")
+    domain = value.strip().lower().rstrip(".")
+    if (
+        not domain
+        or "/" in domain
+        or ":" in domain
+        or ".." in domain
+        or not _MANAGED_NETWORK_DOMAIN_PATTERN.fullmatch(domain)
+        or redact_sensitive_values(domain) != domain
+    ):
+        raise ManagedSettingsError("Managed network domain policy rule domain is not valid.")
+    return domain
+
+
+def _normalize_managed_network_rule_mode(value: Any):
+    if not isinstance(value, str):
+        raise ManagedSettingsError("Managed network domain policy rule mode must be a string.")
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized not in _MANAGED_NETWORK_POLICY_MODES:
+        raise ManagedSettingsError("Managed network domain policy rule mode is not supported.")
+    return normalized
+
+
+def _normalize_managed_network_rule_reason(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ManagedSettingsError("Managed network domain policy rule reason must be a string.")
+    reason = value.strip()
+    if len(reason) > _MANAGED_NETWORK_RULE_REASON_MAX_CHARS:
+        raise ManagedSettingsError("Managed network domain policy rule reason is too long.")
+    if redact_sensitive_values(reason) != reason:
+        raise ManagedSettingsError(
+            "Managed network domain policy rule reason contains secret-shaped text."
+        )
+    return reason
+
+
+def _normalize_managed_network_rule_enabled(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ManagedSettingsError("Managed network domain policy rule enabled is invalid.")
+    return value
+
+
+def _normalize_managed_network_rule_priority(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ManagedSettingsError("Managed network domain policy rule priority is invalid.")
+    if value < 0 or value > 10_000:
+        raise ManagedSettingsError("Managed network domain policy rule priority is invalid.")
+    return value
+
+
+def _managed_network_rule_sort_key(
+    rule: ManagedNetworkDomainPolicyRuleRecord,
+) -> tuple[int, bool, int, str]:
+    specificity_domain = rule.domain[2:] if rule.domain.startswith("*.") else rule.domain
+    return (rule.priority, rule.domain.startswith("*."), -len(specificity_domain), rule.id)
 
 
 def _parse_managed_hook_policy_rules(raw_value: str):

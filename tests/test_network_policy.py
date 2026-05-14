@@ -81,6 +81,15 @@ def _running_orchestration_task():
     return run.tasks[0]
 
 
+def _write_managed_network_rules(tmp_path, rules: list[dict]) -> str:
+    path = tmp_path / "managed-settings.json"
+    path.write_text(
+        json.dumps({"settings": {"managed_network_domain_policy_rules": rules}}),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def test_network_domain_policy_allows_by_default() -> None:
     decision = evaluate_network_domain_policy(
         "https://api.example.test/v1",
@@ -140,6 +149,118 @@ def test_network_domain_policy_rejects_malformed_configuration() -> None:
 
     with pytest.raises(NetworkDomainPolicyError):
         evaluate_network_domain_policy("file:///tmp/secret.txt", settings=Settings())
+
+
+def test_managed_network_domain_policy_rules_precede_local_policy(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "DGENTIC_MANAGED_SETTINGS_FILE",
+        _write_managed_network_rules(
+            tmp_path,
+            [
+                {
+                    "id": "managed.deny-provider",
+                    "domain": "provider.example.test",
+                    "mode": "deny",
+                    "reason": "Managed provider deny.",
+                },
+                {
+                    "id": "managed.allow-audit",
+                    "domain": "audit.example.test",
+                    "mode": "audit",
+                    "priority": 50,
+                },
+            ],
+        ),
+    )
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "default_mode": "allow",
+                "rules": [
+                    {"domain": "provider.example.test", "mode": "allow"},
+                    {"domain": "audit.example.test", "mode": "deny"},
+                    {"domain": "local-only.example.test", "mode": "approval_required"},
+                ],
+            }
+        ),
+    )
+    get_settings.cache_clear()
+
+    managed_deny = evaluate_network_domain_policy("https://provider.example.test/v1")
+    managed_audit = evaluate_network_domain_policy("https://audit.example.test/v1")
+    local_only = evaluate_network_domain_policy("https://local-only.example.test/v1")
+    fallback = evaluate_network_domain_policy("https://other.example.test/v1")
+
+    assert managed_deny.mode == "deny"
+    assert managed_deny.matched_rule_id == "managed.deny-provider"
+    assert managed_deny.matched_rule_source == "managed"
+    assert managed_audit.mode == "audit"
+    assert managed_audit.matched_rule_id == "managed.allow-audit"
+    assert local_only.mode == "approval_required"
+    assert local_only.matched_rule_id is None
+    assert local_only.matched_rule_source == "local"
+    assert fallback.mode == "allow"
+    assert fallback.matched_rule_source is None
+
+
+def test_bound_network_approval_rejects_managed_policy_drift(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    data_dir = tmp_path / "state"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DGENTIC_APPROVAL_DIGEST_KEY", "managed-network-test-key")
+    managed_path = _write_managed_network_rules(
+        tmp_path,
+        [
+            {
+                "id": "managed.review-provider",
+                "domain": "provider.example.test",
+                "mode": "approval_required",
+                "reason": "Managed review v1.",
+            }
+        ],
+    )
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", managed_path)
+    get_settings.cache_clear()
+    approval = create_network_approval(
+        "https://provider.example.test/v1",
+        surface="provider",
+        action="generate",
+        requested_by="operator",
+    )
+    approve_network_approval(approval.id, decided_by="reviewer")
+    _write_managed_network_rules(
+        tmp_path,
+        [
+            {
+                "id": "managed.review-provider",
+                "domain": "provider.example.test",
+                "mode": "approval_required",
+                "reason": "Managed review v2.",
+            }
+        ],
+    )
+    get_settings.cache_clear()
+
+    with pytest.raises(NetworkApprovalRequiredError, match="not bound"):
+        claim_network_approval(
+            approval.id,
+            url="https://provider.example.test/v1",
+            surface="provider",
+            action="generate",
+            requested_by="operator",
+        )
+
+    assert list_network_approvals()[0].status == NetworkApprovalStatus.approved
 
 
 def test_network_approval_lifecycle_redacts_and_claims_bound_request(

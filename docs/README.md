@@ -2,9 +2,23 @@
 
 This folder contains the source documentation for the DGentic project.
 
+## Start Here
+
+- [Project status](project-status.md): Current sprint, priority order, safe stopping rules, and source-of-truth links.
+
+## Source Of Truth
+
+- Current state and active priority: [Project status](project-status.md).
+- Roadmap, backlog, and sprint placement: [Backlog list and needs to be done](planning/backlog-needs-to-be-done.md).
+- Agile epics, stories, and release gates: [Agile task plan](planning/agile-task-plan.md).
+- Historical implementation log: [Project progress log](progress/project-progress-log.md).
+- Architecture and backend contracts: [Repository architecture](architecture/repository-architecture.md).
+- Setup and usage: [Developer setup](how-to/developer-setup.md) and [How to use DGentic](how-to/using-dgentic.md).
+
 ## Core Documents
 
 - [DGentic goal](DGentic-goal.md): Product vision, capabilities, architecture, and configuration requirements.
+- [Project status](project-status.md): Current PM control panel for active sprint, priority, and safe stopping rules.
 - [Agentic tasking and workflows](agentic-workflows/README.md): Autonomous multi-agent Agile engineering organization, roles, workflows, role boundaries, governance, and response templates.
 - [Agile task plan](planning/agile-task-plan.md): Implementation backlog organized by Agile epics, stories, acceptance criteria, and milestones.
 - [Backlog list and needs to be done](planning/backlog-needs-to-be-done.md): Refined backlog, completion stories, and sprint sequence for partially implemented feature groups.
@@ -35,7 +49,7 @@ This folder contains the source documentation for the DGentic project.
 
 ## Documentation Practice
 
-Update the README and relevant documentation whenever implementation changes behavior, API contracts, setup, release artifacts, or project status. Update the progress log whenever the project meaningfully changes. Add new documents to the documentation index so future contributors can find the current source of truth quickly.
+Update the README and relevant documentation whenever implementation changes behavior, API contracts, setup, release artifacts, or project status. Update [Project status](project-status.md) when the active sprint, priority order, safe stopping rule, or next action changes. Update the progress log whenever the project meaningfully changes. Add new documents to the documentation index so future contributors can find the current source of truth quickly.
 
 For backend API changes, update at least:
 

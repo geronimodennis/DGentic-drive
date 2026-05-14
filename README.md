@@ -6,6 +6,7 @@ The current repository contains the project specification, planning documents, a
 
 ## Documentation
 
+- [Current project status](docs/project-status.md)
 - [Project goal](docs/DGentic-goal.md)
 - [Documentation index](docs/README.md)
 - [Agentic tasking and workflows](docs/agentic-workflows/README.md)

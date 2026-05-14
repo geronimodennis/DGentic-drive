@@ -2,6 +2,24 @@
 
 This log records meaningful project progress, decisions, blockers, and next steps.
 
+For the current sprint, priority order, safe stopping rules, and source-of-truth links, start with [docs/project-status.md](../project-status.md). Keep this file as the historical append-only progress ledger.
+
+## 2026-05-14
+
+### Documentation Source-Of-Truth Cleanup
+
+Status: completed for the scoped documentation navigation cleanup. Planned features were not removed or downsized.
+
+Completed:
+- Added `docs/project-status.md` as the PM control panel for the active sprint, priority order, safe Git stopping rule, remaining Sprint 15 follow-ups, Sprint 15 through Sprint 19 placement, and source-of-truth links.
+- Updated the documentation index with a Start Here section and explicit source-of-truth rules.
+- Added the project-status link to the root README documentation list.
+- Preserved the backlog as the roadmap source of truth, including the Sprint 15 through Sprint 19 plan and Git workflow timeline.
+
+Validation:
+- `git diff --check` passed with no whitespace errors.
+- Verified the Sprint 15 through Sprint 19 references and Git workflow timeline remain present in the docs.
+
 ## 2026-05-13
 
 ### Sprint 15 BL-009av Managed Network-Domain Policy Rule Records

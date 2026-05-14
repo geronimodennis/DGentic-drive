@@ -18,6 +18,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Context" in response.text
     assert "Active root" in response.text
     assert "CLI Runs" in response.text
+    assert "orchestrationDetail" in response.text
     assert "Rules And Plugins" in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
@@ -56,11 +57,30 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "api(`/projects/${encodeURIComponent(projectId)}/activate`" in script_response.text
     assert "renderActivationChecks" in script_response.text
     assert "workspaceRootButton" in script_response.text
+    assert "selectedOrchestrationId" in script_response.text
+    assert "renderOrchestrationDetail" in script_response.text
+    assert "postOrchestrationLoop" in script_response.text
+    assert "postOrchestrationExecution" in script_response.text
+    assert "cancelOrchestrationExecution" in script_response.text
+    assert "api(`/tasks/orchestrations/${encodeURIComponent(runId)}`" in script_response.text
+    assert (
+        "api(`/tasks/orchestrations/${encodeURIComponent(runId)}/executions`"
+        in script_response.text
+    )
+    assert "api(`/tasks/orchestrations/${encodeURIComponent(runId)}/loop`" in script_response.text
+    assert (
+        "api(`/tasks/orchestrations/${encodeURIComponent(runId)}/executions`, {"
+        in script_response.text
+    )
+    assert "executions/${encodeURIComponent(executionId)}/cancel`" in script_response.text
     assert "renderGitCheckpoint" in script_response.text
     assert "checkpoint-grid" in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".workspace-layout" in style_response.text
+    assert ".orchestration-detail" in style_response.text
+    assert ".orchestration-controls" in style_response.text
+    assert ".task-card" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text
     assert ".policy-grid" in style_response.text

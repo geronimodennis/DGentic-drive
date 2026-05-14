@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-14
 
+### Sprint 16 BL-010h Richer Orchestration Console
+
+Status: completed for the scoped dashboard orchestration task/execution visibility slice; Sprint 16 remains active for full chat workflows, Codex-style AI-change diff review, richer settings editors, richer approval filtering/non-CLI execution UX, deeper sub-agent visualization, memory/tool reliability dashboards, persistent or multi-worker project activation semantics, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM reassessed the Sprint 16 backlog after BL-010g and used a read-only explorer pass to select richer task/orchestration UI as the highest-value feasible next user-facing slice because backend orchestration contracts already exist.
+- Completed: Developer expanded the `/ui/` orchestration panel from summary-only status into an inspectable console with run selection, task graph/status counts, open blockers, follow-ups, execution records, and cycle/loop/background start/cancel controls.
+- Completed: QA extended UI static contract tests for the orchestration detail container, action helpers, orchestration execution API calls, and responsive styling hooks.
+- Completed: PM preserved true AI diff accept/reject review, richer Git approval UI, editable settings/policy surfaces, and deeper backend Git expansion as remaining backlog rather than cancelled scope.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` now displays task status counts, scheduled task ids, required Definition of Done evidence, task role/agent/retry/dependency/write-path detail, open blockers, follow-ups, and recent background execution records for the selected orchestration run.
+- Implemented in this slice: `/ui/` can call existing orchestration `cycle`, bounded `loop`, background execution start, and background execution cancel endpoints without introducing new backend mutation contracts.
+- Still out of scope after this slice: orchestration creation through a structured UI form, task update/recovery/closeout controls, full chat transcript UX, native AI change accept/reject APIs, richer approval filtering, and end-to-end browser automation across multiple viewport sizes.
+
+Validation:
+- Focused UI static tests passed: `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Focused orchestration regression passed: `uv run pytest tests/test_orchestration.py tests/test_api.py::test_orchestration_api_cycle_respects_authenticated_task_owner -q` with 115 tests.
+- Full regression passed: `uv run pytest -q` with 1,328 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live local UI/API smoke passed against a temporary FastAPI server on `127.0.0.1:8023`: `/ui/` and `/ui/app.js` returned 200, a temporary orchestration run was created, operations summary reported the run, and execution listing returned successfully. A first smoke attempt using PowerShell `Invoke-WebRequest` hit a local null-reference while fetching `/ui/`; the app assertion was retried with `curl.exe` and passed.
+
 ### Sprint 16 BL-010g Safe Project Activation And Root Switching
 
 Status: completed for the scoped safe registered-project activation slice; Sprint 16 remains active for AI-change review, richer chat/task execution, editable policy/settings surfaces, memory/tool reliability dashboards, richer approval filtering/non-CLI execution UX, persistent or multi-worker project activation semantics, and broader browser validation.

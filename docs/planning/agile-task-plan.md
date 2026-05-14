@@ -413,8 +413,9 @@ Tasks:
 - Add local install and smoke-test documentation.
 
 Current implementation status:
-- Not yet implemented: web frontend/dashboard, interactive approval UI, VS Code extension, and dedicated CLI client.
-- Planned: Story 8.1 and Story 8.2 are covered by Sprint 16; Story 8.3 and Story 8.4 are covered by Sprint 17.
+- Partially implemented: web frontend/dashboard and interactive approval UI are active in Sprint 16, with dashboard shell, task planning, project context/open controls, workspace file browsing/editing, orchestration detail/execution controls, unified approval review/decision actions, approved CLI execution, Git checkpoint visibility, policy/plugin visibility, settings summary, and logs implemented.
+- Not yet implemented: full chat UX, AI-change accept/reject diff review, editable settings/policy UX, VS Code extension, and dedicated CLI client.
+- Planned: remaining Story 8.1 and Story 8.2 work continues in Sprint 16; Story 8.3 and Story 8.4 are covered by Sprint 17.
 
 ## Epic 9: Observability, Analytics, And Post-Session Behavior
 

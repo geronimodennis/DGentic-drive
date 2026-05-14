@@ -16,6 +16,7 @@ let toastTimer = null;
 let activeRootDir = "";
 let activeRootSource = "";
 let activeProjectId = "";
+let selectedOrchestrationId = "";
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -168,6 +169,33 @@ function appendKeyValue(target, label, value, chipValue = "") {
     item.append(statusChip(chipValue));
   }
   target.append(item);
+}
+
+function formatTimestamp(value) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString();
+}
+
+function countsText(counts) {
+  const parts = Object.entries(counts || {}).map(([key, value]) => `${key}: ${value}`);
+  return parts.length ? parts.join(" | ") : "No status counts";
+}
+
+function taskStatusCounts(tasks) {
+  const counts = {};
+  for (const task of tasks || []) {
+    const status = task.status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  return counts;
+}
+
+function activeExecution(executions) {
+  return (executions || []).find((execution) =>
+    ["starting", "running", "cancelling"].includes(execution.status),
+  );
 }
 
 async function refreshDashboard() {
@@ -337,27 +365,308 @@ function renderTaskOutput(plans, runs) {
 
 function renderOrchestrationSummary(summary, orchestrations) {
   const target = qs("#orchestrationSummary");
+  const detailTarget = qs("#orchestrationDetail");
   clear(target);
+  clear(detailTarget);
   if (!summary.ok) {
     target.append(statusBox("Summary unavailable", summary.error, "blocked"));
   } else {
-    const counts = summary.data.run_status_counts || {};
     const item = make("div", "list-item");
     item.append(make("div", "item-title", `${summary.data.total_runs || 0} orchestration runs`));
-    item.append(make("div", "item-meta", Object.entries(counts).map(([key, value]) => `${key}: ${value}`).join(" | ") || "No status counts"));
+    item.append(make("div", "item-meta", countsText(summary.data.run_status_counts)));
     target.append(item);
+
+    const operations = make("div", "checkpoint-grid");
+    appendKeyValue(operations, "Tasks", countsText(summary.data.task_status_counts));
+    appendKeyValue(operations, "Executions", countsText(summary.data.execution_status_counts));
+    appendKeyValue(operations, "Active", String(summary.data.active_execution_count || 0));
+    appendKeyValue(operations, "Blockers", String(summary.data.unresolved_blocker_count || 0));
+    target.append(operations);
   }
 
   if (!orchestrations.ok) {
     target.append(statusBox("Runs unavailable", orchestrations.error, "blocked"));
     return;
   }
-  for (const run of orchestrations.data.slice(-5).reverse()) {
-    const item = make("div", "list-item");
-    item.append(make("div", "item-title", run.objective || run.id));
-    item.append(make("div", "item-meta", `${run.id} - tasks: ${run.tasks?.length || 0}`));
-    item.append(statusChip(run.status));
-    target.append(item);
+  const runs = orchestrations.data.slice(-6).reverse();
+  if (!runs.length) {
+    detailTarget.append(statusBox("No orchestration runs", "No task graph records are available.", "pending"));
+    return;
+  }
+  const selectedStillVisible = runs.some((run) => run.id === selectedOrchestrationId);
+  if (!selectedOrchestrationId || !selectedStillVisible) {
+    selectedOrchestrationId = runs[0].id;
+  }
+  for (const run of runs) {
+    const row = make("div", "run-row");
+    const copy = make("div");
+    copy.append(make("div", "item-title", run.objective || run.id));
+    copy.append(
+      make(
+        "div",
+        "item-meta",
+        `${run.id} - tasks: ${run.tasks?.length || 0} - updated: ${formatTimestamp(run.updated_at)}`,
+      ),
+    );
+    const inspectButton = make("button", "link-button", run.id === selectedOrchestrationId ? "Selected" : "Inspect");
+    inspectButton.type = "button";
+    inspectButton.disabled = run.id === selectedOrchestrationId;
+    inspectButton.addEventListener("click", () => selectOrchestration(run.id, run));
+    row.append(copy, statusChip(run.status), inspectButton);
+    target.append(row);
+    if (run.id === selectedOrchestrationId) {
+      renderOrchestrationDetail(run, { ok: true, data: [] }, true);
+      void loadOrchestrationDetail(run.id, run);
+    }
+  }
+}
+
+function selectOrchestration(runId, run = null) {
+  selectedOrchestrationId = runId;
+  loadOrchestrationDetail(runId, run);
+}
+
+async function loadOrchestrationDetail(runId, knownRun = null) {
+  const target = qs("#orchestrationDetail");
+  clear(target);
+  target.append(statusBox("Loading orchestration", runId, "running"));
+  const [runResult, executions] = await Promise.all([
+    knownRun ? Promise.resolve({ ok: true, data: knownRun }) : safeLoad("orchestration", () => api(`/tasks/orchestrations/${encodeURIComponent(runId)}`)),
+    safeLoad("executions", () => api(`/tasks/orchestrations/${encodeURIComponent(runId)}/executions`)),
+  ]);
+  if (selectedOrchestrationId !== runId) {
+    return;
+  }
+  clear(target);
+  if (!runResult.ok) {
+    target.append(statusBox("Orchestration unavailable", runResult.error, "blocked"));
+    return;
+  }
+  renderOrchestrationDetail(runResult.data, executions);
+}
+
+function renderOrchestrationDetail(run, executionsResult, loadingExecutions = false) {
+  const target = qs("#orchestrationDetail");
+  clear(target);
+  const executions = executionsResult.ok ? executionsResult.data : [];
+  const active = loadingExecutions ? null : activeExecution(executions);
+  const runOpen = run.status === "running";
+  target.append(statusBox(run.objective || run.id, `${run.id} - ${run.status}`, run.status));
+
+  const controls = make("div", "orchestration-controls");
+  const cycleButton = make("button", "link-button", "Cycle");
+  cycleButton.type = "button";
+  cycleButton.disabled = !runOpen;
+  cycleButton.addEventListener("click", () => postOrchestrationRunAction(run.id, "cycle"));
+  const loopButton = make("button", "primary-button", "Loop");
+  loopButton.type = "button";
+  loopButton.disabled = !runOpen;
+  loopButton.addEventListener("click", () => postOrchestrationLoop(run.id));
+  const startButton = make("button", "link-button", "Start");
+  startButton.type = "button";
+  startButton.disabled = !runOpen || loadingExecutions || Boolean(active);
+  startButton.addEventListener("click", () => postOrchestrationExecution(run.id));
+  controls.append(cycleButton, loopButton, startButton);
+  if (active) {
+    const cancelButton = make("button", "danger-button", "Cancel");
+    cancelButton.type = "button";
+    cancelButton.addEventListener("click", () => cancelOrchestrationExecution(run.id, active.id));
+    controls.append(cancelButton);
+  }
+  target.append(controls);
+
+  const options = make("div", "orchestration-options");
+  const iterationLabel = make("label");
+  iterationLabel.textContent = "Max Iterations";
+  const iterationInput = make("input");
+  iterationInput.id = "orchestrationLoopIterations";
+  iterationInput.type = "number";
+  iterationInput.min = "1";
+  iterationInput.max = "50";
+  iterationInput.value = "10";
+  iterationLabel.append(iterationInput);
+  const blockerLabel = make("label", "checkbox-label");
+  const blockerInput = make("input");
+  blockerInput.id = "orchestrationStopOnBlocked";
+  blockerInput.type = "checkbox";
+  blockerInput.checked = true;
+  blockerLabel.append(blockerInput, make("span", "", "Stop on blockers"));
+  options.append(iterationLabel, blockerLabel);
+  target.append(options);
+
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Tasks", countsText(taskStatusCounts(run.tasks)));
+  appendKeyValue(grid, "Scheduled", (run.scheduled_task_ids || []).join(", ") || "-");
+  appendKeyValue(grid, "Evidence", (run.required_dod_evidence || []).join(", ") || "-");
+  appendKeyValue(grid, "Updated", formatTimestamp(run.updated_at));
+  target.append(grid);
+
+  renderOrchestrationTasks(target, run.tasks || []);
+  renderOrchestrationBlockers(target, run.blockers || []);
+  renderOrchestrationFollowUps(target, run.follow_ups || []);
+  renderOrchestrationExecutions(target, executionsResult, loadingExecutions);
+}
+
+function renderOrchestrationTasks(target, tasks) {
+  const box = make("div", "orchestration-task-list");
+  box.append(make("div", "item-title", "Task Graph"));
+  if (!tasks.length) {
+    box.append(make("div", "item-meta", "No tasks recorded."));
+    target.append(box);
+    return;
+  }
+  for (const task of tasks) {
+    const item = make("div", "task-card");
+    const title = make("div", "task-title-row");
+    title.append(make("strong", "", `${task.id}: ${task.title}`), statusChip(task.status));
+    item.append(title);
+    item.append(make("div", "item-meta", `${task.role} - agent: ${task.agent_id || "-"} - retries: ${task.retry_count || 0}/${task.retry_limit || 0}`));
+    if (task.dependencies?.length) {
+      item.append(make("div", "item-meta", `Depends on: ${task.dependencies.join(", ")}`));
+    }
+    if (task.declared_write_paths?.length) {
+      item.append(make("div", "item-meta", `Writes: ${task.declared_write_paths.join(", ")}`));
+    }
+    if (task.error) {
+      item.append(statusBox("Task error", task.error, "failed"));
+    }
+    box.append(item);
+  }
+  target.append(box);
+}
+
+function renderOrchestrationBlockers(target, blockers) {
+  const openBlockers = blockers.filter((blocker) => blocker.status !== "resolved");
+  if (!openBlockers.length) {
+    return;
+  }
+  const box = make("div", "finding-list");
+  box.append(make("div", "item-title", "Open Blockers"));
+  for (const blocker of openBlockers) {
+    const row = make("div", "finding-row");
+    row.append(statusChip(blocker.severity || "blocked"), make("span", "", `${blocker.task_id}: ${blocker.reason}`));
+    box.append(row);
+  }
+  target.append(box);
+}
+
+function renderOrchestrationFollowUps(target, followUps) {
+  if (!followUps.length) {
+    return;
+  }
+  const box = make("div", "changed-paths");
+  box.append(make("div", "item-title", "Follow-ups"));
+  for (const followUp of followUps.slice(0, 8)) {
+    box.append(make("code", "", `${followUp.assigned_role} - ${followUp.task_id}: ${followUp.description}`));
+  }
+  target.append(box);
+}
+
+function renderOrchestrationExecutions(target, executionsResult, loadingExecutions) {
+  const box = make("div", "changed-paths");
+  box.append(make("div", "item-title", "Executions"));
+  if (loadingExecutions) {
+    box.append(make("div", "item-meta", "Loading execution records."));
+  } else if (!executionsResult.ok) {
+    box.append(statusBox("Executions unavailable", executionsResult.error, "blocked"));
+  } else if (!executionsResult.data.length) {
+    box.append(make("div", "item-meta", "No background executions recorded."));
+  } else {
+    for (const execution of executionsResult.data.slice(-5).reverse()) {
+      const row = make("div", "execution-row");
+      row.append(
+        make(
+          "span",
+          "",
+          `${execution.id} - ${execution.status} - started: ${formatTimestamp(execution.started_at)}`,
+        ),
+        statusChip(execution.status),
+      );
+      if (execution.status_reason || execution.error) {
+        row.append(make("span", "item-meta", execution.status_reason || execution.error));
+      }
+      box.append(row);
+    }
+  }
+  target.append(box);
+}
+
+async function postOrchestrationRunAction(runId, action) {
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Updating orchestration", action, "running"));
+  try {
+    const run = await api(`/tasks/orchestrations/${encodeURIComponent(runId)}/${action}`, {
+      method: "POST",
+    });
+    showToast(`Orchestration ${action} completed.`);
+    await loadOrchestrationDetail(run.id, run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Orchestration action failed", error.message, "failed"));
+  }
+}
+
+async function postOrchestrationLoop(runId) {
+  const iterations = Number(qs("#orchestrationLoopIterations")?.value || 10);
+  const payload = {
+    max_iterations: Math.min(Math.max(iterations || 10, 1), 50),
+    stop_on_blocked: Boolean(qs("#orchestrationStopOnBlocked")?.checked),
+  };
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Looping orchestration", `${payload.max_iterations} iterations`, "running"));
+  try {
+    const result = await api(`/tasks/orchestrations/${encodeURIComponent(runId)}/loop`, {
+      method: "POST",
+      body: payload,
+    });
+    showToast(`Loop stopped: ${result.stopped_reason}.`);
+    await loadOrchestrationDetail(result.run.id, result.run);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Orchestration loop failed", error.message, "failed"));
+  }
+}
+
+async function postOrchestrationExecution(runId) {
+  const iterations = Number(qs("#orchestrationLoopIterations")?.value || 10);
+  const payload = {
+    max_iterations: Math.min(Math.max(iterations || 10, 1), 50),
+    stop_on_blocked: Boolean(qs("#orchestrationStopOnBlocked")?.checked),
+  };
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Starting execution", `${payload.max_iterations} iterations`, "running"));
+  try {
+    const execution = await api(`/tasks/orchestrations/${encodeURIComponent(runId)}/executions`, {
+      method: "POST",
+      body: payload,
+    });
+    showToast("Background execution started.");
+    target.append(jsonBlock(execution));
+    await loadOrchestrationDetail(runId);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Execution start failed", error.message, "failed"));
+  }
+}
+
+async function cancelOrchestrationExecution(runId, executionId) {
+  const target = qs("#orchestrationDetail");
+  target.append(statusBox("Cancelling execution", executionId, "running"));
+  try {
+    const execution = await api(
+      `/tasks/orchestrations/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/cancel`,
+      { method: "POST" },
+    );
+    showToast("Background execution cancel requested.");
+    target.append(jsonBlock(execution));
+    await loadOrchestrationDetail(runId);
+    await loadTasks();
+  } catch (error) {
+    showToast(error.message);
+    target.append(statusBox("Execution cancel failed", error.message, "failed"));
   }
 }
 

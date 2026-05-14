@@ -408,6 +408,17 @@ textarea {
   text-align: left;
 }
 
+.run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
 .file-row:hover,
 .file-row:focus-visible {
   border-color: #93c5fd;
@@ -508,6 +519,58 @@ textarea {
 .review-panel {
   display: grid;
   gap: 12px;
+}
+
+.orchestration-detail,
+.orchestration-task-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.orchestration-controls,
+.orchestration-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.orchestration-options label {
+  min-width: 160px;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.task-card,
+.execution-row {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+  min-width: 0;
+}
+
+.task-title-row,
+.execution-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.task-title-row {
+  display: grid;
+  gap: 8px;
 }
 
 .review-panel pre,
@@ -696,6 +759,12 @@ textarea {
   }
 
   .approval-item {
+    grid-template-columns: 1fr;
+  }
+
+  .run-row,
+  .task-title-row,
+  .execution-row {
     grid-template-columns: 1fr;
   }
 }

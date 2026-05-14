@@ -18,6 +18,11 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Context" in response.text
     assert "Active root" in response.text
     assert "CLI Runs" in response.text
+    assert "taskChatForm" in response.text
+    assert "taskChatInput" in response.text
+    assert "taskChatTranscript" in response.text
+    assert "taskChatSubmitButton" in response.text
+    assert "taskChatRunInput" in response.text
     assert "orchestrationCreateForm" in response.text
     assert "orchestrationTaskBuilder" in response.text
     assert "orchestrationTaskIdInput" in response.text
@@ -109,6 +114,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "settingsGroupName" in script_response.text
     assert "parseSettingList" in script_response.text
     assert "headers.Authorization" in script_response.text
+    assert "taskChatPayload" in script_response.text
+    assert "submitTaskChatMessage" in script_response.text
+    assert "appendTaskChatMessage" in script_response.text
+    assert "renderTaskChatThread" in script_response.text
+    assert "renderTaskChatMessage" in script_response.text
+    assert "renderTaskChatPlan" in script_response.text
+    assert "runTaskChatPlan" in script_response.text
+    assert "runTaskPlan" in script_response.text
+    assert 'qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage)' in (
+        script_response.text
+    )
+    assert 'api("/tasks/plan", { method: "POST", body: payload })' in script_response.text
     assert 'api("/filesystem/list"' in script_response.text
     assert 'api("/filesystem/read"' in script_response.text
     assert 'api("/filesystem/write"' in script_response.text
@@ -155,6 +172,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "executeTaskPlan" in script_response.text
     assert 'api("/tasks/execute", { method: "POST", body: plan })' in script_response.text
     assert "Run Plan" in script_response.text
+    assert "No task messages" in script_response.text
+    assert "task-chat-plan-card" in script_response.text
+    assert "innerHTML" not in script_response.text
+    assert "outerHTML" not in script_response.text
+    assert "insertAdjacentHTML" not in script_response.text
     assert "task-plan-card" in script_response.text
     assert "task-run-summary" in script_response.text
     assert "required_dod_evidence" in script_response.text
@@ -265,6 +287,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'qs("#cliPolicyCancelEditButton").addEventListener("click"' in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
+    assert ".task-chat" in style_response.text
+    assert ".task-chat-transcript" in style_response.text
+    assert ".task-chat-message" in style_response.text
+    assert ".task-chat-message-user" in style_response.text
+    assert ".task-chat-message-agent" in style_response.text
+    assert ".task-chat-composer" in style_response.text
+    assert ".task-chat-plan-card" in style_response.text
     assert ".workspace-layout" in style_response.text
     assert ".orchestration-detail" in style_response.text
     assert ".orchestration-controls" in style_response.text

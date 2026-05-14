@@ -28,6 +28,7 @@ let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let editingCliPolicyRuleId = "";
+let taskChatMessages = [];
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -457,6 +458,166 @@ function renderTaskOutput(plans, runs) {
   }
 }
 
+function taskChatPayload() {
+  return {
+    objective: qs("#taskChatInput").value.trim(),
+    constraints: splitLines(qs("#taskChatContextInput").value),
+    acceptance_criteria: splitLines(qs("#taskChatAcceptanceInput").value),
+    priority: qs("#taskChatPriorityInput").value,
+  };
+}
+
+function appendTaskChatMessage(message) {
+  taskChatMessages.push({
+    createdAt: new Date().toISOString(),
+    ...message,
+  });
+  renderTaskChatThread();
+}
+
+function renderTaskChatThread() {
+  const target = qs("#taskChatTranscript");
+  clear(target);
+  if (!taskChatMessages.length) {
+    target.append(statusBox("No task messages", "Ready.", "pending"));
+    return;
+  }
+  for (const message of taskChatMessages) {
+    renderTaskChatMessage(target, message);
+  }
+  target.scrollTop = target.scrollHeight;
+}
+
+function renderTaskChatMessage(target, message) {
+  const item = make("div", `task-chat-message task-chat-message-${message.role || "agent"}`);
+  const header = make("div", "task-chat-message-header");
+  header.append(make("strong", "", message.title || (message.role === "user" ? "You" : "DGentic")));
+  header.append(make("span", "item-meta", formatTimestamp(message.createdAt)));
+  item.append(header);
+  if (message.detail) {
+    item.append(make("div", "item-meta", message.detail));
+  }
+  if (message.state) {
+    item.append(statusChip(message.state));
+  }
+  if (message.plan) {
+    renderTaskChatPlan(item, message.plan);
+  }
+  if (message.run) {
+    renderTaskRunResult(item, message.run);
+  }
+  target.append(item);
+}
+
+function renderTaskChatPlan(target, plan) {
+  const card = make("div", "task-chat-plan-card");
+  const header = make("div", "task-plan-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", plan.objective || plan.id));
+  copy.append(
+    make(
+      "div",
+      "item-meta",
+      `${plan.id} - ${formatTimestamp(plan.created_at)} - ${plan.steps?.length || 0} steps`,
+    ),
+  );
+  const actions = make("div", "task-plan-actions");
+  const runButton = make("button", "primary-button", "Run Plan");
+  runButton.type = "button";
+  runButton.disabled = !(plan.steps || []).length;
+  runButton.addEventListener("click", () => runTaskChatPlan(plan));
+  actions.append(statusChip(plan.status), runButton);
+  header.append(copy, actions);
+  card.append(header);
+  renderTaskPlanContext(card, plan);
+  renderTaskPlanSteps(card, plan);
+  target.append(card);
+}
+
+async function runTaskPlan(plan) {
+  return api("/tasks/execute", { method: "POST", body: plan });
+}
+
+async function runTaskChatPlan(plan) {
+  appendTaskChatMessage({
+    role: "agent",
+    title: "Running plan",
+    detail: plan.id,
+    state: "running",
+  });
+  try {
+    const run = await runTaskPlan(plan);
+    appendTaskChatMessage({
+      role: "agent",
+      title: "Task plan executed",
+      detail: `${run.id} - ${run.results?.length || 0} step results`,
+      state: run.status,
+      run,
+    });
+    await loadTasks();
+    showToast("Task plan executed.");
+  } catch (error) {
+    appendTaskChatMessage({
+      role: "agent",
+      title: "Task execution failed",
+      detail: error.message,
+      state: "failed",
+    });
+    showToast(error.message);
+  }
+}
+
+function clearTaskChatThread() {
+  taskChatMessages = [];
+  renderTaskChatThread();
+}
+
+async function submitTaskChatMessage(event) {
+  event.preventDefault();
+  const payload = taskChatPayload();
+  if (!payload.objective) {
+    showToast("Message is required.");
+    return;
+  }
+  appendTaskChatMessage({
+    role: "user",
+    title: "You",
+    detail: payload.objective,
+    state: payload.priority,
+  });
+  appendTaskChatMessage({
+    role: "agent",
+    title: "Creating plan",
+    detail: "Submitting task objective.",
+    state: "running",
+  });
+  try {
+    const plan = await api("/tasks/plan", { method: "POST", body: payload });
+    appendTaskChatMessage({
+      role: "agent",
+      title: "Plan created",
+      detail: `${plan.id} - ${plan.steps?.length || 0} steps`,
+      state: "ready",
+      plan,
+    });
+    qs("#taskChatInput").value = "";
+    if (qs("#taskChatRunInput").checked) {
+      await runTaskChatPlan(plan);
+    } else {
+      await loadTasks();
+      showToast("Task plan created.");
+    }
+  } catch (error) {
+    appendTaskChatMessage({
+      role: "agent",
+      title: "Plan failed",
+      detail: error.message,
+      state: "failed",
+    });
+    showToast(error.message);
+  }
+}
+
 function runsForPlan(plan, runs) {
   return (runs || [])
     .filter((run) => run.plan_id === plan.id)
@@ -569,7 +730,7 @@ async function executeTaskPlan(plan) {
   clear(target);
   target.append(statusBox("Running plan", plan.id, "running"));
   try {
-    const run = await api("/tasks/execute", { method: "POST", body: plan });
+    const run = await runTaskPlan(plan);
     clear(target);
     target.append(statusBox("Task plan executed", `${run.id} - ${run.results?.length || 0} step results`, run.status));
     renderTaskRunResult(target, run);
@@ -3514,6 +3675,9 @@ function bindEvents() {
   });
   qs("#refreshButton").addEventListener("click", refreshDashboard);
   qs("#loadTasksButton").addEventListener("click", loadTasks);
+  qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
+  qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
+  renderTaskChatThread();
   qs("#taskForm").addEventListener("submit", createTaskPlan);
   qs("#orchestrationCreateForm").addEventListener("submit", createOrchestrationRun);
   setupOrchestrationTaskBuilder();

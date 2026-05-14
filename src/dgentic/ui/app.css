@@ -312,6 +312,8 @@ textarea {
 }
 
 .task-form,
+.task-chat,
+.task-chat-composer,
 .stacked-form,
 .workspace-path-form {
   display: grid;
@@ -437,6 +439,83 @@ textarea {
   border-radius: 8px;
   padding: 10px;
   background: var(--surface-soft);
+}
+
+.task-chat {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: white;
+}
+
+.task-chat-header,
+.task-chat-actions,
+.task-chat-message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-chat-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.task-chat-transcript {
+  display: grid;
+  gap: 10px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.task-chat-message,
+.task-chat-plan-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-chat-message {
+  max-width: min(92%, 760px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.task-chat-message-user {
+  justify-self: end;
+  background: #e0f2fe;
+}
+
+.task-chat-message-agent {
+  justify-self: start;
+}
+
+.task-chat-plan-card {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.task-chat-actions {
+  flex-wrap: wrap;
+}
+
+.task-chat-actions label {
+  min-width: 160px;
+}
+
+.inline-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.inline-option input {
+  width: auto;
 }
 
 .task-plan-card,
@@ -1021,7 +1100,10 @@ textarea {
 
   .topbar,
   .panel-header,
-  .form-footer {
+  .form-footer,
+  .task-chat-header,
+  .task-chat-actions,
+  .task-chat-message-header {
     align-items: stretch;
     flex-direction: column;
   }

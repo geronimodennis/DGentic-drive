@@ -93,6 +93,48 @@
                 R
               </button>
             </div>
+            <section class="task-chat" aria-labelledby="taskChatHeading">
+              <div class="task-chat-header">
+                <div>
+                  <p class="eyebrow">Chat</p>
+                  <h3 id="taskChatHeading">Task Chat</h3>
+                </div>
+                <button id="taskChatClearButton" type="button" class="link-button">Clear</button>
+              </div>
+              <div id="taskChatTranscript" class="task-chat-transcript" aria-live="polite"></div>
+              <form id="taskChatForm" class="task-chat-composer">
+                <label for="taskChatInput">Message</label>
+                <textarea id="taskChatInput" rows="3" required></textarea>
+                <div class="two-column">
+                  <label>
+                    Context
+                    <textarea id="taskChatContextInput" rows="3"></textarea>
+                  </label>
+                  <label>
+                    Acceptance
+                    <textarea id="taskChatAcceptanceInput" rows="3"></textarea>
+                  </label>
+                </div>
+                <div class="task-chat-actions">
+                  <label class="inline-option">
+                    <input id="taskChatRunInput" type="checkbox">
+                    Run after planning
+                  </label>
+                  <label>
+                    Priority
+                    <select id="taskChatPriorityInput">
+                      <option value="normal">Normal</option>
+                      <option value="high">High</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </label>
+                  <button id="taskChatSubmitButton" type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">+</span>
+                    Send
+                  </button>
+                </div>
+              </form>
+            </section>
             <form id="taskForm" class="task-form">
               <label for="objectiveInput">Objective</label>
               <textarea id="objectiveInput" rows="3" required></textarea>

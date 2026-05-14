@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010z First Chat-Style Task Workflow
+
+Status: completed for the scoped first chat-style task workflow slice; Sprint 16 remains active for deeper conversational history, accept/reject AI-change artifact workflows, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a first task-chat workflow as the next bounded Sprint 16 slice after BL-010y because it directly addresses the remaining chat gap while reusing existing task APIs.
+- Completed: Explorer confirmed the safest implementation point is inside the existing dashboard task panel with no backend/API expansion.
+- Completed: Developer added a task-chat composer, transcript, safe text-rendered messages, `/tasks/plan` submission, plan rendering, and optional `/tasks/execute` handoff for the created plan.
+- Completed: QA extended static UI coverage for task-chat markup, helper wiring, endpoint reuse, CSS hooks, and continued avoidance of HTML injection helpers.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can create a task plan from a chat-style message, render the resulting plan in a transcript, and optionally run it through the existing deterministic task execution contract.
+- Still out of scope after this slice: persisted conversational history, streaming agent responses, unified approval/change review in the chat thread, accept/reject AI-change artifacts, full non-CLI request editors/execution, broader editable settings/policy surfaces, and broader responsive/browser validation.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Focused task API regression passed: `uv run pytest tests\test_api.py::test_task_plan_contains_expected_execution_shape tests\test_api.py::test_plan_can_execute_deterministically tests\test_api.py::test_task_history_is_persisted_to_local_state -q` with 3 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49690`: `/ui/` served `taskChatForm` and `/ui/app.js` included `submitTaskChatMessage`.
+
 ### Sprint 16 BL-010y Non-CLI Bound Execution Handoff UI
 
 Status: completed for the scoped non-CLI bound execution handoff UI slice; Sprint 16 remains active for full chat workflows beyond the task-plan cards, accept/reject AI-change artifact workflows, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

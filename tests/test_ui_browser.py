@@ -718,3 +718,105 @@ def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
     )
     assert review_status == 200
     assert review_body["status"] == "executed"
+
+
+def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    tool_name = "browser-approval-tool"
+    generate_status, _generate_body = _http_json(
+        "POST",
+        f"{base_url}/tools/generate",
+        payload={
+            "name": tool_name,
+            "description": "Browser approval smoke tool.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": (
+                "def run(payload):\n    return {'ok': True, 'value': payload.get('value')}\n"
+            ),
+        },
+    )
+    assert generate_status == 201
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/tools/{tool_name}/approvals?requested_by=browser-tool-smoke",
+        payload={"payload": {"value": "browser-tool-value"}, "timeout_seconds": 5},
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "tool";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("{tool_name}"))
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("{tool_name}"));
+          row.querySelector("button").click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Tool review")
+          && document.querySelector("#approvalReview")?.textContent
+            .includes("browser-approval-tool")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser tool smoke.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes("browser-tool-value")
+        """
+    )
+    devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+          && document.querySelector("#boundExecutionOutput")
+            ?.textContent.includes("browser-tool-value")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/tools/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"

@@ -32,6 +32,7 @@ let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let latestGitChangeReviewArtifacts = [];
 let editingCliPolicyRuleId = "";
+let editingCommandRecipeId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
 let latestTaskChatContext = {
@@ -3776,6 +3777,9 @@ async function loadSettings() {
   if (latestPolicyReviewResults?.cliRules) {
     renderCliPolicyList(latestPolicyReviewResults.cliRules);
   }
+  if (latestPolicyReviewResults?.recipes) {
+    renderRecipeList(latestPolicyReviewResults.recipes);
+  }
   if (latestPolicyReviewResults?.hooks) {
     renderHookPolicyList(latestPolicyReviewResults.hooks);
   }
@@ -4612,16 +4616,208 @@ function renderPolicyList(target, result, mapper) {
   }
 }
 
+function appendCommandRecipeParameterRow(parameter = {}) {
+  const target = qs("#recipeParameterBuilder");
+  const row = make("div", "recipe-parameter-row");
+
+  const nameLabel = make("label");
+  nameLabel.append(document.createTextNode("Name"));
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.maxLength = 64;
+  nameInput.value = parameter.name || "";
+  nameInput.dataset.recipeParameterField = "name";
+  nameLabel.append(nameInput);
+
+  const descriptionLabel = make("label");
+  descriptionLabel.append(document.createTextNode("Description"));
+  const descriptionInput = document.createElement("input");
+  descriptionInput.type = "text";
+  descriptionInput.maxLength = 300;
+  descriptionInput.value = parameter.description || "";
+  descriptionInput.dataset.recipeParameterField = "description";
+  descriptionLabel.append(descriptionInput);
+
+  const defaultLabel = make("label");
+  defaultLabel.append(document.createTextNode("Default"));
+  const defaultInput = document.createElement("input");
+  defaultInput.type = "text";
+  defaultInput.maxLength = 256;
+  defaultInput.value = parameter.default || "";
+  defaultInput.dataset.recipeParameterField = "default";
+  defaultLabel.append(defaultInput);
+
+  const requiredLabel = make("label", "checkbox-label");
+  const requiredInput = document.createElement("input");
+  requiredInput.type = "checkbox";
+  requiredInput.checked = parameter.required !== false;
+  requiredInput.dataset.recipeParameterField = "required";
+  requiredLabel.append(requiredInput, document.createTextNode("Required"));
+
+  const removeButton = make("button", "link-button", "Remove");
+  removeButton.type = "button";
+  removeButton.addEventListener("click", () => row.remove());
+
+  row.append(nameLabel, descriptionLabel, defaultLabel, requiredLabel, removeButton);
+  target.append(row);
+}
+
+function commandRecipeEditorParameters() {
+  const parameters = [];
+  for (const row of qsa("#recipeParameterBuilder .recipe-parameter-row")) {
+    const name = row.querySelector('[data-recipe-parameter-field="name"]').value.trim();
+    if (!name) {
+      continue;
+    }
+    const description = row.querySelector('[data-recipe-parameter-field="description"]').value.trim();
+    const defaultValue = row.querySelector('[data-recipe-parameter-field="default"]').value.trim();
+    const parameter = {
+      name,
+      description,
+      required: row.querySelector('[data-recipe-parameter-field="required"]').checked,
+    };
+    if (defaultValue) {
+      parameter.default = defaultValue;
+    }
+    parameters.push(parameter);
+  }
+  return parameters;
+}
+
+function commandRecipeEditorPayload({ includeId = true } = {}) {
+  const timeout = Number(qs("#recipeTimeoutInput").value || 30);
+  const payload = {
+    name: qs("#recipeNameInput").value.trim(),
+    description: qs("#recipeDescriptionInput").value.trim(),
+    command_template: qs("#recipeTemplateInput").value.trim(),
+    timeout_seconds: Number.isFinite(timeout) ? timeout : 30,
+    parameters: commandRecipeEditorParameters(),
+    tags: splitCsv(qs("#recipeTagsInput").value),
+    enabled: qs("#recipeEnabledInput").checked,
+  };
+  const cwd = qs("#recipeCwdInput").value.trim();
+  if (cwd) {
+    payload.cwd = cwd;
+  } else if (!includeId) {
+    payload.cwd = null;
+  }
+  const recipeId = qs("#recipeIdInput").value.trim();
+  if (includeId && recipeId) {
+    payload.id = recipeId;
+  }
+  return payload;
+}
+
+async function createCommandRecipe(event) {
+  event.preventDefault();
+  const target = qs("#recipeEditorOutput");
+  const recipeLocked = managedPolicyLocks().includes("command_recipes");
+  clear(target);
+  if (recipeLocked) {
+    target.append(statusBox("Recipes locked", "Managed settings make command recipes read-only.", "blocked"));
+    return;
+  }
+  const isEditing = Boolean(editingCommandRecipeId);
+  const payload = commandRecipeEditorPayload({ includeId: !isEditing });
+  target.append(statusBox(isEditing ? "Updating recipe" : "Creating recipe", payload.name || "recipe", "running"));
+  try {
+    const recipe = isEditing
+      ? await api(`/cli/recipes/${encodeURIComponent(editingCommandRecipeId)}`, {
+          method: "PATCH",
+          body: payload,
+        })
+      : await api("/cli/recipes", { method: "POST", body: payload });
+    resetCommandRecipeForm();
+    clear(target);
+    target.append(
+      statusBox(isEditing ? "Recipe updated" : "Recipe created", recipe.name || recipe.id, recipe.enabled === false ? "blocked" : "ok"),
+    );
+    target.append(jsonBlock(recipe));
+    await loadPolicySurfaces();
+    showToast(isEditing ? "Command recipe updated." : "Command recipe created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox(isEditing ? "Recipe update failed" : "Recipe create failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function resetCommandRecipeForm() {
+  editingCommandRecipeId = "";
+  qs("#recipeForm").reset();
+  qs("#recipeIdInput").disabled = false;
+  qs("#recipeTimeoutInput").value = "30";
+  qs("#recipeEnabledInput").checked = true;
+  clear(qs("#recipeParameterBuilder"));
+  qs("#recipeEditorSummary").textContent = "New Recipe";
+  qs("#recipeSubmitLabel").textContent = "Add Recipe";
+  qs("#recipeCancelEditButton").hidden = true;
+}
+
+function editCommandRecipe(recipe) {
+  editingCommandRecipeId = recipe.id || "";
+  qs("#recipeEditor").open = true;
+  qs("#recipeEditorSummary").textContent = `Edit Recipe: ${recipe.name || recipe.id}`;
+  qs("#recipeIdInput").value = recipe.id || "";
+  qs("#recipeIdInput").disabled = true;
+  qs("#recipeNameInput").value = recipe.name || "";
+  qs("#recipeTemplateInput").value = recipe.command_template || "";
+  qs("#recipeDescriptionInput").value = recipe.description || "";
+  qs("#recipeCwdInput").value = recipe.cwd || "";
+  qs("#recipeTimeoutInput").value = String(recipe.timeout_seconds ?? 30);
+  qs("#recipeTagsInput").value = (recipe.tags || []).join(", ");
+  qs("#recipeEnabledInput").checked = recipe.enabled !== false;
+  clear(qs("#recipeParameterBuilder"));
+  for (const parameter of recipe.parameters || []) {
+    appendCommandRecipeParameterRow(parameter);
+  }
+  qs("#recipeSubmitLabel").textContent = "Update Recipe";
+  qs("#recipeCancelEditButton").hidden = false;
+  clear(qs("#recipeEditorOutput"));
+  qs("#recipeEditorOutput").append(statusBox("Editing recipe", recipe.id || recipe.name, "pending"));
+}
+
+async function patchCommandRecipe(recipeId, update) {
+  const target = qs("#recipeEditorOutput");
+  const recipeLocked = managedPolicyLocks().includes("command_recipes");
+  clear(target);
+  if (recipeLocked) {
+    target.append(statusBox("Recipes locked", "Managed settings make command recipes read-only.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Updating recipe", recipeId, "running"));
+  try {
+    const recipe = await api(`/cli/recipes/${encodeURIComponent(recipeId)}`, {
+      method: "PATCH",
+      body: update,
+    });
+    clear(target);
+    target.append(statusBox("Recipe updated", recipe.name || recipe.id, recipe.enabled === false ? "blocked" : "ok"));
+    target.append(jsonBlock(recipe));
+    await loadPolicySurfaces();
+    showToast("Command recipe updated.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Recipe update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 function renderRecipeList(result) {
   const target = qs("#recipeList");
   const actionPanel = qs("#recipeActionPanel");
   clear(target);
   clear(actionPanel);
+  const recipeLocked = managedPolicyLocks().includes("command_recipes");
+  qs("#recipeSubmitButton").disabled = recipeLocked;
   if (!result.ok) {
     target.append(statusBox("Unavailable", result.error, "blocked"));
     return;
   }
   const recipes = result.data || [];
+  if (recipeLocked) {
+    target.append(statusBox("Recipes locked", "Managed settings make command recipes read-only.", "blocked"));
+  }
   if (!recipes.length) {
     target.append(statusBox("No records", "Nothing configured for this surface.", "pending"));
     return;
@@ -4639,11 +4835,25 @@ function renderRecipeList(result) {
         } params`,
       ),
     );
-    const button = make("button", "link-button", "Use");
-    button.type = "button";
-    button.disabled = recipe.enabled === false;
-    button.addEventListener("click", () => renderRecipeActionPanel(recipe));
-    item.append(detail, button);
+    const actions = make("div", "recipe-action-buttons");
+    const useButton = make("button", "link-button", "Use");
+    useButton.type = "button";
+    useButton.disabled = recipe.enabled === false;
+    useButton.addEventListener("click", () => renderRecipeActionPanel(recipe));
+    const editButton = make("button", "link-button", "Edit");
+    editButton.type = "button";
+    editButton.dataset.testid = "command-recipe-edit";
+    editButton.dataset.recipeId = recipe.id || "";
+    editButton.disabled = recipe.source !== "local" || recipeLocked;
+    editButton.addEventListener("click", () => editCommandRecipe(recipe));
+    const toggleButton = make("button", recipe.enabled === false ? "success-button" : "danger-button", recipe.enabled === false ? "Enable" : "Disable");
+    toggleButton.type = "button";
+    toggleButton.dataset.testid = "command-recipe-toggle";
+    toggleButton.dataset.recipeId = recipe.id || "";
+    toggleButton.disabled = recipe.source !== "local" || recipeLocked;
+    toggleButton.addEventListener("click", () => patchCommandRecipe(recipe.id, { enabled: recipe.enabled === false }));
+    actions.append(statusChip(recipe.enabled === false ? "blocked" : "ok"), useButton, editButton, toggleButton);
+    item.append(detail, actions);
     target.append(item);
   }
 }
@@ -4801,6 +5011,12 @@ function bindEvents() {
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();
     clear(qs("#cliPolicyEditorOutput"));
+  });
+  qs("#recipeForm").addEventListener("submit", createCommandRecipe);
+  qs("#recipeAddParameterButton").addEventListener("click", () => appendCommandRecipeParameterRow());
+  qs("#recipeCancelEditButton").addEventListener("click", () => {
+    resetCommandRecipeForm();
+    clear(qs("#recipeEditorOutput"));
   });
   qs("#hookPolicyForm").addEventListener("submit", createHookPolicyRule);
   qs("#hookPolicyMatchInput").addEventListener("change", updateHookPolicyPatternRequirement);

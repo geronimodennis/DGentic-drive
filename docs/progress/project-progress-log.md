@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ar Local Command Recipe Editor UI
+
+Status: completed for the scoped local command recipe editor UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, and command recipes, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local command recipe editing as the next low-risk Sprint 16 policy UI slice because the backend guarded command-recipe CRUD routes already exist.
+- Completed: Developer added a dashboard command recipe editor for local recipe create/update and enable/disable flows using the existing `/cli/recipes` routes.
+- Completed: Developer added guided parameter-row editing for recipe parameters while preserving the existing recipe preview/approval/run/execute action panel.
+- Completed: Developer kept managed and plugin-owned command recipes read-only in the UI, and re-renders command-recipe lock state after settings refresh so deployment-managed `command_recipes` locks disable mutation controls consistently.
+- Completed: QA expanded Web UI static coverage for the command recipe editor DOM hooks, route wiring, managed-lock checks, edit/toggle controls, parameter builder CSS, and event handlers.
+- Completed: QA added backend route coverage for local command-recipe PATCH enable/disable behavior and disabled-preview rejection.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: local command recipes can now be created, edited, and enabled/disabled from the Policy dashboard through the existing guarded API.
+- Implemented in this slice: managed-source and plugin-owned command recipes stay visible but read-only, and managed `command_recipes` locks prevent submit/toggle actions even when settings load after policy data.
+- Still out of scope after this slice: broader policy/settings editors beyond CLI policy, hook policy, and command recipes; actual AI-change file apply/revert mutation; full unified chat; and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_command_recipes.py::test_recipe_api_patch_toggles_local_recipe_execution` with 3 passed.
+- JavaScript syntax check passed: `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010aq Unified Task Chat Context Stream
 
 Status: completed for the scoped unified task-chat context stream slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI and hook policy, and persistent or multi-worker project activation semantics.

@@ -591,6 +591,64 @@ review</textarea>
               </section>
               <section>
                 <h3>Recipes</h3>
+                <details id="recipeEditor" class="policy-editor">
+                  <summary id="recipeEditorSummary">New Recipe</summary>
+                  <form id="recipeForm" class="stacked-form">
+                    <div class="two-column">
+                      <label>
+                        Recipe ID
+                        <input id="recipeIdInput" type="text" maxlength="120">
+                      </label>
+                      <label>
+                        Name
+                        <input id="recipeNameInput" type="text" maxlength="120" required>
+                      </label>
+                    </div>
+                    <label>
+                      Command
+                      <textarea id="recipeTemplateInput" rows="3" maxlength="1000" required></textarea>
+                    </label>
+                    <label>
+                      Description
+                      <textarea id="recipeDescriptionInput" rows="2" maxlength="500"></textarea>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Working Directory
+                        <input id="recipeCwdInput" type="text">
+                      </label>
+                      <label>
+                        Timeout
+                        <input id="recipeTimeoutInput" type="number" min="1" max="120" value="30">
+                      </label>
+                    </div>
+                    <label>
+                      Tags
+                      <input id="recipeTagsInput" type="text">
+                    </label>
+                    <div class="recipe-parameter-editor">
+                      <div class="form-footer">
+                        <strong>Parameters</strong>
+                        <button id="recipeAddParameterButton" type="button" class="link-button">Add Parameter</button>
+                      </div>
+                      <div id="recipeParameterBuilder" class="recipe-parameter-builder"></div>
+                    </div>
+                    <div class="form-footer">
+                      <label class="checkbox-label">
+                        <input id="recipeEnabledInput" type="checkbox" checked>
+                        Enabled
+                      </label>
+                      <div class="button-row">
+                        <button id="recipeCancelEditButton" type="button" class="link-button" hidden>Cancel Edit</button>
+                        <button id="recipeSubmitButton" type="submit" class="primary-button">
+                          <span class="button-icon" aria-hidden="true">+</span>
+                          <span id="recipeSubmitLabel">Add Recipe</span>
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                  <div id="recipeEditorOutput" class="output-region" aria-live="polite"></div>
+                </details>
                 <div id="recipeList" class="compact-list"></div>
                 <div id="recipeActionPanel" class="recipe-action-panel output-region" aria-live="polite"></div>
               </section>

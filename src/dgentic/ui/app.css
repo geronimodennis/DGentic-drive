@@ -417,6 +417,32 @@ textarea {
   margin-top: 4px;
 }
 
+.recipe-parameter-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-parameter-builder {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-parameter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  min-width: 0;
+}
+
+.recipe-parameter-row label {
+  min-width: 0;
+}
+
 .policy-editor,
 .git-approval-actions {
   border: 1px solid var(--line);
@@ -1261,6 +1287,7 @@ textarea {
   .task-builder-grid,
   .builder-row,
   .recipe-parameter-grid,
+  .recipe-parameter-row,
   .settings-grid,
   .settings-group-list,
   .approval-summary-grid,

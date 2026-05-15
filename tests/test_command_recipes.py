@@ -342,6 +342,41 @@ def test_recipe_api_expands_and_runs_safe_recipe_with_authenticated_principal(
     assert run_response.json()["requested_by"] == sha256(b"cli-token").hexdigest()[:12]
 
 
+def test_recipe_api_patch_toggles_local_recipe_execution(recipe_state) -> None:
+    root_dir, _data_dir = recipe_state
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/recipes",
+        json={
+            "id": "qa.echo",
+            "name": "QA echo",
+            "command_template": "cmd /c echo {{message}}",
+            "cwd": str(root_dir),
+            "parameters": [{"name": "message"}],
+        },
+    )
+    patch_response = client.patch(
+        "/cli/recipes/qa.echo",
+        json={"name": "QA echo edited", "enabled": False},
+    )
+    disabled_preview = client.post(
+        "/cli/recipes/qa.echo/preview",
+        json={"parameters": {"message": "hello"}},
+    )
+    reenable_response = client.patch("/cli/recipes/qa.echo", json={"enabled": True})
+
+    assert create_response.status_code == 201
+    assert patch_response.status_code == 200
+    assert patch_response.json()["source"] == "local"
+    assert patch_response.json()["enabled"] is False
+    assert patch_response.json()["name"] == "QA echo edited"
+    assert disabled_preview.status_code == 403
+    assert "disabled" in disabled_preview.text
+    assert reenable_response.status_code == 200
+    assert reenable_response.json()["enabled"] is True
+
+
 def test_recipe_api_requires_bound_approval_for_approval_required_command_in_production(
     recipe_state,
     monkeypatch,

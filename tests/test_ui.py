@@ -74,6 +74,21 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "hookPolicyReasonInput" in response.text
     assert "hookPolicyRolesInput" in response.text
     assert "hookPolicyPriorityInput" in response.text
+    assert "recipeEditor" in response.text
+    assert "recipeForm" in response.text
+    assert "recipeEditorOutput" in response.text
+    assert "recipeCancelEditButton" in response.text
+    assert "recipeSubmitLabel" in response.text
+    assert "recipeIdInput" in response.text
+    assert "recipeNameInput" in response.text
+    assert "recipeTemplateInput" in response.text
+    assert "recipeDescriptionInput" in response.text
+    assert "recipeCwdInput" in response.text
+    assert "recipeTimeoutInput" in response.text
+    assert "recipeTagsInput" in response.text
+    assert "recipeParameterBuilder" in response.text
+    assert "recipeAddParameterButton" in response.text
+    assert "recipeEnabledInput" in response.text
     assert "recipeActionPanel" in response.text
     assert "settingsOutput" in response.text
     assert 'rel="icon" href="data:,"' in response.text
@@ -246,6 +261,24 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/cli/recipes")' in script_response.text
     assert "renderRecipeList" in script_response.text
     assert "renderRecipeActionPanel" in script_response.text
+    assert "commandRecipeEditorPayload" in script_response.text
+    assert "commandRecipeEditorParameters" in script_response.text
+    assert "appendCommandRecipeParameterRow" in script_response.text
+    assert "createCommandRecipe" in script_response.text
+    assert "editCommandRecipe" in script_response.text
+    assert "patchCommandRecipe" in script_response.text
+    assert "resetCommandRecipeForm" in script_response.text
+    assert 'api("/cli/recipes", { method: "POST", body: payload })' in script_response.text
+    assert "/cli/recipes/${encodeURIComponent(editingCommandRecipeId)}" in script_response.text
+    assert "/cli/recipes/${encodeURIComponent(recipeId)}" in script_response.text
+    assert "{ enabled: recipe.enabled === false }" in script_response.text
+    assert "command-recipe-edit" in script_response.text
+    assert "command-recipe-toggle" in script_response.text
+    assert 'managedPolicyLocks().includes("command_recipes")' in script_response.text
+    assert (
+        'qs("#recipeForm").addEventListener("submit", createCommandRecipe)' in script_response.text
+    )
+    assert 'qs("#recipeCancelEditButton").addEventListener("click"' in script_response.text
     assert "commandRecipePayload" in script_response.text
     assert "postCommandRecipeAction" in script_response.text
     assert "data-recipe-parameter" in script_response.text
@@ -496,6 +529,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".reliability-grid" in style_response.text
     assert ".policy-grid" in style_response.text
     assert ".recipe-action-panel" in style_response.text
+    assert ".recipe-parameter-editor" in style_response.text
+    assert ".recipe-parameter-builder" in style_response.text
+    assert ".recipe-parameter-row" in style_response.text
     assert ".recipe-parameter-grid" in style_response.text
     assert ".recipe-action-buttons" in style_response.text
     assert ".approval-list" in style_response.text

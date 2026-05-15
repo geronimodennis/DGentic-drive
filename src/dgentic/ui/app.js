@@ -32,6 +32,7 @@ let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let latestGitChangeReviewArtifacts = [];
 let editingCliPolicyRuleId = "";
+let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
 let gitDiffReviewDecisions = {};
 
@@ -3580,6 +3581,9 @@ async function loadSettings() {
   if (latestPolicyReviewResults?.cliRules) {
     renderCliPolicyList(latestPolicyReviewResults.cliRules);
   }
+  if (latestPolicyReviewResults?.hooks) {
+    renderHookPolicyList(latestPolicyReviewResults.hooks);
+  }
 }
 
 function renderSettingsReview(settingsView, target) {
@@ -3978,11 +3982,7 @@ async function loadPolicySurfaces() {
   renderPolicyReviewSummary(cliRules, recipes, hooks, plugins);
   renderCliPolicyList(cliRules);
   renderRecipeList(recipes);
-  renderPolicyList(qs("#hookPolicyList"), hooks, (hook) => ({
-    title: hook.name || hook.id,
-    meta: `${hook.source || "local"} - ${hook.surface || "-"} - ${hook.effect || "-"}`,
-    status: hook.enabled === false ? "blocked" : "ok",
-  }));
+  renderHookPolicyList(hooks);
   const pluginItems = plugins.ok ? plugins.data.plugins || [] : [];
   renderPolicyList(qs("#pluginList"), { ...plugins, data: pluginItems }, (plugin) => ({
     title: plugin.plugin_id || plugin.id || plugin.name,
@@ -4218,6 +4218,185 @@ function renderCliPolicyList(result) {
   }
 }
 
+function hookPolicyRulePayload() {
+  const priority = Number(qs("#hookPolicyPriorityInput").value || 100);
+  return {
+    name: qs("#hookPolicyNameInput").value.trim(),
+    surface: qs("#hookPolicySurfaceInput").value,
+    action: qs("#hookPolicyActionInput").value.trim() || "*",
+    match_type: qs("#hookPolicyMatchInput").value,
+    pattern: qs("#hookPolicyPatternInput").value.trim(),
+    effect: qs("#hookPolicyEffectInput").value,
+    reason: qs("#hookPolicyReasonInput").value.trim(),
+    agent_roles: splitCsv(qs("#hookPolicyRolesInput").value),
+    enabled: qs("#hookPolicyEnabledInput").checked,
+    priority: Number.isFinite(priority) ? priority : 100,
+  };
+}
+
+function validateHookPolicyRulePayload(payload) {
+  if (payload.match_type !== "any" && !payload.pattern) {
+    return "Pattern is required unless match is Any.";
+  }
+  return "";
+}
+
+function updateHookPolicyPatternRequirement() {
+  const patternInput = qs("#hookPolicyPatternInput");
+  const requiresPattern = qs("#hookPolicyMatchInput").value !== "any";
+  patternInput.required = requiresPattern;
+  patternInput.placeholder = requiresPattern ? "Text to match" : "Optional for any match";
+  if (!requiresPattern) {
+    patternInput.setCustomValidity("");
+  }
+}
+
+async function createHookPolicyRule(event) {
+  event.preventDefault();
+  const target = qs("#hookPolicyEditorOutput");
+  const hookPolicyLocked = managedPolicyLocks().includes("hook_policy");
+  clear(target);
+  if (hookPolicyLocked) {
+    target.append(statusBox("Hook policy locked", "Managed settings make hook policy read-only.", "blocked"));
+    return;
+  }
+  const payload = hookPolicyRulePayload();
+  const validationError = validateHookPolicyRulePayload(payload);
+  if (validationError) {
+    target.append(statusBox("Hook rule validation failed", validationError, "failed"));
+    return;
+  }
+  const isEditing = Boolean(editingHookPolicyRuleId);
+  target.append(statusBox(isEditing ? "Updating hook rule" : "Creating hook rule", payload.name || "policy", "running"));
+  try {
+    const rule = isEditing
+      ? await api(`/guardrails/hooks/rules/${encodeURIComponent(editingHookPolicyRuleId)}`, {
+          method: "PATCH",
+          body: payload,
+        })
+      : await api("/guardrails/hooks/rules", { method: "POST", body: payload });
+    resetHookPolicyForm();
+    clear(target);
+    target.append(
+      statusBox(isEditing ? "Hook rule updated" : "Hook rule created", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"),
+    );
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast(isEditing ? "Hook policy rule updated." : "Hook policy rule created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox(isEditing ? "Hook rule update failed" : "Hook rule create failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function resetHookPolicyForm() {
+  editingHookPolicyRuleId = "";
+  qs("#hookPolicyForm").reset();
+  qs("#hookPolicyActionInput").value = "*";
+  qs("#hookPolicyPriorityInput").value = "100";
+  qs("#hookPolicyEnabledInput").checked = true;
+  qs("#hookPolicyEditorSummary").textContent = "New Hook Rule";
+  qs("#hookPolicySubmitLabel").textContent = "Add Rule";
+  qs("#hookPolicyCancelEditButton").hidden = true;
+  updateHookPolicyPatternRequirement();
+}
+
+function editHookPolicyRule(rule) {
+  editingHookPolicyRuleId = rule.id || "";
+  qs("#hookPolicyEditor").open = true;
+  qs("#hookPolicyEditorSummary").textContent = `Edit Hook Rule: ${rule.name || rule.id}`;
+  qs("#hookPolicyNameInput").value = rule.name || "";
+  qs("#hookPolicySurfaceInput").value = rule.surface || "command";
+  qs("#hookPolicyActionInput").value = rule.action || "*";
+  qs("#hookPolicyMatchInput").value = rule.match_type || "contains";
+  qs("#hookPolicyPatternInput").value = rule.pattern || "";
+  qs("#hookPolicyEffectInput").value = rule.effect || "audit";
+  qs("#hookPolicyReasonInput").value = rule.reason || "";
+  qs("#hookPolicyRolesInput").value = (rule.agent_roles || []).join(", ");
+  qs("#hookPolicyPriorityInput").value = String(rule.priority ?? 100);
+  qs("#hookPolicyEnabledInput").checked = rule.enabled !== false;
+  qs("#hookPolicySubmitLabel").textContent = "Update Rule";
+  qs("#hookPolicyCancelEditButton").hidden = false;
+  updateHookPolicyPatternRequirement();
+  clear(qs("#hookPolicyEditorOutput"));
+  qs("#hookPolicyEditorOutput").append(statusBox("Editing hook rule", rule.id || rule.name, "pending"));
+}
+
+async function patchHookPolicyRule(ruleId, update) {
+  const target = qs("#hookPolicyEditorOutput");
+  const hookPolicyLocked = managedPolicyLocks().includes("hook_policy");
+  clear(target);
+  if (hookPolicyLocked) {
+    target.append(statusBox("Hook policy locked", "Managed settings make hook policy read-only.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Updating hook rule", ruleId, "running"));
+  try {
+    const rule = await api(`/guardrails/hooks/rules/${encodeURIComponent(ruleId)}`, {
+      method: "PATCH",
+      body: update,
+    });
+    clear(target);
+    target.append(statusBox("Hook rule updated", rule.name || rule.id, rule.enabled === false ? "blocked" : "ok"));
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast("Hook policy rule updated.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Hook rule update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderHookPolicyList(result) {
+  const target = qs("#hookPolicyList");
+  clear(target);
+  const hookPolicyLocked = managedPolicyLocks().includes("hook_policy");
+  qs("#hookPolicySubmitButton").disabled = hookPolicyLocked;
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  if (hookPolicyLocked) {
+    target.append(statusBox("Hook policy locked", "Managed settings make hook policy read-only.", "blocked"));
+  }
+  if (!result.data.length) {
+    target.append(statusBox("No records", "Nothing configured for this surface.", "pending"));
+    return;
+  }
+  for (const rule of result.data.slice(0, 8)) {
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", rule.name || rule.id));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${rule.source || "local"} - ${rule.surface || "-"} - ${rule.effect || "-"} - ${rule.match_type || "-"} - priority ${
+          rule.priority ?? 100
+        }`,
+      ),
+    );
+    const actions = make("div", "recipe-action-buttons");
+    const editButton = make("button", "link-button", "Edit");
+    editButton.type = "button";
+    editButton.dataset.testid = "hook-policy-edit";
+    editButton.dataset.ruleId = rule.id || "";
+    editButton.disabled = rule.source !== "local" || hookPolicyLocked;
+    editButton.addEventListener("click", () => editHookPolicyRule(rule));
+    const toggleButton = make("button", rule.enabled === false ? "success-button" : "danger-button", rule.enabled === false ? "Enable" : "Disable");
+    toggleButton.type = "button";
+    toggleButton.dataset.testid = "hook-policy-toggle";
+    toggleButton.dataset.ruleId = rule.id || "";
+    toggleButton.disabled = rule.source !== "local" || hookPolicyLocked;
+    toggleButton.addEventListener("click", () => patchHookPolicyRule(rule.id, { enabled: rule.enabled === false }));
+    actions.append(statusChip(rule.enabled === false ? "blocked" : "ok"), editButton, toggleButton);
+    item.append(detail, actions);
+    target.append(item);
+  }
+}
+
 function renderPolicyList(target, result, mapper) {
   clear(target);
   if (!result.ok) {
@@ -4426,6 +4605,12 @@ function bindEvents() {
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();
     clear(qs("#cliPolicyEditorOutput"));
+  });
+  qs("#hookPolicyForm").addEventListener("submit", createHookPolicyRule);
+  qs("#hookPolicyMatchInput").addEventListener("change", updateHookPolicyPatternRequirement);
+  qs("#hookPolicyCancelEditButton").addEventListener("click", () => {
+    resetHookPolicyForm();
+    clear(qs("#hookPolicyEditorOutput"));
   });
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#gitApprovalForm").addEventListener("submit", createGitApproval);

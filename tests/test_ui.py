@@ -57,6 +57,22 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "cliPolicyMatchInput" in response.text
     assert "cliPolicyModeInput" in response.text
     assert "cliPolicyRolesInput" in response.text
+    assert "hookPolicyForm" in response.text
+    assert "hookPolicyEditor" in response.text
+    assert "hookPolicyEditorOutput" in response.text
+    assert "hookPolicyCancelEditButton" in response.text
+    assert "hookPolicySubmitLabel" in response.text
+    assert "hookPolicySurfaceInput" in response.text
+    assert "hookPolicyEffectInput" in response.text
+    assert "hookPolicyActionInput" in response.text
+    assert "hookPolicyMatchInput" in response.text
+    assert "hookPolicyPatternInput" in response.text
+    assert '<input id="hookPolicyPatternInput" type="text" maxlength="300" required>' in (
+        response.text
+    )
+    assert "hookPolicyReasonInput" in response.text
+    assert "hookPolicyRolesInput" in response.text
+    assert "hookPolicyPriorityInput" in response.text
     assert "recipeActionPanel" in response.text
     assert "settingsOutput" in response.text
     assert 'rel="icon" href="data:,"' in response.text
@@ -387,6 +403,33 @@ def test_web_ui_static_assets_are_served() -> None:
         in script_response.text
     )
     assert 'qs("#cliPolicyCancelEditButton").addEventListener("click"' in script_response.text
+    assert "hookPolicyRulePayload" in script_response.text
+    assert "createHookPolicyRule" in script_response.text
+    assert "editHookPolicyRule" in script_response.text
+    assert "patchHookPolicyRule" in script_response.text
+    assert "resetHookPolicyForm" in script_response.text
+    assert "renderHookPolicyList" in script_response.text
+    assert "validateHookPolicyRulePayload" in script_response.text
+    assert "updateHookPolicyPatternRequirement" in script_response.text
+    assert "Pattern is required unless match is Any." in script_response.text
+    assert "renderHookPolicyList(latestPolicyReviewResults.hooks)" in script_response.text
+    assert 'api("/guardrails/hooks/rules")' in script_response.text
+    assert 'api("/guardrails/hooks/rules", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert "/guardrails/hooks/rules/${encodeURIComponent(ruleId)}" in script_response.text
+    assert 'managedPolicyLocks().includes("hook_policy")' in script_response.text
+    assert "hook-policy-edit" in script_response.text
+    assert "hook-policy-toggle" in script_response.text
+    assert (
+        'qs("#hookPolicyForm").addEventListener("submit", createHookPolicyRule)'
+        in script_response.text
+    )
+    assert (
+        'qs("#hookPolicyMatchInput").addEventListener("change", '
+        "updateHookPolicyPatternRequirement)" in script_response.text
+    )
+    assert 'qs("#hookPolicyCancelEditButton").addEventListener("click"' in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
     assert ".panel > *" in style_response.text

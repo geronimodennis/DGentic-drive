@@ -595,6 +595,80 @@ review</textarea>
               </section>
               <section>
                 <h3>Hooks</h3>
+                <details id="hookPolicyEditor" class="policy-editor">
+                  <summary id="hookPolicyEditorSummary">New Hook Rule</summary>
+                  <form id="hookPolicyForm" class="stacked-form">
+                    <label>
+                      Name
+                      <input id="hookPolicyNameInput" type="text" maxlength="120" required>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Surface
+                        <select id="hookPolicySurfaceInput">
+                          <option value="command">Command</option>
+                          <option value="filesystem">Filesystem</option>
+                          <option value="network">Network</option>
+                        </select>
+                      </label>
+                      <label>
+                        Effect
+                        <select id="hookPolicyEffectInput">
+                          <option value="audit">Audit</option>
+                          <option value="approval_required">Approval Required</option>
+                          <option value="blocked">Blocked</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="two-column">
+                      <label>
+                        Action
+                        <input id="hookPolicyActionInput" type="text" maxlength="80" value="*" required>
+                      </label>
+                      <label>
+                        Match
+                        <select id="hookPolicyMatchInput">
+                          <option value="contains">Contains</option>
+                          <option value="exact">Exact</option>
+                          <option value="prefix">Prefix</option>
+                          <option value="any">Any</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label>
+                      Pattern
+                      <input id="hookPolicyPatternInput" type="text" maxlength="300" required>
+                    </label>
+                    <label>
+                      Reason
+                      <textarea id="hookPolicyReasonInput" rows="3" required></textarea>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Agent Roles
+                        <input id="hookPolicyRolesInput" type="text" placeholder="developer, qa">
+                      </label>
+                      <label>
+                        Priority
+                        <input id="hookPolicyPriorityInput" type="number" min="0" max="10000" value="100">
+                      </label>
+                    </div>
+                    <div class="form-footer">
+                      <label class="checkbox-label">
+                        <input id="hookPolicyEnabledInput" type="checkbox" checked>
+                        Enabled
+                      </label>
+                      <div class="button-row">
+                        <button id="hookPolicyCancelEditButton" type="button" class="link-button" hidden>Cancel Edit</button>
+                        <button id="hookPolicySubmitButton" type="submit" class="primary-button">
+                          <span class="button-icon" aria-hidden="true">+</span>
+                          <span id="hookPolicySubmitLabel">Add Rule</span>
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                  <div id="hookPolicyEditorOutput" class="output-region" aria-live="polite"></div>
+                </details>
                 <div id="hookPolicyList" class="compact-list"></div>
               </section>
               <section>

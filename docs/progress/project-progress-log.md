@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ap Local Hook Policy Editor UI
+
+Status: completed for the scoped local hook policy editor UI slice; Sprint 16 remains active for full unified chat beyond local task history, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI and hook policy, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local hook policy editing as the next low-risk Sprint 16 policy UI slice because the backend guarded hook-policy routes already exist.
+- Completed: Developer added the dashboard Hook Policy editor for local rule create/update and enable/disable flows using the existing `/guardrails/hooks/rules` routes.
+- Completed: Developer kept managed and plugin-owned hook rules read-only in the UI and re-renders hook lock state after settings refresh so deployment-managed `hook_policy` locks disable mutation controls consistently.
+- Completed: Developer added client-side pattern validation for non-`any` hook matches so the default form cannot submit a backend-invalid blank match pattern.
+- Completed: QA expanded Web UI static coverage for the hook editor form, route wiring, managed-lock checks, pattern validation, and event handlers.
+- Completed: Reviewer identified stale managed-lock rendering and blank-pattern validation risks; Developer fixed both and QA covered the fixes.
+- Completed: PM updated README, usage, developer setup, project status, backlog, Agile plan, architecture notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: local hook policy rules can now be created, edited, and enabled/disabled from the Policy dashboard through the existing guarded API.
+- Implemented in this slice: managed-source and plugin-owned hook policy records stay visible but read-only, and managed `hook_policy` locks prevent submit/toggle actions even when settings load after policy data.
+- Still out of scope after this slice: broader policy/settings editors beyond CLI and hook policy, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused UI validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Full regression passed: `uv run pytest -q` with 1,364 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ao Recursive Guided Bound Payload Editing
 
 Status: completed for the scoped recursive guided non-CLI bound payload editor slice; Sprint 16 remains active for broader editable settings and policy workflows, full unified chat beyond local task history, actual AI-change file apply/revert mutation workflows, and persistent or multi-worker project activation semantics.

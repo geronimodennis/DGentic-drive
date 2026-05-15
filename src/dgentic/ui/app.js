@@ -1,4 +1,7 @@
 const TOKEN_KEY = "dgentic.ui.token";
+const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages";
+const TASK_CHAT_HISTORY_MAX_MESSAGES = 40;
+const TASK_CHAT_HISTORY_MAX_BYTES = 120000;
 
 const approvalSources = [
   { key: "cli", label: "CLI", base: "/cli/approvals" },
@@ -468,11 +471,168 @@ function taskChatPayload() {
   };
 }
 
+function boundedString(value, limit = 600) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function boundedStringList(values, limit = 8, itemLimit = 280) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
+    .slice(0, limit)
+    .map((value) => boundedString(value, itemLimit))
+    .filter(Boolean);
+}
+
+function compactTaskChatPlan(plan) {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  return {
+    id: boundedString(plan.id, 120),
+    objective: boundedString(plan.objective, 800),
+    created_at: boundedString(plan.created_at, 80),
+    status: boundedString(plan.status, 80),
+    constraints: boundedStringList(plan.constraints),
+    acceptance_criteria: boundedStringList(plan.acceptance_criteria),
+    clarification_questions: boundedStringList(plan.clarification_questions),
+    steps: (Array.isArray(plan.steps) ? plan.steps : []).slice(0, 12).map((step) => {
+      const safeStep = step && typeof step === "object" ? step : {};
+      return {
+        id: boundedString(safeStep.id, 120),
+        title: boundedString(safeStep.title, 240),
+        description: boundedString(safeStep.description, 500),
+        agent_role: boundedString(safeStep.agent_role, 120),
+        status: boundedString(safeStep.status, 80),
+        validation: boundedString(safeStep.validation, 360),
+        dependencies: boundedStringList(safeStep.dependencies, 8, 120),
+        tools: boundedStringList(safeStep.tools, 8, 120),
+      };
+    }),
+  };
+}
+
+function compactTaskChatRun(run) {
+  if (!run || typeof run !== "object") {
+    return null;
+  }
+  return {
+    id: boundedString(run.id, 120),
+    status: boundedString(run.status, 80),
+    completed_at: boundedString(run.completed_at, 80),
+    results: (Array.isArray(run.results) ? run.results : []).slice(0, 12).map((result) => {
+      const safeResult = result && typeof result === "object" ? result : {};
+      return {
+        step_id: boundedString(safeResult.step_id, 120),
+        status: boundedString(safeResult.status, 80),
+        error: boundedString(safeResult.error, 360),
+      };
+    }),
+  };
+}
+
+function compactTaskChatMessage(message, { restored = false } = {}) {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const compact = {
+    role: message.role === "user" ? "user" : "agent",
+    title: boundedString(message.title, 160),
+    detail: boundedString(message.detail, 1200),
+    state: boundedString(message.state, 80),
+    createdAt: boundedString(message.createdAt, 80) || new Date().toISOString(),
+  };
+  if (message.plan) {
+    compact.plan = compactTaskChatPlan(message.plan);
+  }
+  if (message.run) {
+    compact.run = compactTaskChatRun(message.run);
+  }
+  if (restored) {
+    compact.restored = true;
+  }
+  return compact;
+}
+
+function taskChatHistoryMessagesForStorage() {
+  const messages = taskChatMessages
+    .slice(-TASK_CHAT_HISTORY_MAX_MESSAGES)
+    .map((message) => compactTaskChatMessage(message))
+    .filter(Boolean);
+  while (messages.length && JSON.stringify(messages).length > TASK_CHAT_HISTORY_MAX_BYTES) {
+    messages.shift();
+  }
+  return messages;
+}
+
+function updateTaskChatHistoryStatus(message) {
+  const target = qs("#taskChatHistoryStatus");
+  if (!target) {
+    return;
+  }
+  if (message) {
+    target.textContent = message;
+    return;
+  }
+  target.textContent = taskChatMessages.length ? `${taskChatMessages.length} saved` : "No saved history";
+}
+
+function saveTaskChatHistory() {
+  try {
+    if (!taskChatMessages.length) {
+      clearTaskChatHistory();
+      return;
+    }
+    const historyMessages = taskChatHistoryMessagesForStorage();
+    localStorage.setItem(TASK_CHAT_HISTORY_KEY, JSON.stringify(historyMessages));
+    updateTaskChatHistoryStatus();
+  } catch (_error) {
+    updateTaskChatHistoryStatus("History not saved");
+  }
+}
+
+function loadTaskChatHistory() {
+  try {
+    const rawHistory = localStorage.getItem(TASK_CHAT_HISTORY_KEY);
+    if (!rawHistory) {
+      updateTaskChatHistoryStatus();
+      return;
+    }
+    const parsed = JSON.parse(rawHistory);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Task chat history must be an array.");
+    }
+    taskChatMessages = parsed
+      .slice(-TASK_CHAT_HISTORY_MAX_MESSAGES)
+      .map((message) => compactTaskChatMessage(message, { restored: true }))
+      .filter(Boolean);
+    updateTaskChatHistoryStatus(taskChatMessages.length ? `${taskChatMessages.length} restored` : undefined);
+  } catch (_error) {
+    taskChatMessages = [];
+    clearTaskChatHistory();
+    updateTaskChatHistoryStatus("History reset");
+  }
+}
+
+function clearTaskChatHistory() {
+  try {
+    localStorage.removeItem(TASK_CHAT_HISTORY_KEY);
+  } catch (_error) {
+    // Local storage can be unavailable in private or locked-down browser sessions.
+  }
+  updateTaskChatHistoryStatus();
+}
+
 function appendTaskChatMessage(message) {
   taskChatMessages.push({
     createdAt: new Date().toISOString(),
     ...message,
   });
+  saveTaskChatHistory();
   renderTaskChatThread();
 }
 
@@ -501,8 +661,11 @@ function renderTaskChatMessage(target, message) {
   if (message.state) {
     item.append(statusChip(message.state));
   }
+  if (message.restored) {
+    item.append(statusChip("saved"));
+  }
   if (message.plan) {
-    renderTaskChatPlan(item, message.plan);
+    renderTaskChatPlan(item, message.plan, { historical: message.restored });
   }
   if (message.run) {
     renderTaskRunResult(item, message.run);
@@ -510,7 +673,7 @@ function renderTaskChatMessage(target, message) {
   target.append(item);
 }
 
-function renderTaskChatPlan(target, plan) {
+function renderTaskChatPlan(target, plan, options = {}) {
   const card = make("div", "task-chat-plan-card");
   const header = make("div", "task-plan-header");
   const copy = make("div");
@@ -525,7 +688,10 @@ function renderTaskChatPlan(target, plan) {
   const actions = make("div", "task-plan-actions");
   const runButton = make("button", "primary-button", "Run Plan");
   runButton.type = "button";
-  runButton.disabled = !(plan.steps || []).length;
+  runButton.disabled = options.historical || !(plan.steps || []).length;
+  if (options.historical) {
+    runButton.title = "Saved history is display only.";
+  }
   runButton.addEventListener("click", () => runTaskChatPlan(plan));
   actions.append(statusChip(plan.status), runButton);
   header.append(copy, actions);
@@ -570,6 +736,7 @@ async function runTaskChatPlan(plan) {
 
 function clearTaskChatThread() {
   taskChatMessages = [];
+  clearTaskChatHistory();
   renderTaskChatThread();
 }
 
@@ -3917,6 +4084,7 @@ function bindEvents() {
   qs("#loadTasksButton").addEventListener("click", loadTasks);
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
+  loadTaskChatHistory();
   renderTaskChatThread();
   qs("#taskForm").addEventListener("submit", createTaskPlan);
   qs("#orchestrationCreateForm").addEventListener("submit", createOrchestrationRun);

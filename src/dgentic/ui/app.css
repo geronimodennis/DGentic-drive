@@ -458,6 +458,7 @@ textarea {
 }
 
 .task-chat-header,
+.task-chat-header-actions,
 .task-chat-actions,
 .task-chat-message-header {
   display: flex;
@@ -466,9 +467,20 @@ textarea {
   gap: 10px;
 }
 
+.task-chat-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .task-chat-header h3 {
   margin: 0;
   font-size: 1rem;
+}
+
+.task-chat-history-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .task-chat-transcript {
@@ -1135,6 +1147,7 @@ textarea {
   .panel-header,
   .form-footer,
   .task-chat-header,
+  .task-chat-header-actions,
   .task-chat-actions,
   .task-chat-message-header {
     align-items: stretch;

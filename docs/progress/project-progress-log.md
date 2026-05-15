@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ad Local Task-Chat History
+
+Status: completed for the scoped local task-chat history slice; Sprint 16 remains active for full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, richer type-specific non-CLI request editors, provider/tool network-approval consuming flows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local task-chat history as the next bounded Sprint 16 slice after BL-010ac because the first task-chat composer still reset to an empty transcript on reload.
+- Completed: QA identified the key safety risks: do not persist bearer tokens in local storage, cap saved transcript size, tolerate corrupt storage, and avoid treating restored plan objects as fresh executable state.
+- Completed: Developer added capped browser-local task-chat message storage, save/restore/clear helpers, history status text, compact stored plan/run snapshots, corrupt/quota-tolerant fallback behavior, and display-only restored plan cards.
+- Completed: QA extended static UI coverage for the local-history contract, storage helpers, history status selectors, no `TOKEN_KEY` localStorage write, and CSS hooks.
+- Completed: PM updated README, usage, project status, backlog, Agile plan, architecture notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` task-chat transcript history survives reloads in capped browser-local storage, Clear removes the saved history, corrupt or unavailable local storage no longer breaks the dashboard, and restored plan cards remain reviewable without enabling stale direct execution.
+- Still out of scope after this slice: full unified chat with durable backend conversation records, streaming responses, cross-surface chat integration, and AI-change apply/revert workflows.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `uv run pytest tests\test_ui.py -q` with 3 tests, and `git diff --check`.
+- Browser history smoke passed against a temporary Uvicorn server on `127.0.0.1:8770` at mobile 390x844: saved transcript restored after reload, restored plan Run button was disabled with display-only title, Clear removed `localStorage` history and reset the transcript, no horizontal overflow appeared, and there were zero console messages, page errors, failed requests, or HTTP responses at status 400 or higher. Screenshot evidence was written to `.dgentic/ui-smoke/bl010ad-mobile-history.png`.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ac Responsive Browser Validation Hardening
 
 Status: completed for the scoped responsive/browser validation slice; Sprint 16 remains active for deeper conversational history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, richer type-specific non-CLI request editors, provider/tool network-approval consuming flows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.

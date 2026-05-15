@@ -21,6 +21,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatForm" in response.text
     assert "taskChatInput" in response.text
     assert "taskChatTranscript" in response.text
+    assert "taskChatHistoryStatus" in response.text
     assert "taskChatSubmitButton" in response.text
     assert "taskChatRunInput" in response.text
     assert "orchestrationCreateForm" in response.text
@@ -137,6 +138,26 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "settingsGroupName" in script_response.text
     assert "parseSettingList" in script_response.text
     assert "headers.Authorization" in script_response.text
+    assert "TASK_CHAT_HISTORY_KEY" in script_response.text
+    assert 'const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages"' in script_response.text
+    assert "TASK_CHAT_HISTORY_MAX_MESSAGES" in script_response.text
+    assert "TASK_CHAT_HISTORY_MAX_BYTES" in script_response.text
+    assert "loadTaskChatHistory" in script_response.text
+    assert "saveTaskChatHistory" in script_response.text
+    assert "clearTaskChatHistory" in script_response.text
+    assert "updateTaskChatHistoryStatus" in script_response.text
+    assert "compactTaskChatMessage" in script_response.text
+    assert "taskChatHistoryMessagesForStorage" in script_response.text
+    assert "localStorage.getItem(TASK_CHAT_HISTORY_KEY)" in script_response.text
+    assert "localStorage.setItem(TASK_CHAT_HISTORY_KEY, JSON.stringify(historyMessages))" in (
+        script_response.text
+    )
+    assert "localStorage.removeItem(TASK_CHAT_HISTORY_KEY)" in script_response.text
+    assert 'qs("#taskChatHistoryStatus")' in script_response.text
+    assert "History not saved" in script_response.text
+    assert "History reset" in script_response.text
+    assert "Saved history is display only." in script_response.text
+    assert "localStorage.setItem(TOKEN_KEY" not in script_response.text
     assert "taskChatPayload" in script_response.text
     assert "submitTaskChatMessage" in script_response.text
     assert "appendTaskChatMessage" in script_response.text
@@ -327,6 +348,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".panel > *" in style_response.text
     assert "grid-template-columns: minmax(0, 1fr);" in style_response.text
     assert ".task-chat" in style_response.text
+    assert ".task-chat-header-actions" in style_response.text
+    assert ".task-chat-history-status" in style_response.text
     assert ".task-chat-transcript" in style_response.text
     assert ".task-chat-message" in style_response.text
     assert ".task-chat-message-user" in style_response.text

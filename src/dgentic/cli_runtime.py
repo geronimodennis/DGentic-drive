@@ -162,6 +162,11 @@ class CommandApproval(BaseModel):
         redacted_command = redact_sensitive_values(self.command)
         self.command = redacted_command
         self.review_command = redact_sensitive_values(self.review_command or redacted_command)
+        self.requested_by = _redact_optional_sensitive_text(self.requested_by)
+        self.agent_id = _redact_optional_sensitive_text(self.agent_id)
+        self.agent_role = _redact_optional_sensitive_text(self.agent_role)
+        self.task_id = _redact_optional_sensitive_text(self.task_id)
+        self.decided_by = _redact_optional_sensitive_text(self.decided_by)
         self.decision_reason = _redact_optional_sensitive_text(self.decision_reason)
         self.denial_reason = _redact_optional_sensitive_text(self.denial_reason)
         self.workflow_binding = _approval_workflow_binding(self.workflow_binding)
@@ -243,6 +248,17 @@ class CommandRun(BaseModel):
 
     def model_post_init(self, __context: object) -> None:
         self.command = redact_sensitive_values(self.command)
+        self.requested_by = _redact_optional_sensitive_text(self.requested_by)
+        self.agent_id = _redact_optional_sensitive_text(self.agent_id)
+        self.agent_role = _redact_optional_sensitive_text(self.agent_role)
+        self.task_id = _redact_optional_sensitive_text(self.task_id)
+        self.supervisor_id = _redact_optional_sensitive_text(self.supervisor_id)
+        self.status_reason = _redact_optional_sensitive_text(self.status_reason)
+        self.stale_reason = _redact_optional_sensitive_text(self.stale_reason)
+        self.termination_reason = _redact_optional_sensitive_text(self.termination_reason)
+        self.terminated_by_supervisor_id = _redact_optional_sensitive_text(
+            self.terminated_by_supervisor_id
+        )
 
 
 class CommandRunOutput(BaseModel):
@@ -786,14 +802,17 @@ class CliRuntimeService:
         requested_by: str | None = None,
     ) -> CommandApproval:
         cwd = resolve_command_cwd(request.cwd)
-        requested_by_value = requested_by or request.requested_by
+        requested_by_value = _redact_optional_sensitive_text(requested_by or request.requested_by)
+        agent_id_value = _redact_optional_sensitive_text(request.agent_id)
+        agent_role_value = _redact_optional_sensitive_text(request.agent_role)
+        task_id_value = _redact_optional_sensitive_text(request.task_id)
         decision = evaluate_command_policy(
             CommandPolicyRequest(
                 command=request.command,
                 cwd=cwd,
-                agent_role=request.agent_role,
-                agent_id=request.agent_id,
-                task_id=request.task_id,
+                agent_role=agent_role_value,
+                agent_id=agent_id_value,
+                task_id=task_id_value,
             ),
             actor=requested_by_value,
         )
@@ -809,9 +828,9 @@ class CliRuntimeService:
             cwd=cwd,
             timeout_seconds=request.timeout_seconds,
             requested_by=requested_by_value,
-            agent_id=request.agent_id,
-            agent_role=request.agent_role,
-            task_id=request.task_id,
+            agent_id=agent_id_value,
+            agent_role=agent_role_value,
+            task_id=task_id_value,
             environment_keys=environment_keys,
             environment_digest=environment_digest,
             workflow_binding=workflow_binding,
@@ -833,9 +852,9 @@ class CliRuntimeService:
             permission_mode=decision.permission_mode,
             policy_reason=decision.reason,
             requested_by=requested_by_value,
-            agent_id=request.agent_id,
-            agent_role=request.agent_role,
-            task_id=request.task_id,
+            agent_id=agent_id_value,
+            agent_role=agent_role_value,
+            task_id=task_id_value,
             environment_keys=environment_keys,
             workflow_binding=workflow_binding,
             matched_rule_id=decision.matched_rule_id,
@@ -891,7 +910,7 @@ class CliRuntimeService:
         redacted_reason = _redact_optional_sensitive_text(reason)
         now = datetime.now(UTC)
         approval.status = CommandApprovalStatus.approved
-        approval.decided_by = decided_by
+        approval.decided_by = _redact_optional_sensitive_text(decided_by)
         approval.decision_reason = redacted_reason
         approval.decided_at = now
         approval.updated_at = now
@@ -921,7 +940,7 @@ class CliRuntimeService:
         redacted_reason = _redact_optional_sensitive_text(reason)
         now = datetime.now(UTC)
         approval.status = CommandApprovalStatus.denied
-        approval.decided_by = decided_by
+        approval.decided_by = _redact_optional_sensitive_text(decided_by)
         approval.decision_reason = redacted_reason
         approval.denial_reason = redacted_reason
         approval.decided_at = now
@@ -1698,6 +1717,10 @@ class CliRuntimeService:
         actor: str | None = None,
     ) -> tuple[CommandExecutionResult, CommandRun]:
         environment_keys = environment_keys or []
+        redacted_requested_by = _redact_optional_sensitive_text(requested_by)
+        redacted_agent_id = _redact_optional_sensitive_text(agent_id)
+        redacted_agent_role = _redact_optional_sensitive_text(agent_role)
+        redacted_task_id = _redact_optional_sensitive_text(task_id)
         sanitized_stdout, stdout_truncated = sanitize_output(
             stdout,
             max_chars=self.max_output_chars,
@@ -1720,10 +1743,10 @@ class CliRuntimeService:
             stderr_truncated=stderr_truncated,
             permission_mode=permission_mode,
             duration_ms=duration_ms,
-            requested_by=requested_by,
-            agent_id=agent_id,
-            agent_role=agent_role,
-            task_id=task_id,
+            requested_by=redacted_requested_by,
+            agent_id=redacted_agent_id,
+            agent_role=redacted_agent_role,
+            task_id=redacted_task_id,
             environment_keys=environment_keys,
             status_reason=_status_reason_for_terminal_async_run(status),
             started_at=started_at,
@@ -1743,10 +1766,10 @@ class CliRuntimeService:
                 "exit_code": exit_code,
                 "duration_ms": duration_ms,
                 "permission_mode": permission_mode,
-                "requested_by": requested_by,
-                "agent_id": agent_id,
-                "agent_role": agent_role,
-                "task_id": task_id,
+                "requested_by": redacted_requested_by,
+                "agent_id": redacted_agent_id,
+                "agent_role": redacted_agent_role,
+                "task_id": redacted_task_id,
                 "environment_keys": environment_keys,
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
@@ -1760,10 +1783,10 @@ class CliRuntimeService:
             stderr=sanitized_stderr,
             permission_mode=permission_mode,
             duration_ms=duration_ms,
-            requested_by=requested_by,
-            agent_id=agent_id,
-            agent_role=agent_role,
-            task_id=task_id,
+            requested_by=redacted_requested_by,
+            agent_id=redacted_agent_id,
+            agent_role=redacted_agent_role,
+            task_id=redacted_task_id,
             environment_keys=environment_keys,
         )
         return result, run
@@ -1979,14 +2002,18 @@ class CliRuntimeService:
         if self._approval_is_expired(approval):
             raise PermissionError(f"Approval {approval.id} has expired and cannot be executed.")
 
+        requested_by_value = _redact_optional_sensitive_text(request.requested_by)
+        agent_id_value = _redact_optional_sensitive_text(request.agent_id)
+        agent_role_value = _redact_optional_sensitive_text(request.agent_role)
+        task_id_value = _redact_optional_sensitive_text(request.task_id)
         expected_digest = command_approval_digest(
             command=decision.command,
             cwd=cwd,
             timeout_seconds=request.timeout_seconds,
-            requested_by=request.requested_by,
-            agent_id=request.agent_id,
-            agent_role=request.agent_role,
-            task_id=request.task_id,
+            requested_by=requested_by_value,
+            agent_id=agent_id_value,
+            agent_role=agent_role_value,
+            task_id=task_id_value,
             environment_keys=environment_keys,
             environment_digest=environment_digest,
             workflow_binding=request.workflow_binding,
@@ -2001,10 +2028,10 @@ class CliRuntimeService:
             approval.review_command == review_command,
             approval.cwd == cwd,
             approval.timeout_seconds == request.timeout_seconds,
-            approval.requested_by == request.requested_by,
-            approval.agent_id == request.agent_id,
-            approval.agent_role == request.agent_role,
-            approval.task_id == request.task_id,
+            approval.requested_by == requested_by_value,
+            approval.agent_id == agent_id_value,
+            approval.agent_role == agent_role_value,
+            approval.task_id == task_id_value,
             sorted(approval.environment_keys) == environment_keys,
             approval.environment_digest == environment_digest,
             approval.workflow_binding == _approval_workflow_binding(request.workflow_binding),

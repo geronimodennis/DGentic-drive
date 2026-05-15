@@ -433,6 +433,22 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-run-summary" in style_response.text
 
 
+def test_web_ui_approval_sources_match_backend_contracts() -> None:
+    client = TestClient(create_app())
+
+    script_response = client.get("/ui/app.js")
+
+    assert script_response.status_code == 200
+    for source in [
+        '{ key: "cli", label: "CLI", base: "/cli/approvals" }',
+        '{ key: "filesystem", label: "Filesystem", base: "/filesystem/approvals" }',
+        '{ key: "network", label: "Network", base: "/network/approvals" }',
+        '{ key: "provider", label: "Provider", base: "/providers/approvals" }',
+        '{ key: "tool", label: "Tool", base: "/tools/approvals" }',
+    ]:
+        assert source in script_response.text
+
+
 def test_web_ui_is_public_while_api_routes_remain_protected(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

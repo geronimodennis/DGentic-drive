@@ -599,7 +599,7 @@ curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/approve `
 curl -X POST http://127.0.0.1:8000/cli/approvals/[approval_id]/execute
 ```
 
-The review response is safe for UI consumers: it returns redacted command text, policy context, environment key names without values, command/environment HMAC digest identifiers, warnings for environment-bound, redacted-command, or legacy-digest approvals, and whether direct execution is available. `GET /cli/approvals` lists approval records for approval reviewers. Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
+The review response is safe for UI consumers: it returns redacted command text, redacted requester and agent/task context, policy context, environment key names without values, command/environment HMAC digest identifiers, warnings for environment-bound, redacted-command, or legacy-digest approvals, and whether direct execution is available. `GET /cli/approvals` lists approval records for approval reviewers. Use the bound approval directly when executing with reviewed environment keys or when calling `/cli/execute` or `/cli/runs`:
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/cli/execute `
@@ -973,7 +973,7 @@ Configure strict operating boundaries before running autonomous tasks:
 
 ### 4. Submit A Task
 
-Current backend MVP task submission is through the HTTP API, and the first `/ui/` dashboard can create task plans from a task-chat composer or structured inputs, restore capped local task-chat history, then create orchestration runs from structured task graphs. Full unified chat remains Sprint 16 work, while the dedicated CLI client and VS Code chat extension are planned for Sprint 17. The VS Code extension should integrate with VS Code's native workspace folders, Explorer, editor, and diff review instead of duplicating project file explorer/code editor UI inside the extension.
+Current backend MVP task submission is through the HTTP API, and the first `/ui/` dashboard can create task plans from a task-chat composer or structured inputs, restore capped local task-chat history, then create orchestration runs from structured task graphs. Approval-dashboard backend contracts now have scenario coverage across CLI, filesystem, network, provider, and tool sources, but browser-driven seeded approval scenarios remain Sprint 16 work. Full unified chat also remains Sprint 16 work, while the dedicated CLI client and VS Code chat extension are planned for Sprint 17. The VS Code extension should integrate with VS Code's native workspace folders, Explorer, editor, and diff review instead of duplicating project file explorer/code editor UI inside the extension.
 
 Current interfaces:
 

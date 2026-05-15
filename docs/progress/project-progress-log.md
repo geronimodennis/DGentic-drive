@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010af Approval Dashboard Contract Coverage
+
+Status: completed for the scoped approval-dashboard backend contract and redaction-hardening slice; Sprint 16 remains active for browser-driven seeded approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected approval scenario coverage as the next Sprint 16 slice after BL-010ae because the dashboard now exposes all approval sources and bound request scaffolds, but lacked one contract test spanning the unified inbox.
+- Completed: QA explorer identified concrete gaps in unified approval-inbox coverage, method-aware approval capability coverage, and the UI approval source matrix contract.
+- Completed: QA added `tests/test_approval_dashboard_contracts.py` to seed CLI, filesystem, network, provider, and tool approval records, exercise safe list/review/approve flows, and validate bound execution fields against backend consumers.
+- Completed: Developer fixed a QA-discovered CLI approval/run redaction gap so secret-shaped requester, agent/task, and decision context is redacted in CLI approval records, run records, run results, and binding validation while preserving approval digest matching.
+- Completed: QA expanded method-aware auth capability coverage for unified approval routes and pinned the dashboard approval source matrix to the backend approval route contracts.
+- Completed: PM updated README, usage, architecture, project status, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: backend/dashboard approval contracts now have end-to-end API scenario coverage for all five approval inbox sources, including safe review metadata, approve decisions, direct CLI execution, filesystem `approval_id` consumption, provider `approval_id` plus network `network_approval_id` consumption, and generated-tool `approval_id` consumption.
+- Implemented in this slice: CLI approval and run context now redacts secret-shaped requester, agent/task, supervisor, status, and decision fields before response or persisted run output exposure.
+- Still out of scope after this slice: Playwright/browser-seeded approval inbox decisions, nested provider message editors, tool-schema-aware payload editors, and richer provider/tool network-approval consumption UI.
+
+Validation:
+- Focused dashboard contract validation passed: `uv run pytest -q tests\test_approval_dashboard_contracts.py tests\test_ui.py::test_web_ui_approval_sources_match_backend_contracts tests\test_auth.py::test_capability_for_request_splits_approval_review_from_execution` with 38 passed.
+- Focused CLI/API regression passed: `uv run pytest -q tests\test_cli_runtime.py tests\test_api.py::test_cli_approval_api_persists_and_executes_approved_command tests\test_api.py::test_cli_approval_api_splits_requester_and_reviewer_capabilities tests\test_api.py::test_cli_approval_direct_execute_requires_bound_authenticated_requester tests\test_api.py::test_cli_approval_review_api_returns_safe_bound_execution_contract tests\test_api.py::test_cli_approval_api_redacts_decision_reason_secrets tests\test_api.py::test_cli_execute_api_requires_bound_approval_id_in_production` with 95 passed and 2 skipped.
+- Full regression passed: `uv run pytest -q` with 1,354 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010ae Guided Bound Request Fields
 
 Status: completed for the scoped guided non-CLI bound request field slice; Sprint 16 remains active for deeper nested type-specific request editors, provider/tool network-approval consuming flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.

@@ -35,6 +35,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "orchestrationMemoryPolicyInput" in response.text
     assert "orchestrationDetail" in response.text
     assert "loadReliabilityButton" in response.text
+    assert "providerHealthOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -227,6 +228,12 @@ def test_web_ui_static_assets_are_served() -> None:
         script_response.text
     )
     assert "approvalScopeMetric" in script_response.text
+    assert "renderProviderHealth" in script_response.text
+    assert "checkProviderHealth" in script_response.text
+    assert "/providers/${encodeURIComponent(providerId)}/health" in script_response.text
+    assert "provider-health-check" in script_response.text
+    assert "Provider health checked" in script_response.text
+    assert "Provider health unavailable" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

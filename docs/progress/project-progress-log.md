@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010av Provider Health Check UI
+
+Status: completed for the scoped provider health visibility UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected provider health checks as the next safe Sprint 16 runtime-visibility slice because the backend already exposes provider listing and per-provider health contracts.
+- Completed: Developer added per-provider Health actions to the Provider panel and a safe output region for availability, checked timestamp, model names, and raw health JSON.
+- Completed: Developer kept the slice read-only and did not change provider execution, routing, credentials, or network policy behavior.
+- Completed: QA expanded Web UI static coverage for the provider health output area, route wiring, health action button, render helper, and success/failure messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can check provider runtime health directly from the dashboard instead of calling `/providers/{provider_id}/health` manually.
+- Implemented in this slice: health details use existing backend redaction/no-secret behavior and do not resolve credentials beyond the existing provider health contract.
+- Still out of scope after this slice: provider configuration editing, routing policy editing, actual provider generation from the provider panel, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_provider_listing_and_health_do_not_leak_invalid_configured_base_url` with 3 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010au Network Approval Request UI
 
 Status: completed for the scoped network approval request UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.

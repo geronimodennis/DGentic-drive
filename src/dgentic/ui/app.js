@@ -4000,12 +4000,48 @@ async function loadProviders() {
     target.append(statusBox("No providers", "Provider catalog is empty.", "pending"));
   } else {
     for (const provider of providers.data) {
-      const item = make("div", "list-item");
-      item.append(make("div", "item-title", provider.name || provider.id));
-      item.append(make("div", "item-meta", `${provider.kind} - ${provider.permission_mode}`));
-      item.append(statusChip(provider.enabled ? "ok" : "blocked"));
+      const item = make("div", "list-item builder-row");
+      const detail = make("div");
+      detail.append(make("div", "item-title", provider.name || provider.id));
+      detail.append(make("div", "item-meta", `${provider.kind} - ${provider.permission_mode}`));
+      const actions = make("div", "recipe-action-buttons");
+      const healthButton = make("button", "link-button", "Health");
+      healthButton.type = "button";
+      healthButton.dataset.testid = "provider-health-check";
+      healthButton.dataset.providerId = provider.id || "";
+      healthButton.addEventListener("click", () => checkProviderHealth(provider.id));
+      actions.append(statusChip(provider.enabled ? "ok" : "blocked"), healthButton);
+      item.append(detail, actions);
       target.append(item);
     }
+  }
+}
+
+function renderProviderHealth(target, health) {
+  const state = health.available ? "ok" : "blocked";
+  target.append(statusBox("Provider health", health.message || health.provider_id, state));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Provider", health.provider_id || "-");
+  appendKeyValue(grid, "Available", health.available ? "Yes" : "No", state);
+  appendKeyValue(grid, "Models", health.model_names?.length ? health.model_names.join(", ") : "-");
+  appendKeyValue(grid, "Checked", health.checked_at || "-");
+  target.append(grid);
+  target.append(jsonBlock(health));
+}
+
+async function checkProviderHealth(providerId) {
+  const target = qs("#providerHealthOutput");
+  clear(target);
+  target.append(statusBox("Checking provider health", providerId, "running"));
+  try {
+    const health = await api(`/providers/${encodeURIComponent(providerId)}/health`);
+    clear(target);
+    renderProviderHealth(target, health);
+    showToast("Provider health checked.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Provider health unavailable", error.message, "failed"));
+    showToast(error.message);
   }
 }
 

@@ -99,11 +99,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "boundExecutionPayloadFromEditor" in script_response.text
     assert "renderBoundExecutionGuidedFields" in script_response.text
     assert "renderBoundExecutionGuidedField" in script_response.text
+    assert "renderBoundExecutionGuidedGroup" in script_response.text
+    assert "isGuidedNestedValue" in script_response.text
+    assert "isBoundExecutionLockedPath" in script_response.text
+    assert "boundExecutionPayloadPathLabel" in script_response.text
     assert "boundExecutionGuidedFieldControl" in script_response.text
     assert "syncBoundExecutionGuidedField" in script_response.text
+    assert "setBoundExecutionPayloadPathValue" in script_response.text
     assert "boundExecutionGuidedFieldValue" in script_response.text
     assert "boundExecutionPayloadFromText" in script_response.text
-    assert "control.dataset.boundPayloadPath = field" in script_response.text
+    assert "control.dataset.boundPayloadPath = pathText" in script_response.text
+    assert "renderBoundExecutionGuidedField(body, scaffold, [...path, field]" in (
+        script_response.text
+    )
+    assert 'make("details", "bound-execution-guided-group")' in script_response.text
+    assert "Empty nested value" in script_response.text
     assert "Bound approval fields are locked in guided editing." in script_response.text
     assert "Fix payload JSON before syncing guided fields." in script_response.text
     assert "Guided numeric field is invalid." in script_response.text
@@ -412,6 +422,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".bound-execution-editor" in style_response.text
     assert ".bound-execution-guided-fields" in style_response.text
     assert ".bound-execution-guided-field" in style_response.text
+    assert ".bound-execution-guided-group" in style_response.text
+    assert ".bound-execution-guided-group-body" in style_response.text
     assert ".review-warning-list" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text

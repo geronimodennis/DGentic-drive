@@ -1047,6 +1047,27 @@ textarea {
   min-width: 0;
 }
 
+.bound-execution-guided-group {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+  min-width: 0;
+}
+
+.bound-execution-guided-group summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.bound-execution-guided-group-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .bound-execution-guided-field small {
   color: var(--muted);
 }

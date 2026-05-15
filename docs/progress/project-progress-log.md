@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ao Recursive Guided Bound Payload Editing
+
+Status: completed for the scoped recursive guided non-CLI bound payload editor slice; Sprint 16 remains active for broader editable settings and policy workflows, full unified chat beyond local task history, actual AI-change file apply/revert mutation workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected recursive guided bound payload editing as a bounded UI-deepening slice already supported by the existing approval dashboard execution contracts.
+- Completed: Developer updated the dashboard guided bound request editor so nested objects and arrays render as expandable guided groups and scalar nested controls sync back into the canonical JSON payload.
+- Completed: QA updated static UI coverage for the nested guided group functions, path labels, nested path sync helper, and CSS selectors.
+- Completed: PM updated README, usage, developer setup, project status, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: non-CLI bound execution payloads now support recursive guided editing for nested objects and arrays, including provider `messages`, `options`, tool `payload`, and optional network approval fields.
+- Implemented in this slice: only the top-level approval binding field remains locked by guided editing, while nested scalar controls write through stable path metadata into the JSON editor.
+- Still out of scope after this slice: richer domain-specific nested editors, broader hook-policy/settings editors, full unified chat, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused UI validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served` with 1 passed.
+- Dashboard validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 10 passed.
+- Full regression passed: `uv run pytest -q` with 1,364 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010an Persistent AI-Change Review Artifacts
 
 Status: completed for the scoped persistent AI-change review artifact slice; Sprint 16 remains active for actual AI-change file apply/revert mutation workflows, deeper nested type-specific request editors, full unified chat beyond local task history, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

@@ -2134,19 +2134,25 @@ function renderBoundExecutionGuidedFields(scaffold, textarea) {
     return box;
   }
   for (const [field, value] of fields) {
-    renderBoundExecutionGuidedField(box, scaffold, field, value, textarea);
+    renderBoundExecutionGuidedField(box, scaffold, [field], value, textarea);
   }
   return box;
 }
 
-function renderBoundExecutionGuidedField(target, scaffold, field, value, textarea) {
+function renderBoundExecutionGuidedField(target, scaffold, path, value, textarea) {
+  if (isGuidedNestedValue(value)) {
+    renderBoundExecutionGuidedGroup(target, scaffold, path, value, textarea);
+    return;
+  }
+  const field = path[path.length - 1];
+  const pathText = boundExecutionPayloadPathLabel(path);
   const row = make("label", "bound-execution-guided-field");
-  const header = make("span", "", field.replaceAll("_", " "));
+  const header = make("span", "", pathText);
   row.append(header);
   const control = boundExecutionGuidedFieldControl(field, value);
   control.dataset.boundPayloadField = field;
-  control.dataset.boundPayloadPath = field;
-  if (scaffold.binding?.field === field) {
+  control.dataset.boundPayloadPath = pathText;
+  if (isBoundExecutionLockedPath(scaffold, path)) {
     control.disabled = true;
     control.title = "Bound approval fields are locked in guided editing.";
     row.append(control, make("small", "", "Bound field"));
@@ -2155,13 +2161,44 @@ function renderBoundExecutionGuidedField(target, scaffold, field, value, textare
   }
   const eventName = control.type === "checkbox" ? "change" : "input";
   control.addEventListener(eventName, () => {
-    syncBoundExecutionGuidedField(field, control, value, textarea);
+    syncBoundExecutionGuidedField(path, control, value, textarea);
   });
   row.append(control);
   target.append(row);
 }
 
+function renderBoundExecutionGuidedGroup(target, scaffold, path, value, textarea) {
+  const group = make("details", "bound-execution-guided-group");
+  group.open = path.length <= 2;
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [index, item])
+    : Object.entries(value || {});
+  group.append(make("summary", "", boundExecutionPayloadPathLabel(path)));
+  const body = make("div", "bound-execution-guided-group-body");
+  if (!entries.length) {
+    body.append(statusBox("Empty nested value", "Edit the JSON payload directly.", "pending"));
+  }
+  for (const [field, nestedValue] of entries) {
+    renderBoundExecutionGuidedField(body, scaffold, [...path, field], nestedValue, textarea);
+  }
+  group.append(body);
+  target.append(group);
+}
+
+function isGuidedNestedValue(value) {
+  return Boolean(value && typeof value === "object");
+}
+
+function isBoundExecutionLockedPath(scaffold, path) {
+  return path.length === 1 && scaffold.binding?.field === path[0];
+}
+
+function boundExecutionPayloadPathLabel(path) {
+  return path.map((part) => String(part).replaceAll("_", " ")).join(".");
+}
+
 function boundExecutionGuidedFieldControl(field, value) {
+  const fieldName = String(field);
   if (typeof value === "boolean") {
     const input = make("input");
     input.type = "checkbox";
@@ -2182,7 +2219,7 @@ function boundExecutionGuidedFieldControl(field, value) {
     return input;
   }
   const stringValue = value === undefined || value === null ? "" : String(value);
-  if (stringValue.length > 80 || field.includes("content") || field.includes("body")) {
+  if (stringValue.length > 80 || fieldName.includes("content") || fieldName.includes("body")) {
     const input = make("textarea");
     input.rows = 3;
     input.value = stringValue;
@@ -2194,7 +2231,7 @@ function boundExecutionGuidedFieldControl(field, value) {
   return input;
 }
 
-function syncBoundExecutionGuidedField(field, control, sampleValue, textarea) {
+function syncBoundExecutionGuidedField(path, control, sampleValue, textarea) {
   let payload = {};
   try {
     payload = boundExecutionPayloadFromText(textarea.value);
@@ -2209,8 +2246,21 @@ function syncBoundExecutionGuidedField(field, control, sampleValue, textarea) {
     showToast(error.message);
     return;
   }
-  payload[field] = value;
+  setBoundExecutionPayloadPathValue(payload, path, value);
   textarea.value = JSON.stringify(payload, null, 2);
+}
+
+function setBoundExecutionPayloadPathValue(payload, path, value) {
+  let current = payload;
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const key = path[index];
+    const nextKey = path[index + 1];
+    if (!current[key] || typeof current[key] !== "object") {
+      current[key] = typeof nextKey === "number" ? [] : {};
+    }
+    current = current[key];
+  }
+  current[path[path.length - 1]] = value;
 }
 
 function boundExecutionGuidedFieldValue(control, sampleValue) {

@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 import pytest
 import uvicorn
 
+from dgentic import provider_runtime
 from dgentic.database import reset_database_state
 from dgentic.main import create_app
 from dgentic.settings import get_settings
@@ -25,6 +26,7 @@ pytestmark = [
         "ignore:websockets\\.server\\.WebSocketServerProtocol is deprecated:DeprecationWarning"
     ),
 ]
+PROVIDER_ID = provider_runtime.EXTERNAL_OPENAI_COMPATIBLE_PROVIDER_ID
 
 
 def _free_port() -> int:
@@ -244,6 +246,13 @@ def ui_live_server(tmp_path, monkeypatch):
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
     monkeypatch.setenv(
+        "DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_BASE_URL",
+        "https://provider.example.test/v1",
+    )
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_API_KEY_ENV", "BROWSER_PROVIDER_KEY")
+    monkeypatch.setenv("DGENTIC_EXTERNAL_OPENAI_COMPATIBLE_MODELS", "gpt-browser")
+    monkeypatch.setenv("BROWSER_PROVIDER_KEY", "browser-provider-key-secret")
+    monkeypatch.setenv(
         "DGENTIC_NETWORK_DOMAIN_POLICY",
         json.dumps(
             {
@@ -257,6 +266,32 @@ def ui_live_server(tmp_path, monkeypatch):
             }
         ),
     )
+
+    def fake_provider_post_json(
+        _url: str,
+        payload: dict,
+        _timeout_seconds: float,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        assert headers and headers.get("Authorization") == "Bearer browser-provider-key-secret"
+        return {
+            "id": "chatcmpl-browser-provider-smoke",
+            "model": payload.get("model", "gpt-browser"),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Approved browser provider response.",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(provider_runtime, "_post_json", fake_provider_post_json)
+    provider_runtime.reset_provider_circuit_state()
     reset_database_state()
     get_settings.cache_clear()
 
@@ -281,6 +316,7 @@ def ui_live_server(tmp_path, monkeypatch):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+        provider_runtime.reset_provider_circuit_state()
         reset_database_state()
         get_settings.cache_clear()
 
@@ -586,6 +622,99 @@ def test_browser_approval_dashboard_can_execute_seeded_web_retrieval_network_app
     review_status, review_body = _http_json(
         "GET",
         f"{base_url}/network/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"
+
+
+def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    approval_payload = {
+        "provider_id": PROVIDER_ID,
+        "model": "gpt-browser",
+        "messages": [{"role": "user", "content": "<original approved message content>"}],
+        "temperature": 0.2,
+        "max_tokens": 32,
+    }
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/providers/{PROVIDER_ID}/approvals?requested_by=browser-provider-smoke",
+        payload=approval_payload,
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "provider";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("{PROVIDER_ID}"))
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("{PROVIDER_ID}"));
+          row.querySelector("button").click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Provider review")
+          && document.querySelector("#approvalReview")?.textContent.includes("gpt-browser")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser provider smoke.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes("<original approved message content>")
+        """
+    )
+    devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+          && document.querySelector("#boundExecutionOutput")
+            ?.textContent.includes("Approved browser provider response.")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/providers/approvals/{create_body['id']}/review",
     )
     assert review_status == 200
     assert review_body["status"] == "executed"

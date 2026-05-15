@@ -340,6 +340,17 @@ def web_retrieval_target_url():
 
 
 @pytest.fixture()
+def socket_listener():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        yield listener
+    finally:
+        listener.close()
+
+
+@pytest.fixture()
 def devtools_page(tmp_path):
     browser = _find_browser_executable()
     if browser is None:
@@ -861,3 +872,146 @@ def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
     )
     assert review_status == 200
     assert review_body["status"] == "executed"
+
+
+def test_browser_approval_dashboard_can_execute_seeded_tool_network_approval(
+    ui_live_server,
+    devtools_page,
+    socket_listener,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    host, port = socket_listener.getsockname()
+    tool_name = "browser-network-approval-tool"
+    generate_status, _generate_body = _http_json(
+        "POST",
+        f"{base_url}/tools/generate",
+        payload={
+            "name": tool_name,
+            "description": "Browser generated-tool network approval smoke.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": (
+                "import socket\n\n"
+                "def run(payload):\n"
+                f"    with socket.create_connection(({host!r}, {port}), timeout=2):\n"
+                "        return {'ok': True, 'value': payload.get('value')}\n"
+            ),
+        },
+    )
+    assert generate_status == 201
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/tools/{tool_name}/approvals?requested_by=browser-tool-network-smoke",
+        payload={"payload": {"value": "browser-tool-network-value"}, "timeout_seconds": 5},
+    )
+    assert create_status == 201
+    network_status, network_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals",
+        payload={
+            "url": f"https://{host}:{port}",
+            "surface": "generated_tool",
+            "action": "socket_connect",
+            "requested_by": "browser-tool-network-smoke",
+        },
+    )
+    assert network_status == 201
+    network_approve_status, _network_approve_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals/{network_body['id']}/approve",
+        payload={"decided_by": "browser-tool-network-reviewer"},
+    )
+    assert network_approve_status == 200
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "tool";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("{tool_name}"))
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("{tool_name}"));
+          row.querySelector("button").click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Tool review")
+          && document.querySelector("#approvalReview")?.textContent
+            .includes("browser-network-approval-tool")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser tool network smoke.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes('"network_approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes("browser-tool-network-value")
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const textarea = document.querySelector("#boundExecutionPayloadInput");
+          const payload = JSON.parse(textarea.value);
+          payload.network_approval_id = "{network_body["id"]}";
+          textarea.value = JSON.stringify(payload, null, 2);
+          return true;
+        }})()
+        """
+    )
+    devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+          && document.querySelector("#boundExecutionOutput")
+            ?.textContent.includes("browser-tool-network-value")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/tools/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"
+    network_review_status, network_review_body = _http_json(
+        "GET",
+        f"{base_url}/network/approvals/{network_body['id']}/review",
+    )
+    assert network_review_status == 200
+    assert network_review_body["status"] == "executed"

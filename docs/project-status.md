@@ -7,9 +7,9 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010al provider browser bound execution with network approval consumption is implemented and validation-clean.
-- Latest completed slice: BL-010al, provider and generated-tool bound execution scaffolds now expose an optional `network_approval_id`, and the provider browser smoke now consumes an approved provider network approval before executing the guided bound generation payload.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with persistent AI-change artifact apply/revert workflows beyond session annotations, broader editable settings and policy workflows, more type-specific non-CLI editors beyond top-level guided fields, full unified chat beyond local task history, and generated-tool network-approval consuming browser flows next, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010am generated-tool browser bound execution with network approval consumption is implemented and validation-clean.
+- Latest completed slice: BL-010am, the generated-tool browser smoke now creates a socket-using approval-required generated tool, fills an approved `generated_tool/socket_connect` network approval into the guided bound payload, executes through the dashboard, and verifies both the tool approval and network approval are executed.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with persistent AI-change artifact apply/revert workflows beyond session annotations, broader editable settings and policy workflows, deeper type-specific non-CLI editors beyond top-level guided fields, full unified chat beyond local task history, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -59,7 +59,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010al implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010am implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

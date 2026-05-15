@@ -4367,15 +4367,16 @@ function lifecycleActionState(action) {
 
 function renderMemoryLifecyclePreview(target, result) {
   const decisions = result.decisions || [];
+  const applied = result.applied === true;
   target.append(
     statusBox(
-      "Lifecycle preview",
-      `${result.total ?? decisions.length} decision(s), applied=${result.applied === true ? "true" : "false"}`,
-      result.applied ? "blocked" : "ok",
+      applied ? "Lifecycle applied" : "Lifecycle preview",
+      `${result.total ?? decisions.length} decision(s), applied=${applied ? "true" : "false"}`,
+      "ok",
     ),
   );
   if (!decisions.length) {
-    target.append(statusBox("No lifecycle decisions", "No memory matched the preview filters.", "pending"));
+    target.append(statusBox("No lifecycle decisions", "No memory matched the lifecycle filters.", "pending"));
     target.append(jsonBlock(result));
     return;
   }
@@ -4418,6 +4419,27 @@ async function runMemoryLifecyclePreview(event) {
   }
 }
 
+async function runMemoryLifecycleApply() {
+  if (!window.confirm("Apply memory lifecycle changes for the current filters?")) {
+    return;
+  }
+  const target = qs("#memoryLifecyclePreviewOutput");
+  const payload = memoryLifecyclePreviewPayload();
+  clear(target);
+  target.append(statusBox("Applying memory lifecycle", `limit ${payload.limit}`, "running"));
+  try {
+    const result = await api("/api/v1/memory/lifecycle/apply", { method: "POST", body: payload });
+    clear(target);
+    renderMemoryLifecyclePreview(target, result);
+    await loadReliability();
+    showToast("Memory lifecycle apply complete.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory lifecycle apply failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 function memoryCompressionPreviewPayload() {
   const payload = {
     limit: Math.trunc(boundedNumber("#memoryCompressionLimitInput", 100, 1, 500)),
@@ -4454,11 +4476,12 @@ function compressionSavings(candidate) {
 
 function renderMemoryCompressionPreview(target, result) {
   const candidates = result.candidates || [];
+  const applied = result.applied === true;
   target.append(
     statusBox(
-      "Compression preview",
-      `${result.total ?? candidates.length} candidate(s), applied=${result.applied === true ? "true" : "false"}`,
-      result.applied ? "blocked" : "ok",
+      applied ? "Compression applied" : "Compression preview",
+      `${result.total ?? candidates.length} candidate(s), applied=${applied ? "true" : "false"}`,
+      "ok",
     ),
   );
   if (!candidates.length) {
@@ -4496,6 +4519,27 @@ async function runMemoryCompressionPreview(event) {
   } catch (error) {
     clear(target);
     target.append(statusBox("Memory compression preview failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+async function runMemoryCompressionApply() {
+  if (!window.confirm("Apply memory compression changes for the current filters?")) {
+    return;
+  }
+  const target = qs("#memoryCompressionPreviewOutput");
+  const payload = memoryCompressionPreviewPayload();
+  clear(target);
+  target.append(statusBox("Applying memory compression", `limit ${payload.limit}`, "running"));
+  try {
+    const result = await api("/api/v1/memory/compression/apply", { method: "POST", body: payload });
+    clear(target);
+    renderMemoryCompressionPreview(target, result);
+    await loadReliability();
+    showToast("Memory compression apply complete.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory compression apply failed", error.message, "failed"));
     showToast(error.message);
   }
 }
@@ -5803,7 +5847,9 @@ function bindEvents() {
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval);
   qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview);
+  qs("#memoryLifecycleApplyButton").addEventListener("click", runMemoryLifecycleApply);
   qs("#memoryCompressionPreviewForm").addEventListener("submit", runMemoryCompressionPreview);
+  qs("#memoryCompressionApplyButton").addEventListener("click", runMemoryCompressionApply);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);

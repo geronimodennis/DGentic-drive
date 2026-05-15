@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010bd Memory Lifecycle And Compression Apply Controls
+
+Status: completed for the scoped memory lifecycle/compression apply UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, and memory lifecycle/compression apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected the next Reliability panel slice because the backend already exposes guarded lifecycle and compression apply contracts and the dashboard already had matching preview payloads.
+- Completed: Developer added explicit Apply Lifecycle and Apply Compression controls that reuse the current preview filters, require a browser confirmation before mutation, call the existing `/api/v1/memory/lifecycle/apply` and `/api/v1/memory/compression/apply` contracts, and refresh Reliability summaries after success.
+- Completed: Developer kept the slice on existing backend contracts only; no new memory mutation route, approval bypass, scheduler, or backend policy surface was added.
+- Completed: QA expanded Web UI static coverage for the apply DOM hooks, confirmation prompts, endpoint wiring, success/failure messages, applied result rendering, and refresh binding.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can apply deterministic memory lifecycle recommendations from the dashboard after confirmation.
+- Implemented in this slice: operators can apply deterministic memory compression from the dashboard after confirmation.
+- Still out of scope after this slice: scheduled memory lifecycle/compression jobs, metadata editing, model-backed memory summarization, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_memory_lifecycle_api_previews_applies_and_excludes_inactive tests\test_api.py::test_memory_compression_api_applies_and_retrieves_compressed_metadata` with 4 passed.
+- Browser smoke validation passed: `uv run pytest -q tests\test_ui_browser.py` with 6 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bc Task-Chat Follow-Up Context Controls
 
 Status: completed for the scoped task-chat follow-up context slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview/detail surfaces, and persistent or multi-worker project activation semantics.

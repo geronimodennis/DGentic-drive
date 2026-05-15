@@ -68,6 +68,8 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "memoryLifecycleStateInput" in response.text
     assert "memoryLifecycleLimitInput" in response.text
     assert "memoryLifecycleInactiveInput" in response.text
+    assert "memoryLifecycleApplyButton" in response.text
+    assert "Apply Lifecycle" in response.text
     assert "memoryLifecyclePreviewOutput" in response.text
     assert "memoryCompressionPreviewPanel" in response.text
     assert "memoryCompressionPreviewForm" in response.text
@@ -80,6 +82,8 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "memoryCompressionAgeInput" in response.text
     assert "memoryCompressionAccessInput" in response.text
     assert "memoryCompressionInactiveInput" in response.text
+    assert "memoryCompressionApplyButton" in response.text
+    assert "Apply Compression" in response.text
     assert "memoryCompressionPreviewOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "memoryReliabilityDetail" in response.text
@@ -322,34 +326,65 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Memory retrieval failed" in script_response.text
     assert "memoryLifecyclePreviewPayload" in script_response.text
     assert "runMemoryLifecyclePreview" in script_response.text
+    assert "runMemoryLifecycleApply" in script_response.text
     assert "renderMemoryLifecyclePreview" in script_response.text
     assert 'api("/api/v1/memory/lifecycle/preview", { method: "POST", body: payload })' in (
         script_response.text
     )
+    assert 'api("/api/v1/memory/lifecycle/apply", { method: "POST", body: payload })' in (
+        script_response.text
+    )
     assert "recommended_action" in script_response.text
-    assert 'result.applied === true ? "true" : "false"' in script_response.text
+    assert "const applied = result.applied === true" in script_response.text
+    assert 'applied ? "Lifecycle applied" : "Lifecycle preview"' in script_response.text
+    assert 'applied ? "true" : "false"' in script_response.text
     assert "compress_candidate" in script_response.text
     assert (
         'qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview)'
         in (script_response.text)
     )
+    assert (
+        'qs("#memoryLifecycleApplyButton").addEventListener("click", runMemoryLifecycleApply)'
+        in script_response.text
+    )
+    assert 'window.confirm("Apply memory lifecycle changes for the current filters?")' in (
+        script_response.text
+    )
     assert "Memory lifecycle preview complete" in script_response.text
     assert "Memory lifecycle preview failed" in script_response.text
+    assert "Applying memory lifecycle" in script_response.text
+    assert "Memory lifecycle apply complete" in script_response.text
+    assert "Memory lifecycle apply failed" in script_response.text
     assert "memoryCompressionPreviewPayload" in script_response.text
     assert "runMemoryCompressionPreview" in script_response.text
+    assert "runMemoryCompressionApply" in script_response.text
     assert "renderMemoryCompressionPreview" in script_response.text
     assert "compressionSavings" in script_response.text
     assert 'api("/api/v1/memory/compression/preview", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert 'api("/api/v1/memory/compression/apply", { method: "POST", body: payload })' in (
         script_response.text
     )
     assert "compressed_description" in script_response.text
     assert "original_length" in script_response.text
     assert "compressed_length" in script_response.text
     assert "embedding_reindexed" in script_response.text
+    assert 'applied ? "Compression applied" : "Compression preview"' in script_response.text
     assert 'qs("#memoryCompressionPreviewForm").addEventListener("submit"' in script_response.text
     assert "runMemoryCompressionPreview" in script_response.text
+    assert (
+        'qs("#memoryCompressionApplyButton").addEventListener("click", runMemoryCompressionApply)'
+        in script_response.text
+    )
+    assert 'window.confirm("Apply memory compression changes for the current filters?")' in (
+        script_response.text
+    )
     assert "Memory compression preview complete" in script_response.text
     assert "Memory compression preview failed" in script_response.text
+    assert "Applying memory compression" in script_response.text
+    assert "Memory compression apply complete" in script_response.text
+    assert "Memory compression apply failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text
@@ -515,8 +550,6 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "/api/v1/tools/registry/${encodeURIComponent(toolId)}" in script_response.text
     assert "Tool detail loaded" in script_response.text
     assert "Tool detail failed" in script_response.text
-    assert '"/api/v1/memory/lifecycle/apply"' not in script_response.text
-    assert '"/api/v1/memory/compression/apply"' not in script_response.text
     assert "reliability_score" in script_response.text
     assert "freshness_score" in script_response.text
     assert 'safeLoad("agents", () => api("/agents"))' in script_response.text

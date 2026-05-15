@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010bb Reliability Detail Drilldowns
+
+Status: completed for the scoped read-only Reliability detail drilldown slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview/detail surfaces, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM reassessed the Sprint 16 backlog after BL-010ba and selected a read-only Reliability drilldown slice after read-only review flagged lifecycle/compression apply as a direct mutation path that should wait for approval-bound design.
+- Completed: Developer added memory and tool detail output regions to the Reliability panel and attached Details actions to listed memory metadata and SQL tool-registry rows.
+- Completed: Developer wired memory details only to `GET /api/v1/memory/metadata/{id}` and tool details only to `GET /api/v1/tools/registry/{id}`, rendering lifecycle, freshness, retention, tags, description, usage, reliability, source, and safe raw JSON without calling apply, patch, delete, usage, deprecate, or execution routes.
+- Completed: QA expanded Web UI static coverage for the new detail DOM hooks, detail render helpers, route wiring, detail action buttons, success/failure messages, and the absence of memory lifecycle/compression apply route calls in the dashboard script.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can drill into memory metadata records from the Reliability panel without leaving the dashboard.
+- Implemented in this slice: operators can drill into SQL tool registry records from the Reliability panel without mutating tool usage, deprecation, governance, or execution state.
+- Still out of scope after this slice: lifecycle apply, compression apply, metadata editing, tool registry mutation workflows, full unified chat, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010ba Memory Compression Preview UI
 
 Status: completed for the scoped read-only memory compression preview UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview, and persistent or multi-worker project activation semantics.

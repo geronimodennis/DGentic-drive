@@ -82,7 +82,9 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "memoryCompressionInactiveInput" in response.text
     assert "memoryCompressionPreviewOutput" in response.text
     assert "memoryReliabilityList" in response.text
+    assert "memoryReliabilityDetail" in response.text
     assert "toolReliabilityList" in response.text
+    assert "toolReliabilityDetail" in response.text
     assert "approvalSourceInput" in response.text
     assert "Executed" in response.text
     assert "gitApprovalActions" in response.text
@@ -492,7 +494,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/api/v1/memory/metadata?limit=50")' in script_response.text
     assert 'api("/api/v1/tools/registry?limit=50")' in script_response.text
     assert "renderMemoryReliability" in script_response.text
+    assert "renderMemoryReliabilityDetail" in script_response.text
+    assert "loadMemoryReliabilityDetail" in script_response.text
+    assert "memory-reliability-detail" in script_response.text
+    assert "/api/v1/memory/metadata/${encodeURIComponent(metadataId)}" in script_response.text
+    assert "Memory detail loaded" in script_response.text
+    assert "Memory detail failed" in script_response.text
     assert "renderToolReliability" in script_response.text
+    assert "renderToolReliabilityDetail" in script_response.text
+    assert "loadToolReliabilityDetail" in script_response.text
+    assert "tool-reliability-detail" in script_response.text
+    assert "/api/v1/tools/registry/${encodeURIComponent(toolId)}" in script_response.text
+    assert "Tool detail loaded" in script_response.text
+    assert "Tool detail failed" in script_response.text
+    assert '"/api/v1/memory/lifecycle/apply"' not in script_response.text
+    assert '"/api/v1/memory/compression/apply"' not in script_response.text
     assert "reliability_score" in script_response.text
     assert "freshness_score" in script_response.text
     assert 'safeLoad("agents", () => api("/agents"))' in script_response.text

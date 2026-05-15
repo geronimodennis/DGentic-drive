@@ -4515,7 +4515,9 @@ function memoryStatusChip(item) {
 
 function renderMemoryReliability(result) {
   const target = qs("#memoryReliabilityList");
+  const detail = qs("#memoryReliabilityDetail");
   clear(target);
+  clear(detail);
   if (!result.ok) {
     target.append(statusBox("Memory unavailable", result.error, "blocked"));
     return;
@@ -4541,7 +4543,63 @@ function renderMemoryReliability(result) {
       ),
     );
     row.append(statusChip(memoryStatusChip(item)));
+    const button = make("button", "link-button", "Details");
+    button.type = "button";
+    button.dataset.testid = "memory-reliability-detail";
+    button.dataset.metadataId = item.id || "";
+    button.addEventListener("click", () => loadMemoryReliabilityDetail(item.id));
+    row.append(button);
     target.append(row);
+  }
+}
+
+function renderMemoryReliabilityDetail(target, item) {
+  target.append(
+    statusBox("Memory detail", `${item.entity_type || "memory"}: ${item.entity_id || "-"}`, memoryStatusChip(item)),
+  );
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Category", item.category || "-");
+  appendKeyValue(grid, "Lifecycle", item.lifecycle_state || "active", memoryStatusChip(item));
+  appendKeyValue(grid, "Retention", item.retention_policy || "-");
+  appendKeyValue(grid, "Indexed", item.indexed ? "true" : "false", item.indexed ? "ok" : "pending");
+  appendKeyValue(grid, "Freshness", retrievalScore(item.freshness_score));
+  appendKeyValue(grid, "Relevance", retrievalScore(item.relevance_score));
+  appendKeyValue(grid, "Accesses", String(item.access_count || 0));
+  appendKeyValue(grid, "Owner", item.owner_agent || "-");
+  appendKeyValue(grid, "Updated", formatTimestamp(item.updated_at));
+  appendKeyValue(grid, "Last accessed", formatTimestamp(item.last_accessed_at));
+  appendKeyValue(grid, "Lifecycle updated", formatTimestamp(item.lifecycle_updated_at));
+  appendKeyValue(grid, "Compacted", formatTimestamp(item.last_compacted_at));
+  target.append(grid);
+  renderChipList(target, "Tags", item.tags || [], "pending");
+  if (item.lifecycle_reason) {
+    target.append(statusBox("Lifecycle reason", item.lifecycle_reason, "pending"));
+  }
+  if (item.description) {
+    target.append(statusBox("Description", item.description, "ok"));
+  }
+  target.append(jsonBlock(item));
+}
+
+async function loadMemoryReliabilityDetail(metadataId) {
+  const target = qs("#memoryReliabilityDetail");
+  clear(target);
+  if (!metadataId) {
+    target.append(
+      statusBox("Memory detail unavailable", "The selected row did not include a metadata id.", "blocked"),
+    );
+    return;
+  }
+  target.append(statusBox("Loading memory detail", metadataId, "running"));
+  try {
+    const item = await api(`/api/v1/memory/metadata/${encodeURIComponent(metadataId)}`);
+    clear(target);
+    renderMemoryReliabilityDetail(target, item);
+    showToast("Memory detail loaded.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory detail failed", error.message, "failed"));
+    showToast(error.message);
   }
 }
 
@@ -4561,7 +4619,9 @@ function toolReliabilityStatus(tool) {
 
 function renderToolReliability(result) {
   const target = qs("#toolReliabilityList");
+  const detail = qs("#toolReliabilityDetail");
   clear(target);
+  clear(detail);
   if (!result.ok) {
     target.append(statusBox("Tool registry unavailable", result.error, "blocked"));
     return;
@@ -4587,7 +4647,56 @@ function renderToolReliability(result) {
       ),
     );
     row.append(statusChip(toolReliabilityStatus(tool)));
+    const button = make("button", "link-button", "Details");
+    button.type = "button";
+    button.dataset.testid = "tool-reliability-detail";
+    button.dataset.toolId = tool.id || "";
+    button.addEventListener("click", () => loadToolReliabilityDetail(tool.id));
+    row.append(button);
     target.append(row);
+  }
+}
+
+function renderToolReliabilityDetail(target, tool) {
+  target.append(
+    statusBox("Tool detail", `${tool.tool_name || "tool"} ${tool.version || ""}`.trim(), toolReliabilityStatus(tool)),
+  );
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Permission", tool.permission_level || "-");
+  appendKeyValue(grid, "Reliability", retrievalScore(tool.reliability_score));
+  appendKeyValue(grid, "Usage", String(tool.usage_count || 0));
+  appendKeyValue(grid, "Successes", String(tool.success_count || 0));
+  appendKeyValue(grid, "Failures", String(tool.failure_count || 0), Number(tool.failure_count || 0) ? "pending" : "ok");
+  appendKeyValue(grid, "Deprecated", tool.deprecated ? "true" : "false", tool.deprecated ? "blocked" : "ok");
+  appendKeyValue(grid, "Source", compactPath(tool.source_path || "-"));
+  appendKeyValue(grid, "Created by", tool.created_by_agent || "-");
+  appendKeyValue(grid, "Updated", formatTimestamp(tool.updated_at));
+  appendKeyValue(grid, "Last used", formatTimestamp(tool.last_used_at));
+  target.append(grid);
+  renderChipList(target, "Tags", tool.tags || [], "pending");
+  if (tool.description) {
+    target.append(statusBox("Description", tool.description, "ok"));
+  }
+  target.append(jsonBlock(tool));
+}
+
+async function loadToolReliabilityDetail(toolId) {
+  const target = qs("#toolReliabilityDetail");
+  clear(target);
+  if (!toolId) {
+    target.append(statusBox("Tool detail unavailable", "The selected row did not include a tool id.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Loading tool detail", toolId, "running"));
+  try {
+    const tool = await api(`/api/v1/tools/registry/${encodeURIComponent(toolId)}`);
+    clear(target);
+    renderToolReliabilityDetail(target, tool);
+    showToast("Tool detail loaded.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Tool detail failed", error.message, "failed"));
+    showToast(error.message);
   }
 }
 

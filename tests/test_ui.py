@@ -360,6 +360,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages"' in script_response.text
     assert "TASK_CHAT_HISTORY_MAX_MESSAGES" in script_response.text
     assert "TASK_CHAT_HISTORY_MAX_BYTES" in script_response.text
+    assert "taskPlanContextLines" in script_response.text
+    assert "taskRunContextLines" in script_response.text
+    assert "task-plan-use-context" in script_response.text
+    assert "task-run-use-evidence" in script_response.text
+    assert "Use Context" in script_response.text
+    assert "Use Evidence" in script_response.text
+    assert "insertTaskChatContext(`Plan ${plan.id}`" in script_response.text
+    assert "insertTaskChatContext(`Run ${run.id}`" in script_response.text
     assert "loadTaskChatHistory" in script_response.text
     assert "saveTaskChatHistory" in script_response.text
     assert "clearTaskChatHistory" in script_response.text
@@ -678,6 +686,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-chat-message-agent" in style_response.text
     assert ".task-chat-composer" in style_response.text
     assert ".task-chat-plan-card" in style_response.text
+    assert ".task-run-actions" in style_response.text
+    assert "grid-column: 1 / -1;" in style_response.text
     assert ".workspace-layout" in style_response.text
     assert ".orchestration-detail" in style_response.text
     assert ".orchestration-controls" in style_response.text

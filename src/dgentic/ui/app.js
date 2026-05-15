@@ -541,6 +541,27 @@ function taskChatContextLines(title, lines) {
   return [title, ...lines].filter(Boolean).map((line) => boundedString(String(line), 280));
 }
 
+function taskPlanContextLines(plan) {
+  return [
+    `Plan ID: ${plan.id}`,
+    `Objective: ${plan.objective || "-"}`,
+    `Steps: ${(plan.steps || []).map((step) => step.title || step.id).slice(0, 6).join("; ") || "-"}`,
+  ];
+}
+
+function taskRunContextLines(run) {
+  const results = (run.results || [])
+    .map((result) => `${result.step_id}:${result.status}`)
+    .slice(0, 8)
+    .join("; ");
+  return [
+    `Run ID: ${run.id}`,
+    `Plan ID: ${run.plan_id || "-"}`,
+    `Status: ${run.status || "-"}`,
+    `Results: ${results || "-"}`,
+  ];
+}
+
 function insertTaskChatContext(title, lines) {
   const input = qs("#taskChatContextInput");
   const block = taskChatContextLines(title, lines).join("\n");
@@ -617,11 +638,7 @@ function renderTaskChatContextStream() {
       meta: `${formatTimestamp(plan.created_at)} - ${plan.steps?.length || 0} steps`,
       state: plan.status || "ready",
       sectionId: "tasks",
-      lines: [
-        `Plan ID: ${plan.id}`,
-        `Objective: ${plan.objective || "-"}`,
-        `Steps: ${(plan.steps || []).map((step) => step.title || step.id).slice(0, 4).join("; ") || "-"}`,
-      ],
+      lines: taskPlanContextLines(plan),
     });
   }
   for (const run of context.runs.slice(-2).reverse()) {
@@ -630,12 +647,7 @@ function renderTaskChatContextStream() {
       meta: `${run.plan_id || "plan"} - ${formatTimestamp(run.completed_at || run.started_at)}`,
       state: run.status,
       sectionId: "tasks",
-      lines: [
-        `Run ID: ${run.id}`,
-        `Plan ID: ${run.plan_id || "-"}`,
-        `Status: ${run.status || "-"}`,
-        `Results: ${(run.results || []).map((result) => `${result.step_id}:${result.status}`).slice(0, 6).join("; ") || "-"}`,
-      ],
+      lines: taskRunContextLines(run),
     });
   }
   for (const item of context.approvals.slice(0, 3)) {
@@ -885,6 +897,12 @@ function renderTaskChatPlan(target, plan, options = {}) {
     ),
   );
   const actions = make("div", "task-plan-actions");
+  const contextButton = make("button", "link-button", "Use Context");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-plan-use-context";
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext(`Plan ${plan.id}`, taskPlanContextLines(plan)),
+  );
   const runButton = make("button", "primary-button", "Run Plan");
   runButton.type = "button";
   runButton.disabled = options.historical || !(plan.steps || []).length;
@@ -892,7 +910,7 @@ function renderTaskChatPlan(target, plan, options = {}) {
     runButton.title = "Saved history is display only.";
   }
   runButton.addEventListener("click", () => runTaskChatPlan(plan));
-  actions.append(statusChip(plan.status), runButton);
+  actions.append(statusChip(plan.status), contextButton, runButton);
   header.append(copy, actions);
   card.append(header);
   renderTaskPlanContext(card, plan);
@@ -1080,7 +1098,16 @@ function renderTaskRunResult(target, run) {
   const completed = run.completed_at ? ` - completed ${formatTimestamp(run.completed_at)}` : "";
   copy.append(make("div", "item-title", run.id));
   copy.append(make("div", "item-meta", `${run.results?.length || 0} step results${completed}`));
-  item.append(copy, statusChip(run.status));
+  const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Evidence");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-run-use-evidence";
+  contextButton.dataset.runId = run.id || "";
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext(`Run ${run.id}`, taskRunContextLines(run)),
+  );
+  actions.append(statusChip(run.status), contextButton);
+  item.append(copy, actions);
 
   const resultList = make("div", "task-run-result-list");
   for (const result of (run.results || []).slice(0, 4)) {

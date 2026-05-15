@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010bc Task-Chat Follow-Up Context Controls
+
+Status: completed for the scoped task-chat follow-up context slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview/detail surfaces, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a small full-chat semantics slice after BL-010bb because the task-chat area already had plan/run cards and safe context insertion helpers.
+- Completed: Developer added shared plan/run context-line builders, reused them in the task-chat context stream, added `Use Context` on plan cards, and added `Use Evidence` on run rows.
+- Completed: Developer kept the slice client-side and bound to existing task APIs only; the controls insert bounded plan/run summaries into the composer and do not create new backend mutation, approval, or execution paths.
+- Completed: QA expanded Web UI static coverage for the new context helper functions, plan/run action hooks, visible labels, insert wiring, and run-row layout CSS.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can carry a created plan into a follow-up task-chat turn with one click.
+- Implemented in this slice: operators can carry deterministic run evidence into a follow-up task-chat turn with one click.
+- Still out of scope after this slice: model-backed multi-turn chat semantics, streaming assistant responses, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served` with 1 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .` and `uv run ruff check .`.
+
 ### Sprint 16 BL-010bb Reliability Detail Drilldowns
 
 Status: completed for the scoped read-only Reliability detail drilldown slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview/detail surfaces, and persistent or multi-worker project activation semantics.

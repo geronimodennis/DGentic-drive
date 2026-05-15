@@ -307,6 +307,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "runGitWorkflow" in script_response.text
     assert "renderGitRunResult" in script_response.text
     assert "latestGitDiffReview" in script_response.text
+    assert "latestGitChangeReviewArtifacts" in script_response.text
     assert "gitDiffReviewDecisions" in script_response.text
     assert "renderGitDiffReviewPanel" in script_response.text
     assert "loadGitDiffReview" in script_response.text
@@ -315,6 +316,17 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderGitChangeReview" in script_response.text
     assert "gitChangeReviewEvidence" in script_response.text
     assert "copyGitChangeReviewEvidence" in script_response.text
+    assert "gitChangeReviewArtifactPayload" in script_response.text
+    assert "loadGitChangeReviewArtifacts" in script_response.text
+    assert "saveGitChangeReviewArtifact" in script_response.text
+    assert "applyGitChangeReviewArtifact" in script_response.text
+    assert "renderGitChangeReviewArtifacts" in script_response.text
+    assert "gitChangeReviewArtifactCounts" in script_response.text
+    assert 'api("/cli/git/change-review-artifacts", {' in script_response.text
+    assert "/cli/git/change-review-artifacts?" in script_response.text
+    assert "Save Artifact" in script_response.text
+    assert "Saved artifacts" in script_response.text
+    assert "Stale artifacts cannot unblock Git closeout." in script_response.text
     assert "setGitDiffSectionDecision" in script_response.text
     assert "gitDiffReviewDecisionCounts" in script_response.text
     assert "gitDiffReviewHasRejectedSections" in script_response.text
@@ -418,6 +430,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".direct-run-button" in style_response.text
     assert ".git-run-summary" in style_response.text
     assert ".git-change-review" in style_response.text
+    assert ".git-change-review-artifacts" in style_response.text
+    assert ".git-change-review-artifact" in style_response.text
     assert ".git-diff-review" in style_response.text
     assert ".git-diff-section" in style_response.text
     assert ".git-diff-decision-controls" in style_response.text

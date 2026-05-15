@@ -969,6 +969,7 @@ textarea {
 .approval-review-summary,
 .bound-execution-panel,
 .git-change-review,
+.git-change-review-artifacts,
 .git-diff-review,
 .git-diff-section,
 .git-review-summary {
@@ -1003,6 +1004,7 @@ textarea {
 .bound-execution-editor,
 .bound-execution-guided-fields,
 .git-change-review,
+.git-change-review-artifacts,
 .git-diff-review,
 .git-diff-review-output,
 .git-diff-section,
@@ -1010,6 +1012,18 @@ textarea {
 .git-review-summary {
   display: grid;
   gap: 8px;
+}
+
+.git-change-review-artifact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+  min-width: 0;
 }
 
 .bound-execution-editor textarea {

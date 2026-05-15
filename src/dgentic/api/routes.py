@@ -82,6 +82,8 @@ from dgentic.credentials import (
 from dgentic.events import event_log
 from dgentic.execution import execution_engine
 from dgentic.git_workflows import (
+    GitChangeReviewArtifact,
+    GitChangeReviewArtifactRequest,
     GitCommitApprovalRequest,
     GitCommitRunRequest,
     GitCommitRunResult,
@@ -93,13 +95,17 @@ from dgentic.git_workflows import (
     GitPushRunResult,
     GitRawDiffReview,
     GitRawDiffReviewRequest,
+    GitWorkflowAction,
     GitWorkflowCheckpoint,
     GitWorkflowCheckpointRequest,
     build_git_commit_approval_request,
     build_git_pr_approval_request,
     build_git_push_approval_request,
+    create_git_change_review_artifact,
     create_git_raw_diff_review,
     create_git_workflow_checkpoint,
+    get_git_change_review_artifact,
+    list_git_change_review_artifacts,
     run_git_commit_workflow,
     run_git_pr_workflow,
     run_git_push_workflow,
@@ -1622,6 +1628,55 @@ def create_cli_git_diff_review(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/cli/git/change-review-artifacts",
+    response_model=GitChangeReviewArtifact,
+    status_code=201,
+)
+def create_cli_git_change_review_artifact(
+    payload: GitChangeReviewArtifactRequest,
+    request: Request,
+) -> GitChangeReviewArtifact:
+    try:
+        return create_git_change_review_artifact(
+            _bind_principal_requester(payload, request),
+            actor=_principal_actor(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/cli/git/change-review-artifacts", response_model=list[GitChangeReviewArtifact])
+def get_cli_git_change_review_artifacts(
+    action: GitWorkflowAction | None = None,
+    checkpoint_digest: str | None = None,
+    limit: int = 20,
+) -> list[GitChangeReviewArtifact]:
+    try:
+        return list_git_change_review_artifacts(
+            action=action,
+            checkpoint_digest=checkpoint_digest,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/cli/git/change-review-artifacts/{artifact_id}",
+    response_model=GitChangeReviewArtifact,
+)
+def get_cli_git_change_review_artifact(artifact_id: str) -> GitChangeReviewArtifact:
+    try:
+        return get_git_change_review_artifact(artifact_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/cli/git/commit-approvals", response_model=CommandApproval, status_code=201)

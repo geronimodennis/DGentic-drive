@@ -12,8 +12,11 @@ from fastapi.testclient import TestClient
 from dgentic.events import event_log
 from dgentic.git_workflows import (
     MAX_DIFF_REVIEW_SECTION_BYTES,
+    GitChangeReviewArtifactRequest,
+    GitChangeReviewDecision,
     GitRawDiffReviewRequest,
     GitWorkflowCheckpointRequest,
+    create_git_change_review_artifact,
     create_git_raw_diff_review,
     create_git_workflow_checkpoint,
 )
@@ -392,6 +395,186 @@ def test_git_raw_diff_review_api_returns_checkpoint_bound_sections(git_workspace
     assert body["checkpoint_digest"] == checkpoint.checkpoint_digest
     assert [section["scope"] for section in body["sections"]] == ["staged", "unstaged"]
     assert "API diff review." in body["sections"][0]["patch"]
+
+
+def test_git_change_review_artifact_persists_metadata_only(git_workspace) -> None:
+    raw_secret = "artifact-diff-secret"
+    git_workspace.joinpath("README.md").write_text(
+        f"# Checkpoint\n\nACCESS_TOKEN={raw_secret}\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+
+    artifact = create_git_change_review_artifact(
+        GitChangeReviewArtifactRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+            decisions=[
+                GitChangeReviewDecision(
+                    scope="staged",
+                    decision="accepted",
+                    patch_digest=staged.patch_digest,
+                    paths=["spoofed TOKEN=path-secret"],
+                    redacted=False,
+                )
+            ],
+            requested_by="qa-reviewer",
+        )
+    )
+    serialized = artifact.model_dump_json()
+    state_payload = git_workspace.parent.joinpath(
+        "state",
+        "git-change-review-artifacts.json",
+    ).read_text(encoding="utf-8")
+
+    assert artifact.checkpoint_digest == checkpoint.checkpoint_digest
+    assert artifact.decisions[0].decision == "accepted"
+    assert artifact.decisions[0].paths == ["README.md"]
+    assert artifact.decisions[0].redacted is True
+    assert raw_secret not in serialized
+    assert "ACCESS_TOKEN=[REDACTED]" not in serialized
+    assert "diff --git" not in serialized
+    assert raw_secret not in state_payload
+    assert "ACCESS_TOKEN=[REDACTED]" not in state_payload
+    assert "diff --git" not in state_payload
+
+
+def test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts(
+    git_workspace,
+) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nAPI artifact.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/cli/git/change-review-artifacts",
+        json={
+            "action": "commit",
+            "cwd": str(git_workspace),
+            "checkpoint_digest": checkpoint.checkpoint_digest,
+            "test_evidence": ["uv run pytest tests/test_git_workflows.py -q"],
+            "decisions": [
+                {
+                    "scope": "staged",
+                    "decision": "rejected",
+                    "patch_digest": staged.patch_digest,
+                    "paths": ["README.md"],
+                    "redacted": staged.redacted,
+                    "truncated": staged.truncated,
+                    "omitted_protected_paths": staged.omitted_protected_paths,
+                }
+            ],
+        },
+    )
+    artifact = create_response.json()
+    list_response = client.get(
+        "/cli/git/change-review-artifacts",
+        params={"action": "commit", "checkpoint_digest": checkpoint.checkpoint_digest},
+    )
+    get_response = client.get(f"/cli/git/change-review-artifacts/{artifact['id']}")
+
+    assert create_response.status_code == 201
+    assert artifact["checkpoint_digest"] == checkpoint.checkpoint_digest
+    assert artifact["decisions"][0]["decision"] == "rejected"
+    assert list_response.status_code == 200
+    assert [item["id"] for item in list_response.json()] == [artifact["id"]]
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == artifact["id"]
+
+
+def test_git_change_review_artifact_rejects_stale_checkpoint_digest(
+    git_workspace,
+) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nFirst artifact change.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nSecond artifact change.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+
+    with pytest.raises(ValueError, match="fresh matching checkpoint digest"):
+        create_git_change_review_artifact(
+            GitChangeReviewArtifactRequest(
+                action="commit",
+                cwd=git_workspace,
+                checkpoint_digest=checkpoint.checkpoint_digest,
+                test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+                decisions=[
+                    GitChangeReviewDecision(
+                        scope="staged",
+                        decision="accepted",
+                        patch_digest=staged.patch_digest,
+                    )
+                ],
+            )
+        )
+
+
+def test_git_change_review_artifact_rejects_mismatched_section_digest(
+    git_workspace,
+) -> None:
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nMismatched artifact change.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+
+    with pytest.raises(ValueError, match="does not match the current diff review"):
+        create_git_change_review_artifact(
+            GitChangeReviewArtifactRequest(
+                action="commit",
+                cwd=git_workspace,
+                checkpoint_digest=checkpoint.checkpoint_digest,
+                test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+                decisions=[
+                    GitChangeReviewDecision(
+                        scope="staged",
+                        decision="accepted",
+                        patch_digest=f"sha256:{'0' * 64}",
+                    )
+                ],
+            )
+        )
 
 
 def test_push_and_pr_checkpoints_block_unsafe_starting_states(git_workspace) -> None:

@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010an Persistent AI-Change Review Artifacts
+
+Status: completed for the scoped persistent AI-change review artifact slice; Sprint 16 remains active for actual AI-change file apply/revert mutation workflows, deeper nested type-specific request editors, full unified chat beyond local task history, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM/Architect selected a metadata-only persistence slice instead of full patch apply/revert because raw diff reviews can be redacted, truncated, protected-path omitted, and untracked-content excluded, making them review evidence rather than safe mutation source material.
+- Completed: Developer added guarded Git change review artifact models and `/cli/git/change-review-artifacts` create/list/get routes backed by local JSON state.
+- Completed: Developer updated the dashboard raw diff review panel with Save Artifact, saved-artifact listing, matching-checkpoint Apply controls, and stale-artifact rendering that does not unblock Git closeout.
+- Completed: QA added focused tests for metadata-only persistence, stale checkpoint rejection, mismatched section digest rejection, artifact list/get APIs, and UI static contract hooks.
+- Completed: PM updated README, usage, architecture, project status, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: checkpoint-bound AI-change review decisions can now be saved as metadata-only artifacts with accepted/rejected/pending decisions, derived path metadata, redaction/truncation flags, checkpoint digest binding, branch/head metadata, and test-evidence count.
+- Implemented in this slice: artifact save revalidates a fresh matching checkpoint digest and validates supplied section patch digests against the current raw diff review before persistence.
+- Implemented in this slice: the dashboard can apply saved decisions only when the artifact checkpoint digest matches the currently loaded raw diff review; stale artifacts are visible history but cannot unblock Git approval/direct-run controls.
+- Still out of scope after this slice: hunk/file apply or revert mutation, untracked file content review, rollback/revert backend Git flows, broader Git branch/PR metadata automation, full unified chat, broader editable policy/settings workflows, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused artifact/UI validation passed: `uv run pytest -q tests\test_git_workflows.py::test_git_change_review_artifact_persists_metadata_only tests\test_git_workflows.py::test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts tests\test_git_workflows.py::test_git_change_review_artifact_rejects_stale_checkpoint_digest tests\test_git_workflows.py::test_git_change_review_artifact_rejects_mismatched_section_digest tests\test_ui.py::test_web_ui_static_assets_are_served` with 5 passed.
+- Focused changed-surface validation passed: `uv run pytest -q tests\test_ui.py tests\test_git_workflows.py::test_git_raw_diff_review_api_returns_checkpoint_bound_sections tests\test_git_workflows.py::test_git_change_review_artifact_persists_metadata_only tests\test_git_workflows.py::test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts tests\test_git_workflows.py::test_git_change_review_artifact_rejects_stale_checkpoint_digest tests\test_git_workflows.py::test_git_change_review_artifact_rejects_mismatched_section_digest` with 9 passed.
+- Full regression passed: `uv run pytest -q` with 1,364 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010am Generated-Tool Browser Network-Approval Consumption
 
 Status: completed for the scoped generated-tool browser network-approval consumption scenario; Sprint 16 remains active for deeper nested type-specific request editors, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

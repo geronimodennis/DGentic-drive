@@ -30,6 +30,7 @@ let latestPolicyReviewResults = null;
 let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
+let latestGitChangeReviewArtifacts = [];
 let editingCliPolicyRuleId = "";
 let taskChatMessages = [];
 let gitDiffReviewDecisions = {};
@@ -2663,6 +2664,7 @@ async function createGitCheckpoint(event) {
   latestGitCheckpoint = null;
   latestGitCheckpointRequest = payload;
   latestGitDiffReview = null;
+  latestGitChangeReviewArtifacts = [];
   gitDiffReviewDecisions = {};
   renderGitApprovalActions(null);
   clear(target);
@@ -2677,6 +2679,7 @@ async function createGitCheckpoint(event) {
     latestGitCheckpoint = null;
     clear(target);
     target.append(statusBox("Checkpoint failed", error.message, "failed"));
+    latestGitChangeReviewArtifacts = [];
     gitDiffReviewDecisions = {};
     renderGitApprovalActions(null);
   }
@@ -2815,6 +2818,7 @@ async function loadGitDiffReview(checkpoint) {
       method: "POST",
       body: gitDiffReviewPayload(checkpoint),
     });
+    latestGitChangeReviewArtifacts = await loadGitChangeReviewArtifacts(latestGitDiffReview);
     renderGitDiffReview(target, latestGitDiffReview);
   } catch (error) {
     clear(target);
@@ -2923,8 +2927,145 @@ function gitChangeReviewEvidence(review) {
   };
 }
 
+function gitChangeReviewArtifactPayload(review) {
+  const evidence = gitChangeReviewEvidence(review);
+  const payload = {
+    checkpoint_digest: review.checkpoint_digest || "",
+    action: review.action || latestGitCheckpoint?.action || "commit",
+    test_evidence: latestGitCheckpointRequest?.test_evidence || [],
+    context_lines: 3,
+    decisions: evidence.decisions.map((decision) => ({
+      scope: decision.scope,
+      decision: decision.decision,
+      patch_digest: decision.patch_digest,
+      paths: decision.paths,
+      redacted: decision.redacted,
+      truncated: decision.truncated,
+      omitted_protected_paths: decision.omitted_protected_paths,
+    })),
+  };
+  if (latestGitCheckpointRequest?.cwd) {
+    payload.cwd = latestGitCheckpointRequest.cwd;
+  }
+  return payload;
+}
+
 async function copyGitChangeReviewEvidence(review) {
   await copyTextToClipboard(JSON.stringify(gitChangeReviewEvidence(review), null, 2), "Change review evidence copied.");
+}
+
+async function loadGitChangeReviewArtifacts(review) {
+  const params = new URLSearchParams({
+    action: review.action || latestGitCheckpoint?.action || "commit",
+    limit: "12",
+  });
+  try {
+    return await api(`/cli/git/change-review-artifacts?${params.toString()}`);
+  } catch (error) {
+    showToast(`Saved review artifacts unavailable: ${error.message}`);
+    return [];
+  }
+}
+
+async function saveGitChangeReviewArtifact(review) {
+  const button = qs("#gitChangeReviewSaveButton");
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const artifact = await api("/cli/git/change-review-artifacts", {
+      method: "POST",
+      body: gitChangeReviewArtifactPayload(review),
+    });
+    latestGitChangeReviewArtifacts = await loadGitChangeReviewArtifacts(review);
+    if (!latestGitChangeReviewArtifacts.find((item) => item.id === artifact.id)) {
+      latestGitChangeReviewArtifacts.unshift(artifact);
+    }
+    renderGitDiffReview(qs("#gitDiffReviewOutput"), review);
+    showToast("Change review artifact saved.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+function gitChangeReviewArtifactCounts(artifact) {
+  const counts = { accepted: 0, rejected: 0, pending: 0 };
+  for (const decision of artifact.decisions || []) {
+    if (decision.decision === "accepted" || decision.decision === "rejected") {
+      counts[decision.decision] += 1;
+    } else {
+      counts.pending += 1;
+    }
+  }
+  return counts;
+}
+
+function applyGitChangeReviewArtifact(artifact, review) {
+  if (artifact.checkpoint_digest !== review.checkpoint_digest) {
+    showToast("Saved review artifact is stale for this checkpoint.");
+    return;
+  }
+  const sectionKeys = new Set((review.sections || []).map((section) => gitDiffSectionDecisionKey(section)));
+  gitDiffReviewDecisions = {};
+  for (const decision of artifact.decisions || []) {
+    const key = `${decision.scope || "diff"}:${decision.patch_digest || "empty"}`;
+    if (!sectionKeys.has(key) || decision.decision === "pending") {
+      continue;
+    }
+    gitDiffReviewDecisions[key] = {
+      decision: decision.decision,
+      scope: decision.scope || "diff",
+      patch_digest: decision.patch_digest || "",
+      decided_at: artifact.created_at || new Date().toISOString(),
+      artifact_id: artifact.id,
+    };
+  }
+  renderGitDiffReview(qs("#gitDiffReviewOutput"), review);
+  showToast("Change review artifact applied.");
+}
+
+function renderGitChangeReviewArtifacts(target, review) {
+  const box = make("div", "git-change-review-artifacts");
+  box.append(make("div", "item-title", "Saved artifacts"));
+  if (!latestGitChangeReviewArtifacts.length) {
+    box.append(statusBox("No saved review artifacts", "Save decisions to restore them after reload.", "pending"));
+    target.append(box);
+    return;
+  }
+  for (const artifact of latestGitChangeReviewArtifacts) {
+    const current = artifact.checkpoint_digest === review.checkpoint_digest;
+    const counts = gitChangeReviewArtifactCounts(artifact);
+    const row = make("div", "git-change-review-artifact");
+    const copy = make("div");
+    copy.append(make("div", "item-title", artifact.id || "saved-review"));
+    copy.append(
+      make(
+        "div",
+        "item-meta",
+        `${artifact.branch || "-"} at ${artifact.head_sha ? artifact.head_sha.slice(0, 12) : "-"} | ${formatTimestamp(artifact.created_at)}`,
+      ),
+    );
+    const chips = make("div", "chip-row");
+    chips.append(statusChip(current ? "current" : "stale", current ? "ok" : "pending"));
+    chips.append(statusChip(`accepted ${counts.accepted}`, counts.accepted ? "accepted" : ""));
+    chips.append(statusChip(`rejected ${counts.rejected}`, counts.rejected ? "rejected" : ""));
+    chips.append(statusChip(`pending ${counts.pending}`, counts.pending ? "pending" : "ok"));
+    copy.append(chips);
+    const apply = make("button", "link-button", "Apply");
+    apply.type = "button";
+    apply.disabled = !current;
+    apply.title = current
+      ? "Apply saved decisions to this loaded checkpoint."
+      : "Stale artifacts cannot unblock Git closeout.";
+    apply.addEventListener("click", () => applyGitChangeReviewArtifact(artifact, review));
+    row.append(copy, apply);
+    box.append(row);
+  }
+  target.append(box);
 }
 
 function renderGitChangeReview(target, review) {
@@ -2932,12 +3073,19 @@ function renderGitChangeReview(target, review) {
   const header = make("div", "builder-row");
   const copy = make("div");
   copy.append(make("div", "item-title", "Change decisions"));
-  copy.append(make("div", "item-meta", "Session review for loaded checkpoint diff sections."));
+  copy.append(make("div", "item-meta", "Persistable review for loaded checkpoint diff sections."));
+  const actions = make("div", "button-row");
+  const save = make("button", "primary-button", "Save Artifact");
+  save.id = "gitChangeReviewSaveButton";
+  save.type = "button";
+  save.disabled = !(review.sections || []).length;
+  save.addEventListener("click", () => saveGitChangeReviewArtifact(review));
   const button = make("button", "link-button", "Copy Evidence");
   button.type = "button";
   button.disabled = !(review.sections || []).length;
   button.addEventListener("click", () => copyGitChangeReviewEvidence(review));
-  header.append(copy, button);
+  actions.append(save, button);
+  header.append(copy, actions);
   box.append(header);
   const counts = gitDiffReviewDecisionCounts(review);
   const grid = make("div", "checkpoint-grid");
@@ -2950,6 +3098,7 @@ function renderGitChangeReview(target, review) {
     box.append(statusBox("Git closeout paused", "Rejected diff sections block dashboard Git approval and direct run controls.", "blocked"));
   }
   target.append(box);
+  renderGitChangeReviewArtifacts(target, review);
   updateGitReviewDecisionGate();
 }
 
@@ -3154,6 +3303,7 @@ async function runGitWorkflow() {
     renderGitRunResult(target, result);
     latestGitCheckpoint = null;
     latestGitDiffReview = null;
+    latestGitChangeReviewArtifacts = [];
     gitDiffReviewDecisions = {};
     qs("#gitApprovalSubmitButton").disabled = true;
     qs("#gitRunSubmitButton").disabled = true;

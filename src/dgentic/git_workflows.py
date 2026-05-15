@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from time import monotonic
 from typing import Literal
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,8 +19,10 @@ from dgentic.orchestration import authorize_cli_action
 from dgentic.redaction import redact_sensitive_values
 from dgentic.schemas import CommandExecutionRequest, LogEventType
 from dgentic.settings import get_settings
+from dgentic.storage import JsonCollection
 
 GitWorkflowAction = Literal["commit", "push", "pr"]
+GitChangeReviewDecisionValue = Literal["accepted", "rejected", "pending"]
 
 GIT_CHECKPOINT_TIMEOUT_SECONDS = 10
 MAX_CHANGED_PATHS = 50
@@ -236,6 +239,64 @@ class GitRawDiffReview(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class GitChangeReviewDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["staged", "unstaged"]
+    decision: GitChangeReviewDecisionValue = "pending"
+    patch_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    paths: list[str] = Field(default_factory=list, max_length=100)
+    redacted: bool = False
+    truncated: bool = False
+    omitted_protected_paths: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("paths", "omitted_protected_paths")
+    @classmethod
+    def paths_must_be_safe_metadata(cls, value: list[str]) -> list[str]:
+        return _normalize_review_paths(value)
+
+
+class GitChangeReviewArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    action: GitWorkflowAction
+    cwd: Path | None = None
+    test_evidence: list[str] = Field(default_factory=list, max_length=20)
+    context_lines: int = Field(default=3, ge=0, le=20)
+    decisions: list[GitChangeReviewDecision] = Field(default_factory=list, max_length=20)
+    requested_by: str | None = Field(default=None, max_length=256)
+    agent_id: str | None = Field(default=None, max_length=256)
+    agent_role: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=256)
+
+    @field_validator("test_evidence")
+    @classmethod
+    def evidence_must_be_bounded(cls, value: list[str]) -> list[str]:
+        return _normalize_test_evidence(value)
+
+
+class GitChangeReviewArtifact(BaseModel):
+    id: str
+    action: GitWorkflowAction
+    repo_root: Path
+    cwd: Path
+    branch: str
+    head_sha: str = ""
+    checkpoint_digest: str
+    diff_stat: GitDiffStat = Field(default_factory=GitDiffStat)
+    changed_paths: list[str] = Field(default_factory=list)
+    changed_paths_truncated: bool = False
+    decisions: list[GitChangeReviewDecision] = Field(default_factory=list)
+    test_evidence_count: int = 0
+    requested_by: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    task_id: str | None = None
+    created_by: str = "system"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class GitWorkflowCheckpoint(BaseModel):
     action: GitWorkflowAction
     ready: bool
@@ -337,6 +398,12 @@ class _GitStatus(BaseModel):
     untracked_paths: list[str]
     changed_paths: list[str]
     changed_paths_truncated: bool
+
+
+_git_change_review_artifacts = JsonCollection(
+    "git-change-review-artifacts",
+    GitChangeReviewArtifact,
+)
 
 
 def create_git_workflow_checkpoint(
@@ -502,6 +569,91 @@ def create_git_raw_diff_review(
         test_evidence_count=len(request.test_evidence),
     )
     return review
+
+
+def create_git_change_review_artifact(
+    request: GitChangeReviewArtifactRequest,
+    *,
+    actor: str | None = None,
+) -> GitChangeReviewArtifact:
+    checkpoint = create_git_workflow_checkpoint(
+        GitWorkflowCheckpointRequest(
+            action=request.action,
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    if checkpoint.checkpoint_digest != request.checkpoint_digest:
+        raise ValueError("Git change review artifact requires a fresh matching checkpoint digest.")
+
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            checkpoint_digest=request.checkpoint_digest,
+            action=request.action,
+            cwd=request.cwd,
+            test_evidence=request.test_evidence,
+            include_staged=True,
+            include_unstaged=True,
+            context_lines=request.context_lines,
+            requested_by=request.requested_by,
+            agent_id=request.agent_id,
+            agent_role=request.agent_role,
+            task_id=request.task_id,
+        ),
+        actor=actor,
+    )
+    normalized_decisions = _normalize_change_review_decisions(request.decisions, review.sections)
+    artifact = GitChangeReviewArtifact(
+        id=f"gcr_{uuid4().hex}",
+        action=checkpoint.action,
+        repo_root=checkpoint.repo_root,
+        cwd=checkpoint.cwd,
+        branch=checkpoint.branch,
+        head_sha=checkpoint.head_sha,
+        checkpoint_digest=checkpoint.checkpoint_digest,
+        diff_stat=checkpoint.diff_stat,
+        changed_paths=checkpoint.changed_paths,
+        changed_paths_truncated=checkpoint.changed_paths_truncated,
+        decisions=normalized_decisions,
+        test_evidence_count=len(request.test_evidence),
+        requested_by=request.requested_by,
+        agent_id=request.agent_id,
+        agent_role=request.agent_role,
+        task_id=request.task_id,
+        created_by=actor or request.requested_by or "system",
+    )
+    saved = _git_change_review_artifacts.upsert(artifact)
+    _record_change_review_artifact_event(saved)
+    return saved
+
+
+def list_git_change_review_artifacts(
+    *,
+    action: GitWorkflowAction | None = None,
+    checkpoint_digest: str | None = None,
+    limit: int = 20,
+) -> list[GitChangeReviewArtifact]:
+    bounded_limit = min(max(limit, 1), 100)
+    artifacts = _git_change_review_artifacts.list()
+    if action:
+        artifacts = [artifact for artifact in artifacts if artifact.action == action]
+    if checkpoint_digest:
+        artifacts = [
+            artifact for artifact in artifacts if artifact.checkpoint_digest == checkpoint_digest
+        ]
+    return sorted(artifacts, key=lambda artifact: artifact.created_at, reverse=True)[:bounded_limit]
+
+
+def get_git_change_review_artifact(artifact_id: str) -> GitChangeReviewArtifact:
+    artifact = _git_change_review_artifacts.get(artifact_id)
+    if artifact is None:
+        raise KeyError(f"Git change review artifact not found: {artifact_id}")
+    return artifact
 
 
 def build_git_commit_approval_request(
@@ -1780,6 +1932,57 @@ def _redact_path(path: str) -> str:
     return redact_sensitive_values(path.strip())[:MAX_CHANGED_PATH_CHARS]
 
 
+def _normalize_review_paths(paths: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        redacted = _redact_path(str(path))
+        if redacted and redacted not in seen:
+            seen.add(redacted)
+            normalized.append(redacted)
+    return normalized
+
+
+def _diff_section_paths(section: GitRawDiffSection) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"^diff --git a/(.+?) b/(.+)$", section.patch or "", re.MULTILINE):
+        path = _redact_path(match.group(2) or match.group(1))
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _normalize_change_review_decisions(
+    decisions: list[GitChangeReviewDecision],
+    sections: list[GitRawDiffSection],
+) -> list[GitChangeReviewDecision]:
+    section_by_key = {(section.scope, section.patch_digest): section for section in sections}
+    normalized: list[GitChangeReviewDecision] = []
+    seen: set[tuple[str, str]] = set()
+    for decision in decisions:
+        key = (decision.scope, decision.patch_digest)
+        if key in seen:
+            raise ValueError("Git change review decisions must not contain duplicates.")
+        section = section_by_key.get(key)
+        if section is None:
+            raise ValueError("Git change review decision does not match the current diff review.")
+        seen.add(key)
+        normalized.append(
+            GitChangeReviewDecision(
+                scope=decision.scope,
+                decision=decision.decision,
+                patch_digest=section.patch_digest,
+                paths=_diff_section_paths(section),
+                redacted=section.redacted,
+                truncated=section.truncated,
+                omitted_protected_paths=section.omitted_protected_paths,
+            )
+        )
+    return normalized
+
+
 def _checkpoint_digest(payload: dict[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return f"sha256:{sha256(encoded.encode('utf-8')).hexdigest()}"
@@ -1854,6 +2057,39 @@ def _record_diff_review_event(
             "agent_id": review.agent_id,
             "agent_role": review.agent_role,
             "task_id": review.task_id,
+        },
+    )
+
+
+def _record_change_review_artifact_event(artifact: GitChangeReviewArtifact) -> None:
+    counts = {
+        "accepted": sum(1 for decision in artifact.decisions if decision.decision == "accepted"),
+        "rejected": sum(1 for decision in artifact.decisions if decision.decision == "rejected"),
+        "pending": sum(1 for decision in artifact.decisions if decision.decision == "pending"),
+    }
+    event_log.record(
+        LogEventType.cli,
+        "Saved git change review artifact.",
+        actor=artifact.created_by,
+        subject_id=artifact.id,
+        metadata={
+            "action": artifact.action,
+            "repo_root": str(artifact.repo_root),
+            "branch": artifact.branch,
+            "head_sha": artifact.head_sha,
+            "checkpoint_digest": artifact.checkpoint_digest,
+            "decision_counts": counts,
+            "section_count": len(artifact.decisions),
+            "redacted_sections": sum(1 for decision in artifact.decisions if decision.redacted),
+            "truncated_sections": sum(1 for decision in artifact.decisions if decision.truncated),
+            "omitted_protected_path_count": sum(
+                len(decision.omitted_protected_paths) for decision in artifact.decisions
+            ),
+            "test_evidence_count": artifact.test_evidence_count,
+            "requested_by": artifact.requested_by,
+            "agent_id": artifact.agent_id,
+            "agent_role": artifact.agent_role,
+            "task_id": artifact.task_id,
         },
     )
 

@@ -199,7 +199,7 @@ Current endpoints:
 
 - `GET /`: Service health response.
 - `GET /health`: Service health response.
-- `GET /ui/`: Serves the static Sprint 16 dashboard shell, including the first task-chat planner with capped browser-local history, actionable task plan/run UI, session Git diff review decisions, editable guided bound execution panels, local policy/command-recipe/plugin-trust controls plus network policy preflight and approval request controls, provider health checks, approval source routing pinned to backend contracts, and responsive layout guards. The shell itself is public, but all protected API calls it makes still require an entered bearer token when auth is enabled.
+- `GET /ui/`: Serves the static Sprint 16 dashboard shell, including the first task-chat planner with capped browser-local history, actionable task plan/run UI, session Git diff review decisions, editable guided bound execution panels, local policy/command-recipe/plugin-trust controls plus network policy preflight and approval request controls, provider health checks and routing preview, approval source routing pinned to backend contracts, and responsive layout guards. The shell itself is public, but all protected API calls it makes still require an entered bearer token when auth is enabled.
 - `POST /projects/preflight`: Validates a candidate absolute project root without registering or activating it.
 - `GET /projects`: Lists registered project roots.
 - `POST /projects`: Registers a preflighted project root without activating it.

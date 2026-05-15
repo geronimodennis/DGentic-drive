@@ -36,6 +36,14 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "orchestrationDetail" in response.text
     assert "loadReliabilityButton" in response.text
     assert "providerHealthOutput" in response.text
+    assert "routingPreviewPanel" in response.text
+    assert "routingPreviewForm" in response.text
+    assert "routingRoleInput" in response.text
+    assert "routingPrivacyInput" in response.text
+    assert "routingCapabilitiesInput" in response.text
+    assert "routingLatencyInput" in response.text
+    assert "routingCostInput" in response.text
+    assert "routingOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -234,6 +242,19 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "provider-health-check" in script_response.text
     assert "Provider health checked" in script_response.text
     assert "Provider health unavailable" in script_response.text
+    assert "routingPreviewPayload" in script_response.text
+    assert "previewProviderRoute" in script_response.text
+    assert "renderRoutingDecision" in script_response.text
+    assert 'api("/routing/decide", { method: "POST", body: payload })' in script_response.text
+    assert "candidate_scores" in script_response.text
+    assert "provider_id" in script_response.text
+    assert "model_name" in script_response.text
+    assert "max_cost_usd" in script_response.text
+    assert 'qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute)' in (
+        script_response.text
+    )
+    assert "Provider route previewed" in script_response.text
+    assert "Routing preview failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

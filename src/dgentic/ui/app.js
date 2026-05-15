@@ -4045,6 +4045,60 @@ async function checkProviderHealth(providerId) {
   }
 }
 
+function optionalNumber(selector) {
+  const value = qs(selector).value.trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function routingPreviewPayload() {
+  return {
+    role: qs("#routingRoleInput").value.trim() || "planner",
+    privacy_required: qs("#routingPrivacyInput").checked,
+    max_latency_ms: optionalNumber("#routingLatencyInput"),
+    max_cost_usd: optionalNumber("#routingCostInput"),
+    required_capabilities: splitCsv(qs("#routingCapabilitiesInput").value),
+  };
+}
+
+function renderRoutingDecision(target, decision) {
+  target.append(statusBox("Routing preview", decision.reason || decision.provider_id, "ok"));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Provider", decision.provider_id || "-");
+  appendKeyValue(grid, "Model", decision.model_name || "-");
+  appendKeyValue(grid, "Score", Number(decision.score ?? 0).toFixed(3));
+  appendKeyValue(grid, "Role", decision.policy?.role || "-");
+  appendKeyValue(grid, "Max latency", decision.policy?.max_latency_ms ?? "-");
+  appendKeyValue(grid, "Max cost", decision.policy?.max_cost_usd ?? "-");
+  target.append(grid);
+  const candidateScores = Object.entries(decision.candidate_scores || {})
+    .sort((left, right) => Number(right[1]) - Number(left[1]))
+    .map(([providerId, score]) => `${providerId}: ${Number(score).toFixed(3)}`);
+  renderChipList(target, "Candidate scores", candidateScores, "pending");
+  target.append(jsonBlock(decision));
+}
+
+async function previewProviderRoute(event) {
+  event.preventDefault();
+  const target = qs("#routingOutput");
+  const payload = routingPreviewPayload();
+  clear(target);
+  target.append(statusBox("Previewing provider route", payload.role, "running"));
+  try {
+    const decision = await api("/routing/decide", { method: "POST", body: payload });
+    clear(target);
+    renderRoutingDecision(target, decision);
+    showToast("Provider route previewed.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Routing preview failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function loadReliability() {
   const [memory, registry] = await Promise.all([
     safeLoad("memory metadata", () => api("/api/v1/memory/metadata?limit=50")),
@@ -5239,6 +5293,7 @@ function bindEvents() {
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
+  qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);
   qs("#networkPolicyUrlInput").addEventListener("input", () => {

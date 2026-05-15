@@ -468,6 +468,42 @@ review</textarea>
                 <h2>Runtime</h2>
               </div>
             </div>
+            <details id="routingPreviewPanel" class="policy-editor">
+              <summary>Routing Preview</summary>
+              <form id="routingPreviewForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Role
+                    <input id="routingRoleInput" type="text" maxlength="80" value="planner" required>
+                  </label>
+                  <label>
+                    Required Capabilities
+                    <input id="routingCapabilitiesInput" type="text" placeholder="chat, streaming">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Max Latency
+                    <input id="routingLatencyInput" type="number" min="1">
+                  </label>
+                  <label>
+                    Max Cost USD
+                    <input id="routingCostInput" type="number" min="0" step="0.0001">
+                  </label>
+                </div>
+                <div class="form-footer">
+                  <label class="checkbox-label">
+                    <input id="routingPrivacyInput" type="checkbox">
+                    Privacy Required
+                  </label>
+                  <button id="routingPreviewButton" type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">?</span>
+                    <span>Preview Route</span>
+                  </button>
+                </div>
+              </form>
+              <div id="routingOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div id="providerList" class="compact-list"></div>
             <div id="providerHealthOutput" class="output-region" aria-live="polite"></div>
           </article>

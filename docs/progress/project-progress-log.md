@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010aw Provider Routing Preview UI
+
+Status: completed for the scoped provider routing preview UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected provider routing preview as the next safe Sprint 16 runtime-visibility slice after provider health checks because the backend already exposes a read-only routing decision contract.
+- Completed: Developer added a Provider panel routing preview form for role, privacy, maximum latency, maximum cost, and required capabilities through `/routing/decide`.
+- Completed: Developer renders selected provider, model, score, echoed policy constraints, candidate scores, and safe raw routing JSON without starting provider generation or creating approvals.
+- Completed: QA expanded Web UI static coverage for the routing preview DOM hooks, payload helper, route wiring, decision rendering, candidate scores, and success/failure messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can preview DGentic provider/model selection from the dashboard before running a provider request.
+- Implemented in this slice: routing preview stays read-only and does not change provider configuration, credentials, routing policy, or execution state.
+- Still out of scope after this slice: provider configuration editing, routing policy editing, direct provider generation from the provider panel, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_provider_routing_prefers_local_when_privacy_is_required` with 3 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010av Provider Health Check UI
 
 Status: completed for the scoped provider health visibility UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.

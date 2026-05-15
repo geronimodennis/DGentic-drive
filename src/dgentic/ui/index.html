@@ -802,10 +802,15 @@ review</textarea>
                       Task ID
                       <input id="filesystemPolicyTaskInput" type="text" maxlength="160">
                     </label>
-                    <button id="filesystemPolicyCheckButton" type="submit" class="primary-button">
-                      <span class="button-icon" aria-hidden="true">?</span>
-                      <span>Check Filesystem</span>
-                    </button>
+                    <div class="form-footer">
+                      <button id="filesystemPolicyCheckButton" type="submit" class="primary-button">
+                        <span class="button-icon" aria-hidden="true">?</span>
+                        <span>Check Filesystem</span>
+                      </button>
+                      <button id="filesystemPolicyApprovalButton" type="button" class="link-button" disabled>
+                        Request Approval
+                      </button>
+                    </div>
                   </form>
                   <div id="filesystemPolicyCheckOutput" class="output-region" aria-live="polite"></div>
                 </details>

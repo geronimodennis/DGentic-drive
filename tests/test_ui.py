@@ -117,6 +117,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "filesystemPolicyAgentInput" in response.text
     assert "filesystemPolicyTaskInput" in response.text
     assert "filesystemPolicyCheckButton" in response.text
+    assert "filesystemPolicyApprovalButton" in response.text
     assert "filesystemPolicyCheckOutput" in response.text
     assert "Check Filesystem" in response.text
     assert "cliPolicyForm" in response.text
@@ -193,10 +194,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderNetworkPolicyDecision" in script_response.text
     assert "checkNetworkPolicy" in script_response.text
     assert "requestNetworkPolicyApproval" in script_response.text
+    assert "latestFilesystemPolicyPreflight" in script_response.text
     assert "filesystemPolicyPayload" in script_response.text
+    assert "filesystemPolicyPayloadKey" in script_response.text
+    assert "filesystemPolicyApprovalRequest" in script_response.text
     assert "filesystemDecisionState" in script_response.text
     assert "renderFilesystemPolicyDecision" in script_response.text
     assert "checkFilesystemPolicy" in script_response.text
+    assert "requestFilesystemPolicyApproval" in script_response.text
+    assert "resetFilesystemPolicyApprovalState" in script_response.text
     assert '"/guardrails/network"' in script_response.text
     assert 'api("/guardrails/filesystem", { method: "POST", body: payload })' in (
         script_response.text
@@ -204,10 +210,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert '"/web-retrieval/network/check"' in script_response.text
     assert 'endpoint: "/network/approvals"' in script_response.text
     assert 'endpoint: "/web-retrieval/network/approvals"' in script_response.text
+    assert 'endpoint: "/filesystem/approvals"' in script_response.text
     assert 'body: { url, surface: "provider", action: "request" }' in script_response.text
     assert 'decision.mode !== "approval_required"' in script_response.text
+    assert 'decision.permission_mode !== "approval_required"' in script_response.text
     assert "Approval requires a fresh check" in script_response.text
+    assert "Approval requires a fresh filesystem check" in script_response.text
     assert "Network approval created" in script_response.text
+    assert "Filesystem approval created" in script_response.text
+    assert "Filesystem approval failed" in script_response.text
     assert 'qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy)' in (
         script_response.text
     )
@@ -215,6 +226,8 @@ def test_web_ui_static_assets_are_served() -> None:
         'qs("#filesystemPolicyCheckForm").addEventListener("submit", checkFilesystemPolicy)'
         in script_response.text
     )
+    assert 'qs("#filesystemPolicyApprovalButton").addEventListener(' in script_response.text
+    assert '"click",\n    requestFilesystemPolicyApproval,' in script_response.text
     assert (
         'qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval)'
         in script_response.text

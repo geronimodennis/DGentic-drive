@@ -28,6 +28,7 @@ let taskGraphBuilderTasks = [];
 let latestSettingsView = null;
 let latestPolicyReviewResults = null;
 let latestNetworkPolicyPreflight = null;
+let latestFilesystemPolicyPreflight = null;
 let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
@@ -4990,6 +4991,17 @@ function filesystemPolicyPayload() {
   return payload;
 }
 
+function filesystemPolicyPayloadKey(payload) {
+  return JSON.stringify(payload);
+}
+
+function filesystemPolicyApprovalRequest(payload) {
+  return {
+    endpoint: "/filesystem/approvals",
+    body: { ...payload },
+  };
+}
+
 function filesystemDecisionState(decision) {
   if (decision.permission_mode === "approval_required") {
     return "pending";
@@ -5030,12 +5042,21 @@ function renderFilesystemPolicyDecision(target, decision) {
 async function checkFilesystemPolicy(event) {
   event.preventDefault();
   const target = qs("#filesystemPolicyCheckOutput");
+  const approvalButton = qs("#filesystemPolicyApprovalButton");
   const payload = filesystemPolicyPayload();
+  latestFilesystemPolicyPreflight = null;
+  approvalButton.disabled = true;
   clear(target);
   target.append(statusBox("Checking filesystem guardrail", `${payload.action} ${payload.path}`, "running"));
   try {
     const decision = await api("/guardrails/filesystem", { method: "POST", body: payload });
     clear(target);
+    latestFilesystemPolicyPreflight = {
+      payload,
+      payloadKey: filesystemPolicyPayloadKey(payload),
+      decision,
+    };
+    approvalButton.disabled = decision.permission_mode !== "approval_required";
     renderFilesystemPolicyDecision(target, decision);
     showToast("Filesystem guardrail checked.");
   } catch (error) {
@@ -5043,6 +5064,55 @@ async function checkFilesystemPolicy(event) {
     target.append(statusBox("Filesystem guardrail check failed", error.message, "failed"));
     showToast(error.message);
   }
+}
+
+async function requestFilesystemPolicyApproval() {
+  const target = qs("#filesystemPolicyCheckOutput");
+  const approvalButton = qs("#filesystemPolicyApprovalButton");
+  const payload = filesystemPolicyPayload();
+  if (
+    !latestFilesystemPolicyPreflight ||
+    latestFilesystemPolicyPreflight.payloadKey !== filesystemPolicyPayloadKey(payload) ||
+    latestFilesystemPolicyPreflight.decision.permission_mode !== "approval_required"
+  ) {
+    clear(target);
+    target.append(
+      statusBox(
+        "Approval requires a fresh filesystem check",
+        `${payload.action} ${payload.path}`,
+        "blocked",
+      ),
+    );
+    approvalButton.disabled = true;
+    return;
+  }
+  const request = filesystemPolicyApprovalRequest(payload);
+  clear(target);
+  target.append(
+    statusBox("Creating filesystem approval", `${payload.action} ${payload.path}`, "running"),
+  );
+  try {
+    const approval = await api(request.endpoint, {
+      method: "POST",
+      body: request.body,
+    });
+    latestFilesystemPolicyPreflight = null;
+    approvalButton.disabled = true;
+    clear(target);
+    target.append(statusBox("Filesystem approval created", approval.id, "pending"));
+    target.append(jsonBlock(approval));
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
+    showToast("Filesystem approval created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Filesystem approval failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function resetFilesystemPolicyApprovalState() {
+  latestFilesystemPolicyPreflight = null;
+  qs("#filesystemPolicyApprovalButton").disabled = true;
 }
 
 async function checkNetworkPolicy(event) {
@@ -5935,6 +6005,10 @@ function bindEvents() {
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);
   qs("#filesystemPolicyCheckForm").addEventListener("submit", checkFilesystemPolicy);
+  qs("#filesystemPolicyApprovalButton").addEventListener(
+    "click",
+    requestFilesystemPolicyApproval,
+  );
   qs("#networkPolicyUrlInput").addEventListener("input", () => {
     latestNetworkPolicyPreflight = null;
     qs("#networkPolicyApprovalButton").disabled = true;
@@ -5942,6 +6016,17 @@ function bindEvents() {
   qs("#networkPolicySurfaceInput").addEventListener("change", () => {
     latestNetworkPolicyPreflight = null;
     qs("#networkPolicyApprovalButton").disabled = true;
+  });
+  [
+    "#filesystemPolicyActionInput",
+    "#filesystemPolicyPathInput",
+    "#filesystemPolicyTargetInput",
+    "#filesystemPolicyRoleInput",
+    "#filesystemPolicyAgentInput",
+    "#filesystemPolicyTaskInput",
+  ].forEach((selector) => {
+    qs(selector).addEventListener("input", resetFilesystemPolicyApprovalState);
+    qs(selector).addEventListener("change", resetFilesystemPolicyApprovalState);
   });
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {

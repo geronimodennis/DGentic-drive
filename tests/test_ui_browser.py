@@ -588,6 +588,78 @@ def test_browser_policy_panel_can_preflight_filesystem_guardrail(
     )
 
 
+def test_browser_policy_panel_can_request_filesystem_approval_after_preflight(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    target = root_dir / "request-delete.txt"
+    target.write_text("remove", encoding="utf-8")
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#policy"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#filesystemPolicyCheckForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#filesystemPolicyCheckPanel").open = true;
+          document.querySelector("#filesystemPolicyActionInput").value = "delete";
+          document.querySelector("#filesystemPolicyPathInput").value = "request-delete.txt";
+          document.querySelector("#filesystemPolicyCheckForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#filesystemPolicyCheckOutput")
+          ?.textContent.includes("approval_required")
+          && !document.querySelector("#filesystemPolicyApprovalButton")?.disabled
+        """
+    )
+    devtools_page.eval('document.querySelector("#filesystemPolicyApprovalButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#filesystemPolicyCheckOutput")
+          ?.textContent.includes("Filesystem approval created")
+          && document.querySelector("#filesystemPolicyCheckOutput")
+            ?.textContent.includes("request-delete.txt")
+        """
+    )
+
+    approvals_status, approvals_body = _http_json(
+        "GET",
+        f"{base_url}/filesystem/approvals?status=pending",
+    )
+    assert approvals_status == 200
+    assert any(
+        approval["path"] == "request-delete.txt"
+        and approval["action"] == "delete"
+        and approval["status"] == "pending"
+        for approval in approvals_body
+    )
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "filesystem";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("request-delete.txt"))
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_execute_seeded_web_retrieval_network_approval(
     ui_live_server,
     devtools_page,

@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010bf Filesystem Preflight Approval Requests
+
+Status: completed for the scoped filesystem preflight-to-approval UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, richer filesystem approval detail editors, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected filesystem preflight-to-approval creation as the next bounded approval-dashboard slice because BL-010be exposed filesystem guardrail decisions and the backend already has bound `/filesystem/approvals` creation.
+- Completed: Developer added a disabled-by-default Filesystem Request Approval control, fresh preflight tracking, approval-required gating, input-change invalidation, and `/filesystem/approvals` creation using only the existing backend contract.
+- Completed: Developer preserved the existing execution boundary: the dashboard creates a pending approval only and does not execute filesystem operations or bypass bound approval review.
+- Completed: QA expanded static UI coverage for the new DOM hook, helper functions, endpoint wiring, freshness message, approval success/failure messages, and click binding.
+- Completed: QA added browser smoke coverage that preflights an approval-required delete, creates a pending filesystem approval, verifies it through the API, and sees it in the unified approval inbox.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can create a pending filesystem approval directly from a fresh approval-required filesystem guardrail preflight in the Policy panel.
+- Implemented in this slice: editing action/path/target/agent/task inputs invalidates the cached preflight and disables approval creation until the operator checks the current request again.
+- Still out of scope after this slice: filesystem policy editing, richer filesystem approval detail editors, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_policy_panel_can_preflight_filesystem_guardrail tests\test_ui_browser.py::test_browser_policy_panel_can_request_filesystem_approval_after_preflight` with 4 passed.
+- Full regression passed: `uv run pytest -q` with 1,367 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010be Filesystem Guardrail Preflight Controls
 
 Status: completed for the scoped filesystem guardrail preflight UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression apply controls, and filesystem guardrail preflight, and persistent or multi-worker project activation semantics.

@@ -4015,6 +4015,7 @@ async function loadProviders() {
       target.append(item);
     }
   }
+  renderToolGovernanceList(tools);
 }
 
 function renderProviderHealth(target, health) {
@@ -4042,6 +4043,103 @@ async function checkProviderHealth(providerId) {
     clear(target);
     target.append(statusBox("Provider health unavailable", error.message, "failed"));
     showToast(error.message);
+  }
+}
+
+function toolGovernanceState(tool) {
+  if (tool.status === "disabled") {
+    return "blocked";
+  }
+  if (tool.status === "deprecated") {
+    return "pending";
+  }
+  return "ok";
+}
+
+function toolGovernancePayload(status) {
+  const reason = qs("#toolGovernanceReasonInput").value.trim();
+  const payload = { status };
+  if (reason) {
+    payload.reason = reason;
+  }
+  return payload;
+}
+
+async function updateToolGovernance(toolName, status) {
+  const target = qs("#toolGovernanceOutput");
+  clear(target);
+  const payload = toolGovernancePayload(status);
+  if (status !== "active" && !payload.reason) {
+    target.append(statusBox("Governance reason required", "Add a reason before changing tool status.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Updating tool governance", `${toolName} -> ${status}`, "running"));
+  try {
+    const tool = await api(`/tools/${encodeURIComponent(toolName)}/governance`, {
+      method: "PATCH",
+      body: payload,
+    });
+    clear(target);
+    target.append(statusBox("Tool governance updated", tool.name || toolName, toolGovernanceState(tool)));
+    target.append(jsonBlock(tool));
+    showToast("Tool governance updated.");
+    await loadProviders();
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Tool governance update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderToolGovernanceList(result) {
+  const target = qs("#toolGovernanceList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Tools unavailable", result.error, "blocked"));
+    return;
+  }
+  const tools = result.data || [];
+  if (!tools.length) {
+    target.append(statusBox("No generated tools", "Tool registry is empty.", "pending"));
+    return;
+  }
+  for (const tool of tools.slice(0, 10)) {
+    const toolName = tool.name || "";
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", toolName || "-"));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${tool.status || "active"} - ${tool.permission_mode || "policy"} - v${tool.version || "-"}`,
+      ),
+    );
+    if (tool.deprecated_reason) {
+      detail.append(make("div", "item-meta", tool.deprecated_reason));
+    }
+    const actions = make("div", "recipe-action-buttons");
+    const activeButton = make("button", "success-button", "Active");
+    activeButton.type = "button";
+    activeButton.dataset.testid = "tool-governance-active";
+    activeButton.dataset.toolName = toolName;
+    activeButton.disabled = !toolName || tool.status === "active";
+    activeButton.addEventListener("click", () => updateToolGovernance(toolName, "active"));
+    const deprecatedButton = make("button", "link-button", "Deprecate");
+    deprecatedButton.type = "button";
+    deprecatedButton.dataset.testid = "tool-governance-deprecated";
+    deprecatedButton.dataset.toolName = toolName;
+    deprecatedButton.disabled = !toolName || tool.status === "deprecated";
+    deprecatedButton.addEventListener("click", () => updateToolGovernance(toolName, "deprecated"));
+    const disabledButton = make("button", "danger-button", "Disable");
+    disabledButton.type = "button";
+    disabledButton.dataset.testid = "tool-governance-disabled";
+    disabledButton.dataset.toolName = toolName;
+    disabledButton.disabled = !toolName || tool.status === "disabled";
+    disabledButton.addEventListener("click", () => updateToolGovernance(toolName, "disabled"));
+    actions.append(statusChip(toolGovernanceState(tool)), activeButton, deprecatedButton, disabledButton);
+    item.append(detail, actions);
+    target.append(item);
   }
 }
 

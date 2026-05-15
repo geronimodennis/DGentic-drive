@@ -44,6 +44,10 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "routingLatencyInput" in response.text
     assert "routingCostInput" in response.text
     assert "routingOutput" in response.text
+    assert "toolGovernancePanel" in response.text
+    assert "toolGovernanceReasonInput" in response.text
+    assert "toolGovernanceList" in response.text
+    assert "toolGovernanceOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -255,6 +259,17 @@ def test_web_ui_static_assets_are_served() -> None:
     )
     assert "Provider route previewed" in script_response.text
     assert "Routing preview failed" in script_response.text
+    assert "renderToolGovernanceList" in script_response.text
+    assert "updateToolGovernance" in script_response.text
+    assert "toolGovernancePayload" in script_response.text
+    assert "/tools/${encodeURIComponent(toolName)}/governance" in script_response.text
+    assert 'method: "PATCH"' in script_response.text
+    assert "tool-governance-active" in script_response.text
+    assert "tool-governance-deprecated" in script_response.text
+    assert "tool-governance-disabled" in script_response.text
+    assert "Governance reason required" in script_response.text
+    assert "Tool governance updated" in script_response.text
+    assert "Tool governance update failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

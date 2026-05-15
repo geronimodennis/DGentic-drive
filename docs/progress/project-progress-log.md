@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ax Generated-Tool Governance UI
+
+Status: completed for the scoped generated-tool governance UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory retrieval exploration, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected generated-tool governance as the next safe Sprint 16 editable tools slice because the backend already exposes guarded `/tools` listing and `/tools/{name}/governance` update contracts.
+- Completed: Developer added a Tool Governance panel to the Provider/Runtime dashboard area with a governance reason field and Active, Deprecate, and Disable actions for generated tools.
+- Completed: Developer wired the actions to the existing PATCH governance contract, required a reason for non-active status changes, refreshed the safe tool list after updates, and kept tool execution out of scope.
+- Completed: QA expanded Web UI static coverage for the governance DOM hooks, payload helper, update wiring, status action buttons, reason-required guard, and success/failure messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can change generated-tool lifecycle status from the dashboard without leaving the runtime panel.
+- Implemented in this slice: generated-tool governance uses the existing backend contract and does not execute tools, generate new tools, mutate tool code, or bypass approval controls.
+- Still out of scope after this slice: generated-tool creation UX, tool execution workflow redesign, tool permission-mode editing, memory retrieval exploration, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_dynamic_tool_generation_blocks_invalid_permission_and_deprecates_tool` with 3 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010aw Provider Routing Preview UI
 
 Status: completed for the scoped provider routing preview UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.

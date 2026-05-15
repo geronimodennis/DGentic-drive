@@ -7,6 +7,7 @@ import struct
 import subprocess
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -221,6 +222,19 @@ class _DevToolsPage:
         raise AssertionError(f"Timed out waiting for browser condition: {last_value!r}")
 
 
+class _WebRetrievalSmokeHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b"browser network approval smoke response"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args) -> None:
+        return
+
+
 @pytest.fixture()
 def ui_live_server(tmp_path, monkeypatch):
     root_dir = tmp_path / "workspace"
@@ -229,6 +243,20 @@ def ui_live_server(tmp_path, monkeypatch):
     monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
     monkeypatch.setenv("DGENTIC_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGENTIC_NETWORK_DOMAIN_POLICY",
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "domain": "127.0.0.1",
+                        "mode": "approval_required",
+                        "reason": "Browser network approval smoke.",
+                    }
+                ]
+            }
+        ),
+    )
     reset_database_state()
     get_settings.cache_clear()
 
@@ -255,6 +283,19 @@ def ui_live_server(tmp_path, monkeypatch):
         thread.join(timeout=5)
         reset_database_state()
         get_settings.cache_clear()
+
+
+@pytest.fixture()
+def web_retrieval_target_url():
+    server = ThreadingHTTPServer(("127.0.0.1", _free_port()), _WebRetrievalSmokeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/approved.txt"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
 @pytest.fixture()
@@ -462,3 +503,89 @@ def test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approva
     assert review_status == 200
     assert review_body["status"] == "executed"
     assert not target.exists()
+
+
+def test_browser_approval_dashboard_can_execute_seeded_web_retrieval_network_approval(
+    ui_live_server,
+    devtools_page,
+    web_retrieval_target_url,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/web-retrieval/network/approvals",
+        payload={"url": web_retrieval_target_url, "requested_by": "browser-network-smoke"},
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "network";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("approved.txt"))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("approved.txt"));
+          row.querySelector("button").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Network review")
+          && document.querySelector("#approvalReview")?.textContent.includes("web_retrieval")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser network smoke.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes("approved.txt")
+        """
+    )
+    devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+          && document.querySelector("#boundExecutionOutput")
+            ?.textContent.includes("browser network approval smoke response")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/network/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"

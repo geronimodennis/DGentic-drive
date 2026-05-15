@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ai Browser-Driven Seeded Web-Retrieval Network Approval Execution
+
+Status: completed for the scoped browser-driven seeded web-retrieval network approval execution scenario; Sprint 16 remains active for provider/tool browser approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected web-retrieval network approval as the next bounded browser scenario because CLI and filesystem browser paths were already covered and web retrieval can execute against a deterministic local text server.
+- Completed: QA added a local HTTP text-response fixture and configured the browser test app with an approval-required localhost network policy.
+- Completed: QA added a browser-driven network approval scenario that filters the unified approval inbox to network, reviews and approves a seeded web-retrieval approval, executes the guided bound fetch payload, verifies the execution output content, and confirms the approval review status is executed.
+- Completed: PM updated README, usage, architecture, project status, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: browser smoke coverage now validates a seeded web-retrieval network approval from inbox filtering through safe review, visible approval decision, guided bound fetch execution, returned content rendering, and backend executed status.
+- Still out of scope after this slice: provider/tool browser approval scenarios, provider/tool network approval consuming flows, deeper nested type-specific editors, persistent AI-change artifact apply/revert workflows, and full unified chat.
+
+Validation:
+- Focused browser/UI validation passed: `uv run pytest -q tests\test_ui_browser.py tests\test_ui.py` with 7 passed.
+- Focused browser lint checks passed: `uv run ruff format --check tests\test_ui_browser.py` and `uv run ruff check tests\test_ui_browser.py`.
+- Full regression passed: `uv run pytest -q` with 1,357 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010ah Browser-Driven Seeded Filesystem Approval Execution
 
 Status: completed for the scoped browser-driven seeded filesystem approval execution scenario; Sprint 16 remains active for remaining network/provider/tool browser approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

@@ -88,6 +88,28 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Bound execution request" in script_response.text
     assert "Payload scaffold" in script_response.text
     assert "Copy Payload" in script_response.text
+    assert "Editable Payload" in script_response.text
+    assert "bound-execution-editor" in script_response.text
+    assert "boundExecutionPayloadInput" in script_response.text
+    assert "boundExecutionPayloadFromEditor" in script_response.text
+    assert "validateBoundExecutionPayload" in script_response.text
+    assert "Payload JSON is required." in script_response.text
+    assert "Payload JSON must be an object." in script_response.text
+    assert "must match the approved request." in script_response.text
+    assert "Payload JSON invalid" in script_response.text
+    assert "executeBoundExecutionRequest" in script_response.text
+    assert "boundExecutionExecuteButton" in script_response.text
+    assert "Execute Request" in script_response.text
+    assert "boundExecutionOutput" in script_response.text
+    assert "api(scaffold.endpoint, { method: scaffold.method, body: payload })" in (
+        script_response.text
+    )
+    assert "Bound request executed" in script_response.text
+    assert "Bound execution failed" in script_response.text
+    assert "Bound execution handoff only" in script_response.text
+    assert "Dashboard execute" in script_response.text
+    assert "network_approval_id" in script_response.text
+    assert "await loadApprovals()" in script_response.text
     assert "renderReviewWarnings" in script_response.text
     assert "reviewValue" in script_response.text
     assert "Raw review" in script_response.text
@@ -100,7 +122,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert '"/filesystem/copy"' in script_response.text
     assert '"/filesystem/rename"' in script_response.text
     assert '"/web-retrieval/fetch"' in script_response.text
-    assert '"/web-retrieval/network/authorize"' in script_response.text
+    assert '"<provider/tool execution endpoint>"' in script_response.text
     assert '"/providers/generate"' in script_response.text
     assert '"/providers/generate/stream"' in script_response.text
     assert "/tools/${encodeURIComponent" in script_response.text
@@ -325,6 +347,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".approval-summary-grid" in style_response.text
     assert ".approval-review-summary" in style_response.text
     assert ".bound-execution-panel" in style_response.text
+    assert ".bound-execution-editor" in style_response.text
     assert ".review-warning-list" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text

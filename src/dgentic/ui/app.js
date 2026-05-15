@@ -1912,6 +1912,7 @@ function renderBoundExecutionRequestPanel(target, item) {
   appendKeyValue(grid, "Approval", item.approval.id);
   appendKeyValue(grid, "Direct execution", item.review.direct_execute_available ? "Available" : "Not available");
   appendKeyValue(grid, "Requires bound request", item.review.requires_bound_execution_request ? "Yes" : "No");
+  appendKeyValue(grid, "Dashboard execute", scaffold.executable === false ? "Not available" : "Available");
   panel.append(grid);
 
   if (scaffold.notes.length) {
@@ -1929,12 +1930,28 @@ function renderBoundExecutionRequestPanel(target, item) {
   details.open = true;
   details.append(make("summary", "", "Payload scaffold"));
   details.append(jsonBlock(scaffold.payload));
+  const editor = make("label", "bound-execution-editor");
+  editor.append(make("span", "", "Editable Payload"));
+  const textarea = make("textarea");
+  textarea.id = "boundExecutionPayloadInput";
+  textarea.rows = 10;
+  textarea.spellcheck = false;
+  textarea.value = JSON.stringify(scaffold.payload, null, 2);
+  editor.append(textarea);
   const buttons = make("div", "recipe-action-buttons");
   const copyButton = make("button", "link-button", "Copy Payload");
   copyButton.type = "button";
   copyButton.addEventListener("click", () => copyBoundExecutionPayload(scaffold));
-  buttons.append(copyButton);
-  panel.append(details, buttons);
+  const executeButton = make("button", "primary-button", "Execute Request");
+  executeButton.id = "boundExecutionExecuteButton";
+  executeButton.type = "button";
+  executeButton.disabled = scaffold.executable === false;
+  executeButton.addEventListener("click", () => executeBoundExecutionRequest(scaffold));
+  buttons.append(copyButton, executeButton);
+  const output = make("div", "output-region");
+  output.id = "boundExecutionOutput";
+  output.setAttribute("aria-live", "polite");
+  panel.append(details, editor, buttons, output);
   target.append(panel);
 }
 
@@ -2005,6 +2022,8 @@ function filesystemBoundExecutionScaffold(review, basePayload) {
   return {
     method: "POST",
     endpoint: endpoints[action] || "/filesystem/read",
+    executable: true,
+    binding: { field: "approval_id", value: basePayload.approval_id },
     payload,
     notes,
   };
@@ -2012,18 +2031,33 @@ function filesystemBoundExecutionScaffold(review, basePayload) {
 
 function networkBoundExecutionScaffold(review, basePayload) {
   const webRetrieval = review.surface === "web_retrieval" || review.action === "fetch";
+  if (!webRetrieval) {
+    const { approval_id, ...context } = basePayload;
+    return {
+      method: "POST",
+      endpoint: "<provider/tool execution endpoint>",
+      executable: false,
+      binding: { field: "network_approval_id", value: approval_id },
+      payload: {
+        ...context,
+        network_approval_id: approval_id,
+        url: review.url || "<approved URL>",
+      },
+      notes: ["Provider and tool network approvals are consumed as network_approval_id in the matching provider/tool execution request."],
+    };
+  }
   return {
     method: "POST",
-    endpoint: webRetrieval ? "/web-retrieval/fetch" : "/web-retrieval/network/authorize",
+    endpoint: "/web-retrieval/fetch",
+    executable: true,
+    binding: { field: "approval_id", value: basePayload.approval_id },
     payload: {
       ...basePayload,
       url: review.url || "<approved URL>",
       timeout_seconds: 30,
       max_response_bytes: 65536,
     },
-    notes: webRetrieval
-      ? ["Web retrieval approvals are consumed by the fetch request."]
-      : ["Provider and tool network approvals are consumed through provider/tool execution as network_approval_id."],
+    notes: ["Web retrieval approvals are consumed by the fetch request."],
   };
 }
 
@@ -2041,6 +2075,8 @@ function providerBoundExecutionScaffold(review, basePayload) {
   return {
     method: "POST",
     endpoint: review.stream ? "/providers/generate/stream" : "/providers/generate",
+    executable: true,
+    binding: { field: "approval_id", value: basePayload.approval_id },
     payload: {
       ...basePayload,
       provider_id: review.provider_id || "<provider id>",
@@ -2060,6 +2096,8 @@ function toolBoundExecutionScaffold(review, basePayload) {
   return {
     method: "POST",
     endpoint: `/tools/${encodeURIComponent(review.tool_name || "<tool>")}/execute`,
+    executable: true,
+    binding: { field: "approval_id", value: basePayload.approval_id },
     payload: {
       ...basePayload,
       payload: review.review_payload || {},
@@ -2072,6 +2110,62 @@ function toolBoundExecutionScaffold(review, basePayload) {
 async function copyBoundExecutionPayload(scaffold) {
   const text = JSON.stringify({ method: scaffold.method, endpoint: scaffold.endpoint, payload: scaffold.payload }, null, 2);
   await copyTextToClipboard(text, "Bound payload copied.");
+}
+
+function boundExecutionPayloadFromEditor() {
+  const value = qs("#boundExecutionPayloadInput").value.trim();
+  if (!value) {
+    throw new Error("Payload JSON is required.");
+  }
+  const payload = JSON.parse(value);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Payload JSON must be an object.");
+  }
+  return payload;
+}
+
+function validateBoundExecutionPayload(scaffold, payload) {
+  const binding = scaffold.binding || {};
+  if (!binding.field || !binding.value) {
+    return;
+  }
+  if (payload[binding.field] !== binding.value) {
+    throw new Error(`${binding.field} must match the approved request.`);
+  }
+}
+
+async function executeBoundExecutionRequest(scaffold) {
+  const output = qs("#boundExecutionOutput");
+  const button = qs("#boundExecutionExecuteButton");
+  clear(output);
+  if (scaffold.executable === false) {
+    output.append(statusBox("Bound execution handoff only", "Use the copied payload in the matching provider or tool request.", "blocked"));
+    return;
+  }
+  let payload = {};
+  try {
+    payload = boundExecutionPayloadFromEditor();
+    validateBoundExecutionPayload(scaffold, payload);
+  } catch (error) {
+    output.append(statusBox("Payload JSON invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  button.disabled = true;
+  output.append(statusBox("Executing bound request", `${scaffold.method} ${scaffold.endpoint}`, "running"));
+  try {
+    const result = await api(scaffold.endpoint, { method: scaffold.method, body: payload });
+    clear(output);
+    output.append(statusBox("Bound request executed", scaffold.endpoint, "ready"));
+    output.append(jsonBlock(result));
+    await loadApprovals();
+    showToast("Bound request executed.");
+  } catch (error) {
+    button.disabled = false;
+    clear(output);
+    output.append(statusBox("Bound execution failed", error.message, "failed"));
+    showToast(error.message);
+  }
 }
 
 async function copyTextToClipboard(text, successMessage) {

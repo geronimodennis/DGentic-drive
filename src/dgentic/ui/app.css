@@ -979,6 +979,7 @@ textarea {
 .chip-list,
 .approval-review-summary,
 .bound-execution-panel,
+.bound-execution-editor,
 .git-change-review,
 .git-diff-review,
 .git-diff-review-output,
@@ -987,6 +988,14 @@ textarea {
 .git-review-summary {
   display: grid;
   gap: 8px;
+}
+
+.bound-execution-editor textarea {
+  min-height: 180px;
+  font-family:
+    "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .git-diff-decision-controls {

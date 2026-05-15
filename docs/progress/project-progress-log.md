@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ab Non-CLI Bound Request Editor And Execution UX
+
+Status: completed for the scoped editable non-CLI bound execution slice; Sprint 16 remains active for richer type-specific non-CLI editors, provider/tool network-approval consuming flows, persistent AI-change artifact apply/revert workflows, deeper conversational history, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected non-CLI bound request editor/execution UX as the next bounded Sprint 16 slice because BL-010y exposed safe payload scaffolds but still required operators to leave the dashboard for execution.
+- Completed: Explorer confirmed the safe path is to reuse existing filesystem, web retrieval, provider, and tool execution endpoints, preserve approval binding, and keep provider/tool network approvals as handoff-only `network_approval_id` payloads.
+- Completed: Developer added editable JSON payloads, JSON object validation, approval/network-approval binding checks, direct execution for dashboard-callable bound requests, result rendering, approval refresh, and disabled handoff-only handling for provider/tool network approvals.
+- Completed: QA extended static UI coverage for editable payload controls, binding validation, execution action, result/error output, approval refresh, handoff-only behavior, and CSS hooks.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: approved non-CLI review panels can edit and execute bound payloads for dashboard-callable requests while keeping existing backend single-use binding checks authoritative.
+- Still out of scope after this slice: type-specific guided editors for each non-CLI request family, restoring redacted original provider/tool values automatically, direct provider/tool network-approval consumption outside the matching provider/tool execution request, and end-to-end browser approval scenarios.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Focused bound-execution API regression passed: `uv run pytest tests\test_api.py::test_guarded_filesystem_destructive_operations_require_approval tests\test_api.py::test_web_retrieval_network_api_pins_surface_claims_approval_and_redacts tests\test_api.py::test_web_retrieval_fetch_claims_single_use_approval tests\test_api.py::test_generated_tool_execute_api_requires_bound_approval_in_production -q` with 4 tests.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:61697`: `/ui/` served and `/ui/app.js` included the editable bound execution helpers.
+
 ### Sprint 16 BL-010aa AI-Change Review Decisions
 
 Status: completed for the scoped session-level AI-change review decision slice; Sprint 16 remains active for persistent AI-change artifact apply/revert workflows, deeper conversational history, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

@@ -691,6 +691,7 @@ textarea {
 
 .status-chip.ready,
 .status-chip.approved,
+.status-chip.accepted,
 .status-chip.completed,
 .status-chip.ok {
   background: #dcfce7;
@@ -699,6 +700,7 @@ textarea {
 
 .status-chip.blocked,
 .status-chip.denied,
+.status-chip.rejected,
 .status-chip.failed,
 .status-chip.error {
   background: #fee2e2;
@@ -945,6 +947,7 @@ textarea {
 .chip-list,
 .approval-review-summary,
 .bound-execution-panel,
+.git-change-review,
 .git-diff-review,
 .git-diff-section,
 .git-review-summary {
@@ -976,6 +979,7 @@ textarea {
 .chip-list,
 .approval-review-summary,
 .bound-execution-panel,
+.git-change-review,
 .git-diff-review,
 .git-diff-review-output,
 .git-diff-section,
@@ -983,6 +987,17 @@ textarea {
 .git-review-summary {
   display: grid;
   gap: 8px;
+}
+
+.git-diff-decision-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.git-diff-decision-controls button[aria-pressed="true"] {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .review-warning-list {

@@ -29,6 +29,7 @@ let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let editingCliPolicyRuleId = "";
 let taskChatMessages = [];
+let gitDiffReviewDecisions = {};
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -2070,9 +2071,13 @@ function toolBoundExecutionScaffold(review, basePayload) {
 
 async function copyBoundExecutionPayload(scaffold) {
   const text = JSON.stringify({ method: scaffold.method, endpoint: scaffold.endpoint, payload: scaffold.payload }, null, 2);
+  await copyTextToClipboard(text, "Bound payload copied.");
+}
+
+async function copyTextToClipboard(text, successMessage) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast("Bound payload copied.");
+    showToast(successMessage);
   } catch (_error) {
     showToast("Copy unavailable in this browser context.");
   }
@@ -2280,6 +2285,7 @@ async function createGitCheckpoint(event) {
   latestGitCheckpoint = null;
   latestGitCheckpointRequest = payload;
   latestGitDiffReview = null;
+  gitDiffReviewDecisions = {};
   renderGitApprovalActions(null);
   clear(target);
   target.append(statusBox("Checking repository", payload.action, "running"));
@@ -2293,6 +2299,7 @@ async function createGitCheckpoint(event) {
     latestGitCheckpoint = null;
     clear(target);
     target.append(statusBox("Checkpoint failed", error.message, "failed"));
+    gitDiffReviewDecisions = {};
     renderGitApprovalActions(null);
   }
 }
@@ -2425,6 +2432,7 @@ async function loadGitDiffReview(checkpoint) {
   clear(target);
   target.append(statusBox("Loading raw diff", checkpoint.checkpoint_digest.slice(0, 16), "running"));
   try {
+    gitDiffReviewDecisions = {};
     latestGitDiffReview = await api("/cli/git/diff-reviews", {
       method: "POST",
       body: gitDiffReviewPayload(checkpoint),
@@ -2446,9 +2454,125 @@ function renderGitDiffReview(target, review) {
   appendKeyValue(grid, "Warnings", String((review.warnings || []).length), review.warnings?.length ? "pending" : "ok");
   target.append(grid);
   renderFindings(target, "Diff review warnings", review.warnings || [], "pending");
+  renderGitChangeReview(target, review);
   for (const section of review.sections || []) {
     renderGitDiffSection(target, section);
   }
+}
+
+function gitDiffSectionDecisionKey(section) {
+  return `${section.scope || "diff"}:${section.patch_digest || section.byte_count || section.returned_byte_count || "empty"}`;
+}
+
+function gitDiffSectionDecision(section) {
+  return gitDiffReviewDecisions[gitDiffSectionDecisionKey(section)]?.decision || "pending";
+}
+
+function setGitDiffSectionDecision(section, decision) {
+  const key = gitDiffSectionDecisionKey(section);
+  if (decision === "pending") {
+    delete gitDiffReviewDecisions[key];
+  } else {
+    gitDiffReviewDecisions[key] = {
+      decision,
+      scope: section.scope || "diff",
+      patch_digest: section.patch_digest || "",
+      decided_at: new Date().toISOString(),
+    };
+  }
+  if (latestGitDiffReview) {
+    renderGitDiffReview(qs("#gitDiffReviewOutput"), latestGitDiffReview);
+  }
+}
+
+function gitDiffReviewDecisionCounts(review) {
+  const counts = { accepted: 0, rejected: 0, pending: 0 };
+  for (const section of review.sections || []) {
+    const decision = gitDiffSectionDecision(section);
+    if (decision === "accepted" || decision === "rejected") {
+      counts[decision] += 1;
+    } else {
+      counts.pending += 1;
+    }
+  }
+  return counts;
+}
+
+function gitDiffReviewHasRejectedSections() {
+  return Boolean(latestGitDiffReview && gitDiffReviewDecisionCounts(latestGitDiffReview).rejected);
+}
+
+function updateGitReviewDecisionGate() {
+  if (!latestGitCheckpoint) {
+    return;
+  }
+  const blocked = gitDiffReviewHasRejectedSections();
+  const enabled = latestGitCheckpoint.ready && !blocked;
+  qs("#gitApprovalSubmitButton").disabled = !enabled;
+  qs("#gitRunSubmitButton").disabled = !enabled;
+}
+
+function gitDiffSectionPaths(section) {
+  const paths = [];
+  const seen = new Set();
+  const pattern = /^diff --git a\/(.+?) b\/(.+)$/gm;
+  let match = pattern.exec(section.patch || "");
+  while (match) {
+    const path = match[2] || match[1];
+    if (path && !seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
+    }
+    match = pattern.exec(section.patch || "");
+  }
+  return paths;
+}
+
+function gitChangeReviewEvidence(review) {
+  return {
+    checkpoint_digest: review.checkpoint_digest || "",
+    branch: review.branch || "",
+    head_sha: review.head_sha || "",
+    decisions: (review.sections || []).map((section) => ({
+      scope: section.scope || "diff",
+      decision: gitDiffSectionDecision(section),
+      patch_digest: section.patch_digest || "",
+      paths: gitDiffSectionPaths(section),
+      redacted: Boolean(section.redacted),
+      truncated: Boolean(section.truncated),
+      omitted_protected_paths: section.omitted_protected_paths || [],
+    })),
+  };
+}
+
+async function copyGitChangeReviewEvidence(review) {
+  await copyTextToClipboard(JSON.stringify(gitChangeReviewEvidence(review), null, 2), "Change review evidence copied.");
+}
+
+function renderGitChangeReview(target, review) {
+  const box = make("div", "git-change-review");
+  const header = make("div", "builder-row");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Change decisions"));
+  copy.append(make("div", "item-meta", "Session review for loaded checkpoint diff sections."));
+  const button = make("button", "link-button", "Copy Evidence");
+  button.type = "button";
+  button.disabled = !(review.sections || []).length;
+  button.addEventListener("click", () => copyGitChangeReviewEvidence(review));
+  header.append(copy, button);
+  box.append(header);
+  const counts = gitDiffReviewDecisionCounts(review);
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Accepted", String(counts.accepted), counts.accepted ? "accepted" : "");
+  appendKeyValue(grid, "Rejected", String(counts.rejected), counts.rejected ? "rejected" : "");
+  appendKeyValue(grid, "Pending", String(counts.pending), counts.pending ? "pending" : "ok");
+  appendKeyValue(grid, "Sections", String((review.sections || []).length));
+  box.append(grid);
+  if (counts.rejected) {
+    box.append(statusBox("Git closeout paused", "Rejected diff sections block dashboard Git approval and direct run controls.", "blocked"));
+  }
+  target.append(box);
+  updateGitReviewDecisionGate();
 }
 
 function renderGitDiffSection(target, section) {
@@ -2457,6 +2581,7 @@ function renderGitDiffSection(target, section) {
   box.append(make("summary", "", `${section.scope} diff`));
   const meta = make("div", "chip-row");
   meta.append(statusChip(section.redacted ? "redacted" : "ok"));
+  meta.append(statusChip(gitDiffSectionDecision(section)));
   if (section.truncated) {
     meta.append(statusChip("truncated", "pending"));
   }
@@ -2467,7 +2592,12 @@ function renderGitDiffSection(target, section) {
   const info = make("div", "checkpoint-grid");
   appendKeyValue(info, "Patch digest", section.patch_digest ? section.patch_digest.slice(0, 16) : "-");
   appendKeyValue(info, "Returned bytes", `${section.returned_byte_count || 0} / ${section.byte_count || 0}`);
+  appendKeyValue(info, "Decision", gitDiffSectionDecision(section), gitDiffSectionDecision(section));
   box.append(info);
+  const paths = gitDiffSectionPaths(section);
+  if (paths.length) {
+    renderChipList(box, "Diff paths", paths, "pending");
+  }
   if (section.omitted_protected_paths?.length) {
     const omitted = make("div", "changed-paths");
     omitted.append(make("div", "item-title", "Omitted paths"));
@@ -2476,6 +2606,20 @@ function renderGitDiffSection(target, section) {
     }
     box.append(omitted);
   }
+  const controls = make("div", "git-diff-decision-controls");
+  const accept = make("button", "success-button", "Accept");
+  accept.type = "button";
+  accept.setAttribute("aria-pressed", String(gitDiffSectionDecision(section) === "accepted"));
+  accept.addEventListener("click", () => setGitDiffSectionDecision(section, "accepted"));
+  const reject = make("button", "danger-button", "Reject");
+  reject.type = "button";
+  reject.setAttribute("aria-pressed", String(gitDiffSectionDecision(section) === "rejected"));
+  reject.addEventListener("click", () => setGitDiffSectionDecision(section, "rejected"));
+  const clearDecision = make("button", "link-button", "Clear");
+  clearDecision.type = "button";
+  clearDecision.addEventListener("click", () => setGitDiffSectionDecision(section, "pending"));
+  controls.append(accept, reject, clearDecision);
+  box.append(controls);
   const patch = make("pre", "diff-patch", section.patch || "No tracked patch content.");
   box.append(patch);
   target.append(box);
@@ -2564,6 +2708,7 @@ function renderGitApprovalActions(checkpoint) {
   qs("#gitApprovalSubmitButton").disabled = !checkpoint.ready;
   qs("#gitRunSubmitLabel").textContent = runLabels[checkpoint.action] || "Run Git Now";
   qs("#gitRunSubmitButton").disabled = !checkpoint.ready;
+  updateGitReviewDecisionGate();
   if (!checkpoint.ready) {
     approvalOutput.append(
       statusBox("Approval unavailable", "Resolve checkpoint blockers before creating a Git approval.", "blocked"),
@@ -2631,6 +2776,7 @@ async function runGitWorkflow() {
     renderGitRunResult(target, result);
     latestGitCheckpoint = null;
     latestGitDiffReview = null;
+    gitDiffReviewDecisions = {};
     qs("#gitApprovalSubmitButton").disabled = true;
     qs("#gitRunSubmitButton").disabled = true;
     await Promise.all([loadTasks(), loadCliRuns()]);

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010aa AI-Change Review Decisions
+
+Status: completed for the scoped session-level AI-change review decision slice; Sprint 16 remains active for persistent AI-change artifact apply/revert workflows, deeper conversational history, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected AI-change review decisions as the next bounded Sprint 16 slice after BL-010z because raw checkpoint-bound Git diff review already existed and accept/reject review remained a visible user-facing gap.
+- Completed: Explorer confirmed the current backend exposes staged/unstaged diff sections, not authoritative per-file apply/revert artifacts, so the safe scope is session review annotation without backend mutation semantics.
+- Completed: Developer added accept/reject/clear controls to loaded Git diff sections, decision counts, copyable review evidence, rejected-section status, and a client-side pause for dashboard Git approval/direct-run controls when a loaded section is rejected.
+- Completed: QA extended static UI coverage for review decision state, evidence helper wiring, rejected-section gating, decision controls, CSS hooks, and continued avoidance of HTML injection helpers.
+- Completed: PM updated README, project status, usage, architecture, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` can annotate loaded checkpoint-bound staged/unstaged diff sections as accepted or rejected, summarize the decisions, copy review evidence, and pause dashboard Git closeout actions when a section is rejected.
+- Still out of scope after this slice: persisted review decisions, authoritative per-file/per-hunk accept/reject, applying or reverting AI-change artifacts, untracked file content preview, branch cleanup, PR metadata expansion, rollback/revert flows, allowed remote/branch policy editors, and deeper Git audit/observability.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, and `uv run pytest tests\test_ui.py -q` with 3 tests.
+- Focused Git diff API regression passed: `uv run pytest tests\test_git_workflows.py::test_git_raw_diff_review_api_returns_checkpoint_bound_sections -q` with 1 test.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+- Live UI smoke passed against an in-process temporary Uvicorn server on `127.0.0.1:49766`: `/ui/` served and `/ui/app.js` included the Git change review decision helpers.
+
 ### Sprint 16 BL-010z First Chat-Style Task Workflow
 
 Status: completed for the scoped first chat-style task workflow slice; Sprint 16 remains active for deeper conversational history, accept/reject AI-change artifact workflows, full non-CLI bound request editors/execution, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

@@ -241,10 +241,24 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "runGitWorkflow" in script_response.text
     assert "renderGitRunResult" in script_response.text
     assert "latestGitDiffReview" in script_response.text
+    assert "gitDiffReviewDecisions" in script_response.text
     assert "renderGitDiffReviewPanel" in script_response.text
     assert "loadGitDiffReview" in script_response.text
     assert "renderGitDiffSection" in script_response.text
     assert "gitDiffReviewPayload" in script_response.text
+    assert "renderGitChangeReview" in script_response.text
+    assert "gitChangeReviewEvidence" in script_response.text
+    assert "copyGitChangeReviewEvidence" in script_response.text
+    assert "setGitDiffSectionDecision" in script_response.text
+    assert "gitDiffReviewDecisionCounts" in script_response.text
+    assert "gitDiffReviewHasRejectedSections" in script_response.text
+    assert "updateGitReviewDecisionGate" in script_response.text
+    assert "Git closeout paused" in script_response.text
+    assert 'make("button", "success-button", "Accept")' in script_response.text
+    assert 'make("button", "danger-button", "Reject")' in script_response.text
+    assert 'make("button", "link-button", "Clear")' in script_response.text
+    assert "checkpoint_digest: review.checkpoint_digest" in script_response.text
+    assert 'qs("#gitApprovalSubmitButton").disabled = !enabled' in script_response.text
     assert 'api("/cli/git/diff-reviews"' in script_response.text
     assert 'make("pre", "diff-patch"' in script_response.text
     assert "/cli/git/${action}-approvals" in script_response.text
@@ -328,8 +342,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".git-approval-actions" in style_response.text
     assert ".direct-run-button" in style_response.text
     assert ".git-run-summary" in style_response.text
+    assert ".git-change-review" in style_response.text
     assert ".git-diff-review" in style_response.text
     assert ".git-diff-section" in style_response.text
+    assert ".git-diff-decision-controls" in style_response.text
+    assert ".status-chip.accepted" in style_response.text
+    assert ".status-chip.rejected" in style_response.text
     assert ".diff-patch" in style_response.text
     assert ".git-review-summary" in style_response.text
     assert ".task-plan-card" in style_response.text

@@ -578,6 +578,52 @@ review</textarea>
               </form>
               <div id="memoryRetrievalOutput" class="output-region" aria-live="polite"></div>
             </details>
+            <details id="memoryLifecyclePreviewPanel" class="policy-editor">
+              <summary>Lifecycle Preview</summary>
+              <form id="memoryLifecyclePreviewForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Entity Types
+                    <input id="memoryLifecycleEntityTypesInput" type="text" placeholder="memory, tool">
+                  </label>
+                  <label>
+                    Tags
+                    <input id="memoryLifecycleTagsInput" type="text" placeholder="sprint, planning">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Category
+                    <input id="memoryLifecycleCategoryInput" type="text" maxlength="120">
+                  </label>
+                  <label>
+                    Retention Policy
+                    <input id="memoryLifecycleRetentionInput" type="text" maxlength="120">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Lifecycle State
+                    <input id="memoryLifecycleStateInput" type="text" maxlength="80" placeholder="active">
+                  </label>
+                  <label>
+                    Limit
+                    <input id="memoryLifecycleLimitInput" type="number" min="1" max="500" value="100">
+                  </label>
+                </div>
+                <div class="form-footer">
+                  <label class="checkbox-label">
+                    <input id="memoryLifecycleInactiveInput" type="checkbox">
+                    Include Inactive
+                  </label>
+                  <button id="memoryLifecyclePreviewButton" type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">?</span>
+                    <span>Preview Lifecycle</span>
+                  </button>
+                </div>
+              </form>
+              <div id="memoryLifecyclePreviewOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div class="reliability-grid">
               <section>
                 <h3>Memory Lifecycle</h3>

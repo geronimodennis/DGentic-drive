@@ -59,6 +59,16 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "memoryRetrievalThresholdInput" in response.text
     assert "memoryRetrievalInactiveInput" in response.text
     assert "memoryRetrievalOutput" in response.text
+    assert "memoryLifecyclePreviewPanel" in response.text
+    assert "memoryLifecyclePreviewForm" in response.text
+    assert "memoryLifecycleEntityTypesInput" in response.text
+    assert "memoryLifecycleTagsInput" in response.text
+    assert "memoryLifecycleCategoryInput" in response.text
+    assert "memoryLifecycleRetentionInput" in response.text
+    assert "memoryLifecycleStateInput" in response.text
+    assert "memoryLifecycleLimitInput" in response.text
+    assert "memoryLifecycleInactiveInput" in response.text
+    assert "memoryLifecyclePreviewOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -296,6 +306,21 @@ def test_web_ui_static_assets_are_served() -> None:
     )
     assert "Memory retrieval complete" in script_response.text
     assert "Memory retrieval failed" in script_response.text
+    assert "memoryLifecyclePreviewPayload" in script_response.text
+    assert "runMemoryLifecyclePreview" in script_response.text
+    assert "renderMemoryLifecyclePreview" in script_response.text
+    assert 'api("/api/v1/memory/lifecycle/preview", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert "recommended_action" in script_response.text
+    assert 'result.applied === true ? "true" : "false"' in script_response.text
+    assert "compress_candidate" in script_response.text
+    assert (
+        'qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview)'
+        in (script_response.text)
+    )
+    assert "Memory lifecycle preview complete" in script_response.text
+    assert "Memory lifecycle preview failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

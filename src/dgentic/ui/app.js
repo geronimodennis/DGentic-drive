@@ -4300,6 +4300,97 @@ async function runMemoryRetrieval(event) {
   }
 }
 
+function memoryLifecyclePreviewPayload() {
+  const payload = {
+    limit: Math.trunc(boundedNumber("#memoryLifecycleLimitInput", 100, 1, 500)),
+    include_inactive: qs("#memoryLifecycleInactiveInput").checked,
+  };
+  const entityTypes = splitCsv(qs("#memoryLifecycleEntityTypesInput").value);
+  const tags = splitCsv(qs("#memoryLifecycleTagsInput").value);
+  const category = qs("#memoryLifecycleCategoryInput").value.trim();
+  const retentionPolicy = qs("#memoryLifecycleRetentionInput").value.trim();
+  const lifecycleState = qs("#memoryLifecycleStateInput").value.trim();
+  if (entityTypes.length) {
+    payload.entity_types = entityTypes;
+  }
+  if (tags.length) {
+    payload.tags = tags;
+  }
+  if (category) {
+    payload.category = category;
+  }
+  if (retentionPolicy) {
+    payload.retention_policy = retentionPolicy;
+  }
+  if (lifecycleState) {
+    payload.lifecycle_state = lifecycleState;
+  }
+  return payload;
+}
+
+function lifecycleActionState(action) {
+  if (["archive", "soft_prune"].includes(action)) {
+    return "blocked";
+  }
+  if (action === "compress_candidate") {
+    return "pending";
+  }
+  return "ok";
+}
+
+function renderMemoryLifecyclePreview(target, result) {
+  const decisions = result.decisions || [];
+  target.append(
+    statusBox(
+      "Lifecycle preview",
+      `${result.total ?? decisions.length} decision(s), applied=${result.applied === true ? "true" : "false"}`,
+      result.applied ? "blocked" : "ok",
+    ),
+  );
+  if (!decisions.length) {
+    target.append(statusBox("No lifecycle decisions", "No memory matched the preview filters.", "pending"));
+    target.append(jsonBlock(result));
+    return;
+  }
+  const list = make("div", "compact-list");
+  for (const decision of decisions.slice(0, 10)) {
+    const row = make("div", "list-item");
+    row.append(make("div", "item-title", `${decision.entity_type || "memory"}: ${decision.entity_id || "-"}`));
+    row.append(
+      make(
+        "div",
+        "item-meta",
+        `${decision.current_state || "active"} -> ${decision.recommended_action || "keep"} - freshness ${retrievalScore(
+          decision.freshness_score,
+        )}`,
+      ),
+    );
+    row.append(make("div", "item-meta", decision.reason || "No reason returned."));
+    row.append(statusChip(lifecycleActionState(decision.recommended_action || "keep")));
+    list.append(row);
+  }
+  target.append(list);
+  target.append(jsonBlock(result));
+}
+
+async function runMemoryLifecyclePreview(event) {
+  event.preventDefault();
+  const target = qs("#memoryLifecyclePreviewOutput");
+  const payload = memoryLifecyclePreviewPayload();
+  clear(target);
+  target.append(statusBox("Previewing memory lifecycle", `limit ${payload.limit}`, "running"));
+  try {
+    const result = await api("/api/v1/memory/lifecycle/preview", { method: "POST", body: payload });
+    clear(target);
+    renderMemoryLifecyclePreview(target, result);
+    showToast("Memory lifecycle preview complete.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory lifecycle preview failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function loadReliability() {
   const [memory, registry] = await Promise.all([
     safeLoad("memory metadata", () => api("/api/v1/memory/metadata?limit=50")),
@@ -5493,6 +5584,7 @@ function bindEvents() {
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval);
+  qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);

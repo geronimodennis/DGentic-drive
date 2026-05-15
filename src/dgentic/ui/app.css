@@ -1001,6 +1001,7 @@ textarea {
 .approval-review-summary,
 .bound-execution-panel,
 .bound-execution-editor,
+.bound-execution-guided-fields,
 .git-change-review,
 .git-diff-review,
 .git-diff-review-output,
@@ -1017,6 +1018,28 @@ textarea {
     "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.bound-execution-guided-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bound-execution-guided-fields > .item-title,
+.bound-execution-guided-fields > .status-box {
+  grid-column: 1 / -1;
+}
+
+.bound-execution-guided-field {
+  min-width: 0;
+}
+
+.bound-execution-guided-field small {
+  color: var(--muted);
+}
+
+.bound-execution-guided-field input[type="checkbox"] {
+  width: auto;
+  justify-self: start;
 }
 
 .git-diff-decision-controls {
@@ -1157,6 +1180,7 @@ textarea {
   .metric-grid,
   .content-grid,
   .two-column,
+  .bound-execution-guided-fields,
   .task-builder-grid,
   .builder-row,
   .recipe-parameter-grid,

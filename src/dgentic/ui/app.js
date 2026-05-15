@@ -2105,6 +2105,7 @@ function renderBoundExecutionRequestPanel(target, item) {
   textarea.spellcheck = false;
   textarea.value = JSON.stringify(scaffold.payload, null, 2);
   editor.append(textarea);
+  const guidedFields = renderBoundExecutionGuidedFields(scaffold, textarea);
   const buttons = make("div", "recipe-action-buttons");
   const copyButton = make("button", "link-button", "Copy Payload");
   copyButton.type = "button";
@@ -2118,8 +2119,118 @@ function renderBoundExecutionRequestPanel(target, item) {
   const output = make("div", "output-region");
   output.id = "boundExecutionOutput";
   output.setAttribute("aria-live", "polite");
-  panel.append(details, editor, buttons, output);
+  panel.append(details, guidedFields, editor, buttons, output);
   target.append(panel);
+}
+
+function renderBoundExecutionGuidedFields(scaffold, textarea) {
+  const payload = scaffold.payload || {};
+  const fields = Object.entries(payload);
+  const box = make("div", "bound-execution-guided-fields");
+  box.append(make("div", "item-title", "Guided Fields"));
+  if (!fields.length) {
+    box.append(statusBox("No guided fields", "Edit the JSON payload directly.", "pending"));
+    return box;
+  }
+  for (const [field, value] of fields) {
+    renderBoundExecutionGuidedField(box, scaffold, field, value, textarea);
+  }
+  return box;
+}
+
+function renderBoundExecutionGuidedField(target, scaffold, field, value, textarea) {
+  const row = make("label", "bound-execution-guided-field");
+  const header = make("span", "", field.replaceAll("_", " "));
+  row.append(header);
+  const control = boundExecutionGuidedFieldControl(field, value);
+  control.dataset.boundPayloadField = field;
+  control.dataset.boundPayloadPath = field;
+  if (scaffold.binding?.field === field) {
+    control.disabled = true;
+    control.title = "Bound approval fields are locked in guided editing.";
+    row.append(control, make("small", "", "Bound field"));
+    target.append(row);
+    return;
+  }
+  const eventName = control.type === "checkbox" ? "change" : "input";
+  control.addEventListener(eventName, () => {
+    syncBoundExecutionGuidedField(field, control, value, textarea);
+  });
+  row.append(control);
+  target.append(row);
+}
+
+function boundExecutionGuidedFieldControl(field, value) {
+  if (typeof value === "boolean") {
+    const input = make("input");
+    input.type = "checkbox";
+    input.checked = value;
+    return input;
+  }
+  if (typeof value === "number") {
+    const input = make("input");
+    input.type = "number";
+    input.value = String(value);
+    return input;
+  }
+  if (value && typeof value === "object") {
+    const input = make("textarea");
+    input.rows = Array.isArray(value) ? 5 : 4;
+    input.spellcheck = false;
+    input.value = JSON.stringify(value, null, 2);
+    return input;
+  }
+  const stringValue = value === undefined || value === null ? "" : String(value);
+  if (stringValue.length > 80 || field.includes("content") || field.includes("body")) {
+    const input = make("textarea");
+    input.rows = 3;
+    input.value = stringValue;
+    return input;
+  }
+  const input = make("input");
+  input.type = "text";
+  input.value = stringValue;
+  return input;
+}
+
+function syncBoundExecutionGuidedField(field, control, sampleValue, textarea) {
+  let payload = {};
+  try {
+    payload = boundExecutionPayloadFromText(textarea.value);
+  } catch (_error) {
+    showToast("Fix payload JSON before syncing guided fields.");
+    return;
+  }
+  let value;
+  try {
+    value = boundExecutionGuidedFieldValue(control, sampleValue);
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  payload[field] = value;
+  textarea.value = JSON.stringify(payload, null, 2);
+}
+
+function boundExecutionGuidedFieldValue(control, sampleValue) {
+  if (control.type === "checkbox") {
+    return control.checked;
+  }
+  if (control.type === "number") {
+    const value = Number(control.value);
+    if (!Number.isFinite(value)) {
+      throw new Error("Guided numeric field is invalid.");
+    }
+    return value;
+  }
+  if (sampleValue && typeof sampleValue === "object") {
+    try {
+      return JSON.parse(control.value || (Array.isArray(sampleValue) ? "[]" : "{}"));
+    } catch (error) {
+      throw new Error(`Guided field JSON invalid: ${error.message}`);
+    }
+  }
+  return control.value;
 }
 
 function addApprovalContextFields(payload, review) {
@@ -2280,7 +2391,11 @@ async function copyBoundExecutionPayload(scaffold) {
 }
 
 function boundExecutionPayloadFromEditor() {
-  const value = qs("#boundExecutionPayloadInput").value.trim();
+  return boundExecutionPayloadFromText(qs("#boundExecutionPayloadInput").value);
+}
+
+function boundExecutionPayloadFromText(rawValue) {
+  const value = rawValue.trim();
   if (!value) {
     throw new Error("Payload JSON is required.");
   }

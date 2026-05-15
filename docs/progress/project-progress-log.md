@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ae Guided Bound Request Fields
+
+Status: completed for the scoped guided non-CLI bound request field slice; Sprint 16 remains active for deeper nested type-specific request editors, provider/tool network-approval consuming flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected guided non-CLI bound request fields as the next Sprint 16 approval-dashboard slice because BL-010ab made raw JSON execution possible but still required operators to hand-edit every request.
+- Completed: Explorer recommended a UI-only typed editor that keeps the canonical JSON textarea as the source of truth, locks approval binding fields, and preserves backend request-binding enforcement.
+- Completed: Developer added guided field rendering for scaffold payloads, scalar/boolean/number/nested JSON controls, field-to-JSON synchronization, locked binding fields, and guided-field error handling without adding or bypassing backend endpoints.
+- Completed: QA extended static UI coverage for guided-field helpers, binding locks, filesystem/network/provider/tool field coverage, raw JSON fallback, and handoff-only provider/tool network approval behavior.
+- Completed: PM updated README, usage, project status, backlog, architecture notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: approved non-CLI bound request panels now expose guided top-level fields for filesystem, web retrieval, provider, and tool payload scaffolds while keeping raw JSON visible and backend binding validation authoritative.
+- Still out of scope after this slice: deep nested provider message row editors, tool-schema-aware payload editors, direct provider/tool network-approval consumption outside matching provider/tool execution requests, and end-to-end approval scenario tests with seeded approvals.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `uv run pytest tests\test_ui.py -q` with 3 tests, and `git diff --check`.
+- Guided-editor browser smoke passed against a temporary Uvicorn server on `127.0.0.1:8771` at tablet 820x1180: guided text, checkbox, number, and nested JSON controls synced into the canonical payload textarea, the approval binding field remained disabled with the locked-title affordance, no horizontal overflow appeared, and there were zero console messages, page errors, failed requests, or HTTP responses at status 400 or higher. Screenshot evidence was written to `.dgentic/ui-smoke/bl010ae-guided-editor.png`.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ad Local Task-Chat History
 
 Status: completed for the scoped local task-chat history slice; Sprint 16 remains active for full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, richer type-specific non-CLI request editors, provider/tool network-approval consuming flows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.

@@ -90,10 +90,24 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Bound execution request" in script_response.text
     assert "Payload scaffold" in script_response.text
     assert "Copy Payload" in script_response.text
+    assert "Guided Fields" in script_response.text
     assert "Editable Payload" in script_response.text
     assert "bound-execution-editor" in script_response.text
+    assert "bound-execution-guided-fields" in script_response.text
+    assert "bound-execution-guided-field" in script_response.text
     assert "boundExecutionPayloadInput" in script_response.text
     assert "boundExecutionPayloadFromEditor" in script_response.text
+    assert "renderBoundExecutionGuidedFields" in script_response.text
+    assert "renderBoundExecutionGuidedField" in script_response.text
+    assert "boundExecutionGuidedFieldControl" in script_response.text
+    assert "syncBoundExecutionGuidedField" in script_response.text
+    assert "boundExecutionGuidedFieldValue" in script_response.text
+    assert "boundExecutionPayloadFromText" in script_response.text
+    assert "control.dataset.boundPayloadPath = field" in script_response.text
+    assert "Bound approval fields are locked in guided editing." in script_response.text
+    assert "Fix payload JSON before syncing guided fields." in script_response.text
+    assert "Guided numeric field is invalid." in script_response.text
+    assert "Guided field JSON invalid" in script_response.text
     assert "validateBoundExecutionPayload" in script_response.text
     assert "Payload JSON is required." in script_response.text
     assert "Payload JSON must be an object." in script_response.text
@@ -123,10 +137,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert '"/filesystem/move"' in script_response.text
     assert '"/filesystem/copy"' in script_response.text
     assert '"/filesystem/rename"' in script_response.text
+    assert '"<original approved content>"' in script_response.text
+    assert '"<original approved base64 content>"' in script_response.text
+    assert "target_path" in script_response.text
+    assert "new_name" in script_response.text
+    assert "content_base64" in script_response.text
     assert '"/web-retrieval/fetch"' in script_response.text
+    assert "max_response_bytes" in script_response.text
     assert '"<provider/tool execution endpoint>"' in script_response.text
     assert '"/providers/generate"' in script_response.text
     assert '"/providers/generate/stream"' in script_response.text
+    assert "messages" in script_response.text
+    assert "options" in script_response.text
     assert "/tools/${encodeURIComponent" in script_response.text
     assert "api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`)" in (
         script_response.text
@@ -376,6 +398,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".approval-review-summary" in style_response.text
     assert ".bound-execution-panel" in style_response.text
     assert ".bound-execution-editor" in style_response.text
+    assert ".bound-execution-guided-fields" in style_response.text
+    assert ".bound-execution-guided-field" in style_response.text
     assert ".review-warning-list" in style_response.text
     assert ".context-grid" in style_response.text
     assert ".checkpoint-grid" in style_response.text

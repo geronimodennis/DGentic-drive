@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ay Memory Retrieval Explorer UI
+
+Status: completed for the scoped read-only memory retrieval UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle actions beyond retrieval, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a read-only memory retrieval explorer as the next safe Sprint 16 reliability slice because the backend already exposes the hybrid retrieval contract and the dashboard already has a Reliability panel.
+- Completed: Developer added a Memory Retrieval panel with query, entity type, tag, category, lifecycle state, limit, threshold, and include-inactive controls.
+- Completed: Developer wired the form to `/api/v1/memory/retrieve/hybrid` and renders result counts, query timing, combined/similarity/metadata scores, descriptions, matched fields, score reasons, and safe raw JSON.
+- Completed: QA expanded Web UI static coverage for the memory retrieval DOM hooks, payload helper, hybrid retrieval route wiring, result renderer, score attribution fields, submit binding, and success/failure messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can query indexed memory from the dashboard without leaving the Reliability panel.
+- Implemented in this slice: memory retrieval remains read-only and does not apply lifecycle changes, compress memory, mutate metadata, or alter stored records.
+- Still out of scope after this slice: memory lifecycle apply/compression actions, metadata editing, full unified chat, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_hybrid_retrieval_api_uses_default_hash_embedding` with 3 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010ax Generated-Tool Governance UI
 
 Status: completed for the scoped generated-tool governance UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory retrieval exploration, and persistent or multi-worker project activation semantics.

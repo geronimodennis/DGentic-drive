@@ -528,6 +528,56 @@ review</textarea>
               </button>
             </div>
             <div id="reliabilitySummary" class="checkpoint-grid"></div>
+            <details id="memoryRetrievalPanel" class="policy-editor">
+              <summary>Memory Retrieval</summary>
+              <form id="memoryRetrievalForm" class="stacked-form">
+                <label>
+                  Query
+                  <input id="memoryRetrievalQueryInput" type="text" maxlength="300" required>
+                </label>
+                <div class="two-column">
+                  <label>
+                    Entity Types
+                    <input id="memoryRetrievalEntityTypesInput" type="text" placeholder="memory, tool">
+                  </label>
+                  <label>
+                    Tags
+                    <input id="memoryRetrievalTagsInput" type="text" placeholder="sprint, planning">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Category
+                    <input id="memoryRetrievalCategoryInput" type="text" maxlength="120">
+                  </label>
+                  <label>
+                    Lifecycle State
+                    <input id="memoryRetrievalLifecycleInput" type="text" maxlength="80" placeholder="active">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Limit
+                    <input id="memoryRetrievalLimitInput" type="number" min="1" max="100" value="10">
+                  </label>
+                  <label>
+                    Similarity Threshold
+                    <input id="memoryRetrievalThresholdInput" type="number" min="0" max="1" step="0.05" value="0.2">
+                  </label>
+                </div>
+                <div class="form-footer">
+                  <label class="checkbox-label">
+                    <input id="memoryRetrievalInactiveInput" type="checkbox">
+                    Include Inactive
+                  </label>
+                  <button id="memoryRetrievalSubmitButton" type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">?</span>
+                    <span>Search Memory</span>
+                  </button>
+                </div>
+              </form>
+              <div id="memoryRetrievalOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div class="reliability-grid">
               <section>
                 <h3>Memory Lifecycle</h3>

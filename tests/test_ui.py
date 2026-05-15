@@ -48,6 +48,17 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "toolGovernanceReasonInput" in response.text
     assert "toolGovernanceList" in response.text
     assert "toolGovernanceOutput" in response.text
+    assert "memoryRetrievalPanel" in response.text
+    assert "memoryRetrievalForm" in response.text
+    assert "memoryRetrievalQueryInput" in response.text
+    assert "memoryRetrievalEntityTypesInput" in response.text
+    assert "memoryRetrievalTagsInput" in response.text
+    assert "memoryRetrievalCategoryInput" in response.text
+    assert "memoryRetrievalLifecycleInput" in response.text
+    assert "memoryRetrievalLimitInput" in response.text
+    assert "memoryRetrievalThresholdInput" in response.text
+    assert "memoryRetrievalInactiveInput" in response.text
+    assert "memoryRetrievalOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -270,6 +281,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Governance reason required" in script_response.text
     assert "Tool governance updated" in script_response.text
     assert "Tool governance update failed" in script_response.text
+    assert "memoryRetrievalPayload" in script_response.text
+    assert "runMemoryRetrieval" in script_response.text
+    assert "renderMemoryRetrievalResults" in script_response.text
+    assert 'api("/api/v1/memory/retrieve/hybrid", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert "combined_score" in script_response.text
+    assert "matched_fields" in script_response.text
+    assert "score_reasons" in script_response.text
+    assert "query_time_ms" in script_response.text
+    assert 'qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval)' in (
+        script_response.text
+    )
+    assert "Memory retrieval complete" in script_response.text
+    assert "Memory retrieval failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

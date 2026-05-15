@@ -4197,6 +4197,109 @@ async function previewProviderRoute(event) {
   }
 }
 
+function boundedNumber(selector, fallback, minimum, maximum) {
+  const value = optionalNumber(selector);
+  if (value === null) {
+    return fallback;
+  }
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function memoryRetrievalPayload() {
+  const metadataFilters = {};
+  const category = qs("#memoryRetrievalCategoryInput").value.trim();
+  const lifecycleState = qs("#memoryRetrievalLifecycleInput").value.trim();
+  if (category) {
+    metadataFilters.category = category;
+  }
+  if (lifecycleState) {
+    metadataFilters.lifecycle_state = lifecycleState;
+  }
+  const payload = {
+    query: qs("#memoryRetrievalQueryInput").value.trim(),
+    limit: Math.trunc(boundedNumber("#memoryRetrievalLimitInput", 10, 1, 100)),
+    similarity_threshold: boundedNumber("#memoryRetrievalThresholdInput", 0.2, 0, 1),
+    include_inactive: qs("#memoryRetrievalInactiveInput").checked,
+  };
+  const entityTypes = splitCsv(qs("#memoryRetrievalEntityTypesInput").value);
+  const tags = splitCsv(qs("#memoryRetrievalTagsInput").value);
+  if (entityTypes.length) {
+    payload.entity_types = entityTypes;
+  }
+  if (tags.length) {
+    payload.tags = tags;
+  }
+  if (Object.keys(metadataFilters).length) {
+    payload.metadata_filters = metadataFilters;
+  }
+  return payload;
+}
+
+function retrievalScore(value) {
+  const score = Number(value);
+  return Number.isFinite(score) ? score.toFixed(3) : "-";
+}
+
+function renderMemoryRetrievalResults(target, result) {
+  const results = result.results || [];
+  target.append(
+    statusBox(
+      "Memory retrieval",
+      `${result.total ?? results.length} result(s) in ${Number(result.query_time_ms ?? 0).toFixed(1)} ms`,
+      "ok",
+    ),
+  );
+  if (!results.length) {
+    target.append(statusBox("No memory matches", "Try a broader query or lower threshold.", "pending"));
+    target.append(jsonBlock(result));
+    return;
+  }
+  const list = make("div", "compact-list");
+  for (const item of results.slice(0, 10)) {
+    const row = make("div", "list-item");
+    row.append(make("div", "item-title", `${item.entity_type || "memory"}: ${item.entity_id || item.metadata_id || "-"}`));
+    row.append(
+      make(
+        "div",
+        "item-meta",
+        `combined ${retrievalScore(item.combined_score)} - similarity ${retrievalScore(
+          item.similarity_score,
+        )} - metadata ${retrievalScore(item.metadata_relevance)} - ${item.source_type || item.source || "retrieval"}`,
+      ),
+    );
+    if (item.description) {
+      row.append(make("div", "item-meta", item.description));
+    }
+    renderChipList(row, "Matched fields", item.matched_fields || [], "ok");
+    renderChipList(row, "Score reasons", item.score_reasons || [], "pending");
+    list.append(row);
+  }
+  target.append(list);
+  target.append(jsonBlock(result));
+}
+
+async function runMemoryRetrieval(event) {
+  event.preventDefault();
+  const target = qs("#memoryRetrievalOutput");
+  const payload = memoryRetrievalPayload();
+  clear(target);
+  if (!payload.query) {
+    target.append(statusBox("Memory query required", "Enter a query before searching memory.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Searching memory", payload.query, "running"));
+  try {
+    const result = await api("/api/v1/memory/retrieve/hybrid", { method: "POST", body: payload });
+    clear(target);
+    renderMemoryRetrievalResults(target, result);
+    showToast("Memory retrieval complete.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory retrieval failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function loadReliability() {
   const [memory, registry] = await Promise.all([
     safeLoad("memory metadata", () => api("/api/v1/memory/metadata?limit=50")),
@@ -5389,6 +5492,7 @@ function bindEvents() {
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
+  qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);

@@ -50,6 +50,11 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "Rules And Plugins" in response.text
     assert "policyReviewSummary" in response.text
     assert "Review Summary" in response.text
+    assert "networkPolicyCheckPanel" in response.text
+    assert "networkPolicyCheckForm" in response.text
+    assert "networkPolicyUrlInput" in response.text
+    assert "networkPolicySurfaceInput" in response.text
+    assert "networkPolicyCheckOutput" in response.text
     assert "cliPolicyForm" in response.text
     assert "cliPolicyEditor" in response.text
     assert "cliPolicyEditorOutput" in response.text
@@ -118,6 +123,17 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "boundExecutionRequestScaffold" in script_response.text
     assert "filesystemBoundExecutionScaffold" in script_response.text
     assert "networkBoundExecutionScaffold" in script_response.text
+    assert "networkPolicyCheckEndpoint" in script_response.text
+    assert "networkPolicyDecisionState" in script_response.text
+    assert "renderNetworkPolicyDecision" in script_response.text
+    assert "checkNetworkPolicy" in script_response.text
+    assert '"/guardrails/network"' in script_response.text
+    assert '"/web-retrieval/network/check"' in script_response.text
+    assert 'qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy)' in (
+        script_response.text
+    )
+    assert "Network policy decision" in script_response.text
+    assert "Network policy checked" in script_response.text
     assert "providerBoundExecutionScaffold" in script_response.text
     assert "toolBoundExecutionScaffold" in script_response.text
     assert "copyBoundExecutionPayload" in script_response.text

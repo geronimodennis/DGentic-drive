@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010at Network Policy Preflight UI
+
+Status: completed for the scoped read-only network policy preflight UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected network policy preflight as the next safe Sprint 16 policy UX slice because the backend already exposes guarded generic and web-retrieval check contracts.
+- Completed: Developer added a dashboard Network Check panel that can check generic network policy through `/guardrails/network` or web-retrieval fetch policy through `/web-retrieval/network/check`.
+- Completed: Developer kept the slice read-only and renders allow, deny, approval-required, audit, matched-domain, matched-rule, managed/local source, and hook-policy decision details from existing safe response fields.
+- Completed: QA expanded Web UI static coverage for the network policy panel DOM hooks, endpoint selection, decision rendering, event wiring, and status messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can now preflight network policy decisions from the Policy dashboard without crafting HTTP requests.
+- Implemented in this slice: generic and web-retrieval policy checks stay on the existing backend authority boundaries and do not create approvals, mutate settings, or execute network fetches.
+- Still out of scope after this slice: editable network policy management, network approval creation from the preflight panel, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_guardrails_network_returns_policy_decision tests\test_api.py::test_web_retrieval_network_api_pins_surface_claims_approval_and_redacts` with 4 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010as Local Plugin Trust Controls
 
 Status: completed for the scoped local plugin trust control UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.

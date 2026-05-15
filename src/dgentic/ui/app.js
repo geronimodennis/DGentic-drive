@@ -4277,6 +4277,56 @@ function appendPolicyReviewCard(target, label, result, records, sourceField) {
   appendKeyValue(target, label, detailParts.join(" | "), records.length ? "ok" : "pending");
 }
 
+function networkPolicyCheckEndpoint() {
+  return qs("#networkPolicySurfaceInput").value === "web_retrieval"
+    ? "/web-retrieval/network/check"
+    : "/guardrails/network";
+}
+
+function networkPolicyDecisionState(decision) {
+  if (decision.mode === "approval_required") {
+    return "pending";
+  }
+  return decision.allowed ? "ok" : "blocked";
+}
+
+function renderNetworkPolicyDecision(target, decision) {
+  const modeState = networkPolicyDecisionState(decision);
+  target.append(statusBox("Network policy decision", decision.reason || decision.url, modeState));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Mode", decision.mode || "unknown", decision.mode || "");
+  appendKeyValue(grid, "Host", decision.host || "-", modeState);
+  appendKeyValue(grid, "Matched domain", decision.matched_domain || "-");
+  appendKeyValue(grid, "Matched rule", decision.matched_rule_id || "-");
+  appendKeyValue(grid, "Rule source", decision.matched_rule_source || "-");
+  if (decision.hook_policy) {
+    appendKeyValue(grid, "Hook policy", decision.hook_policy.effect || "matched", decision.hook_policy.effect || "");
+  }
+  target.append(grid);
+  target.append(jsonBlock(decision));
+}
+
+async function checkNetworkPolicy(event) {
+  event.preventDefault();
+  const target = qs("#networkPolicyCheckOutput");
+  const url = qs("#networkPolicyUrlInput").value.trim();
+  clear(target);
+  target.append(statusBox("Checking network policy", url, "running"));
+  try {
+    const decision = await api(networkPolicyCheckEndpoint(), {
+      method: "POST",
+      body: { url },
+    });
+    clear(target);
+    renderNetworkPolicyDecision(target, decision);
+    showToast("Network policy checked.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Network policy check failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 function cliPolicyRulePayload() {
   const priority = Number(qs("#cliPolicyPriorityInput").value || 100);
   return {
@@ -5094,6 +5144,7 @@ function bindEvents() {
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
+  qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();

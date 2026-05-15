@@ -526,6 +526,32 @@ review</textarea>
                 <div id="policyReviewSummary" class="checkpoint-grid"></div>
               </section>
               <section>
+                <h3>Network Check</h3>
+                <details id="networkPolicyCheckPanel" class="policy-editor">
+                  <summary>Policy Preflight</summary>
+                  <form id="networkPolicyCheckForm" class="stacked-form">
+                    <label>
+                      URL
+                      <input id="networkPolicyUrlInput" type="url" maxlength="2048" required>
+                    </label>
+                    <label>
+                      Surface
+                      <select id="networkPolicySurfaceInput">
+                        <option value="generic">Generic Network</option>
+                        <option value="web_retrieval">Web Retrieval</option>
+                      </select>
+                    </label>
+                    <div class="form-footer">
+                      <button id="networkPolicyCheckButton" type="submit" class="primary-button">
+                        <span class="button-icon" aria-hidden="true">?</span>
+                        <span>Check Policy</span>
+                      </button>
+                    </div>
+                  </form>
+                  <div id="networkPolicyCheckOutput" class="output-region" aria-live="polite"></div>
+                </details>
+              </section>
+              <section>
                 <h3>CLI Rules</h3>
                 <details id="cliPolicyEditor" class="policy-editor">
                   <summary id="cliPolicyEditorSummary">New CLI Rule</summary>

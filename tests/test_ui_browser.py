@@ -261,7 +261,12 @@ def ui_live_server(tmp_path, monkeypatch):
                         "domain": "127.0.0.1",
                         "mode": "approval_required",
                         "reason": "Browser network approval smoke.",
-                    }
+                    },
+                    {
+                        "domain": "provider.example.test",
+                        "mode": "approval_required",
+                        "reason": "Browser provider network approval smoke.",
+                    },
                 ]
             }
         ),
@@ -645,6 +650,23 @@ def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
         payload=approval_payload,
     )
     assert create_status == 201
+    network_status, network_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals",
+        payload={
+            "url": "https://provider.example.test/v1",
+            "surface": "provider",
+            "action": "generate",
+            "requested_by": "browser-provider-smoke",
+        },
+    )
+    assert network_status == 201
+    network_approve_status, _network_approve_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals/{network_body['id']}/approve",
+        payload={"decided_by": "browser-provider-reviewer"},
+    )
+    assert network_approve_status == 200
 
     devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
     devtools_page.wait_for("document.readyState === 'complete'")
@@ -698,7 +720,20 @@ def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
           && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
           && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
           && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes('"network_approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")?.value
             .includes("<original approved message content>")
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const textarea = document.querySelector("#boundExecutionPayloadInput");
+          const payload = JSON.parse(textarea.value);
+          payload.network_approval_id = "{network_body["id"]}";
+          textarea.value = JSON.stringify(payload, null, 2);
+          return true;
+        }})()
         """
     )
     devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
@@ -718,6 +753,12 @@ def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
     )
     assert review_status == 200
     assert review_body["status"] == "executed"
+    network_review_status, network_review_body = _http_json(
+        "GET",
+        f"{base_url}/network/approvals/{network_body['id']}/review",
+    )
+    assert network_review_status == 200
+    assert network_review_body["status"] == "executed"
 
 
 def test_browser_approval_dashboard_can_execute_seeded_tool_approval(

@@ -2360,6 +2360,7 @@ function providerBoundExecutionScaffold(review, basePayload) {
       provider_id: review.provider_id || "<provider id>",
       model: review.model || "<model>",
       messages,
+      network_approval_id: null,
       stream: Boolean(review.stream),
       temperature: review.temperature ?? undefined,
       max_tokens: review.max_tokens ?? undefined,
@@ -2379,6 +2380,7 @@ function toolBoundExecutionScaffold(review, basePayload) {
     payload: {
       ...basePayload,
       payload: review.review_payload || {},
+      network_approval_id: null,
       timeout_seconds: review.timeout_seconds || 30,
     },
     notes: ["Tool approvals require the exact approved payload; redacted review payloads may need original values restored."],

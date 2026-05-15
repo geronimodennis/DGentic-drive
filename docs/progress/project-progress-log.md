@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010al Provider Browser Network-Approval Consumption
+
+Status: completed for the scoped provider browser network-approval consumption scenario; Sprint 16 remains active for generated-tool network-approval consuming browser flows, deeper nested type-specific request editors, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected provider network-approval consumption as the next bounded browser scenario after the core approval-family browser matrix was covered.
+- Completed: Developer added optional `network_approval_id` fields to provider and generated-tool bound execution payload scaffolds so operators can paste approved network approval ids without hand-adding JSON fields.
+- Completed: QA updated the provider browser smoke to create and approve a provider network approval, fill that `network_approval_id` into the dashboard payload editor, execute the bound provider request, and verify both provider and network approval records are executed.
+- Completed: PM updated README, usage, architecture, project status, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: provider browser bound execution now validates the dashboard path for consuming an approved `network_approval_id` while preserving backend provider/network binding checks.
+- Still out of scope after this slice: generated-tool network approval consuming browser scenarios, deeper nested type-specific editors, persistent AI-change artifact apply/revert workflows, full unified chat, and broader editable settings/policy workflows.
+
+Validation:
+- Focused browser/UI validation passed: `uv run pytest -q tests\test_ui_browser.py tests\test_ui.py` with 9 passed.
+- Focused browser/source checks passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui_browser.py`, and `uv run ruff check tests\test_ui_browser.py`.
+- Full regression passed: `uv run pytest -q` with 1,359 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ak Browser-Driven Seeded Generated-Tool Approval Execution
 
 Status: completed for the scoped browser-driven seeded generated-tool approval execution scenario; Sprint 16 remains active for provider/tool network-approval consuming browser flows, deeper nested type-specific request editors, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

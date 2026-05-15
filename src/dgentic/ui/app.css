@@ -333,6 +333,16 @@ textarea {
   gap: 12px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 .segmented-control {
   display: inline-flex;
   max-width: 100%;

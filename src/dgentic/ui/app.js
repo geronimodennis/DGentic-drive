@@ -2575,13 +2575,35 @@ function filesystemBoundExecutionScaffold(review, basePayload) {
     payload.overwrite = Boolean(review.overwrite);
   }
   return {
+    kind: "filesystem",
     method: "POST",
     endpoint: endpoints[action] || "/filesystem/read",
     executable: true,
     binding: { field: "approval_id", value: basePayload.approval_id },
+    expected: filesystemBoundExecutionExpectedFields(review, action, payload),
     payload,
     notes,
   };
+}
+
+function filesystemBoundExecutionExpectedFields(review, action, payload) {
+  const expected = { path: review.path || "." };
+  if (["move", "copy"].includes(action)) {
+    expected.target_path = review.target_path || "";
+  }
+  if (action === "rename") {
+    expected.new_name = payload.new_name || "";
+  }
+  if (["delete", "copy"].includes(action)) {
+    expected.recursive = Boolean(review.recursive);
+  }
+  if (["move", "copy", "rename"].includes(action)) {
+    expected.overwrite = Boolean(review.overwrite);
+  }
+  if (["write", "binary_write"].includes(action)) {
+    expected.create_parent_dirs = review.create_parent_dirs !== false;
+  }
+  return expected;
 }
 
 function networkBoundExecutionScaffold(review, basePayload) {
@@ -2692,6 +2714,23 @@ function validateBoundExecutionPayload(scaffold, payload) {
   }
   if (payload[binding.field] !== binding.value) {
     throw new Error(`${binding.field} must match the approved request.`);
+  }
+  if (scaffold.kind === "filesystem") {
+    validateFilesystemBoundExecutionPayload(scaffold, payload);
+  }
+}
+
+function validateFilesystemBoundExecutionPayload(scaffold, payload) {
+  const expected = scaffold.expected || {};
+  for (const field of ["path", "target_path", "new_name"]) {
+    if (expected[field] !== undefined && String(payload[field] || "") !== String(expected[field])) {
+      throw new Error(`${field} must match the approved filesystem request.`);
+    }
+  }
+  for (const field of ["recursive", "overwrite", "create_parent_dirs"]) {
+    if (expected[field] !== undefined && payload[field] !== expected[field]) {
+      throw new Error(`${field} must match the approved filesystem request.`);
+    }
   }
 }
 
@@ -2804,6 +2843,17 @@ function approvalReviewPairs(item) {
       { label: "Path", value: review.path },
       { label: "Target path", value: review.target_path },
       { label: "Options", value: filesystemApprovalOptions(review) },
+      { label: "Hook policy", value: review.hook_policy },
+      { label: "Orchestration", value: review.orchestration },
+      { label: "Path digest", value: review.path_digest },
+      { label: "Target digest", value: review.target_path_digest },
+      { label: "Payload digest", value: review.payload_digest },
+      { label: "Source state digest", value: review.source_state_digest },
+      { label: "Target state digest", value: review.target_state_digest },
+      { label: "Resolved path digest", value: review.resolved_path_digest },
+      { label: "Resolved target digest", value: review.resolved_target_path_digest },
+      { label: "Options digest", value: review.options_digest },
+      { label: "Policy digest", value: review.policy_digest },
       { label: "Approval digest", value: review.approval_digest },
     );
   } else if (item.source.key === "network") {
@@ -4967,7 +5017,7 @@ function renderNetworkPolicyDecision(target, decision) {
   target.append(jsonBlock(decision));
 }
 
-function filesystemPolicyPayload() {
+function filesystemPolicyAccessPayload() {
   const payload = {
     action: qs("#filesystemPolicyActionInput").value,
     path: qs("#filesystemPolicyPathInput").value.trim() || ".",
@@ -4991,6 +5041,27 @@ function filesystemPolicyPayload() {
   return payload;
 }
 
+function filesystemPolicyPayload() {
+  const payload = filesystemPolicyAccessPayload();
+  const action = payload.action;
+  if (["delete", "copy"].includes(action)) {
+    payload.recursive = qs("#filesystemPolicyRecursiveInput").checked;
+  }
+  if (["move", "copy", "rename"].includes(action)) {
+    payload.overwrite = qs("#filesystemPolicyOverwriteInput").checked;
+  }
+  if (["write", "binary_write"].includes(action)) {
+    payload.create_parent_dirs = qs("#filesystemPolicyCreateParentsInput").checked;
+  }
+  if (action === "write") {
+    payload.content = qs("#filesystemPolicyContentInput").value;
+  }
+  if (action === "binary_write") {
+    payload.content_base64 = qs("#filesystemPolicyContentBase64Input").value;
+  }
+  return payload;
+}
+
 function filesystemPolicyPayloadKey(payload) {
   return JSON.stringify(payload);
 }
@@ -5000,6 +5071,18 @@ function filesystemPolicyApprovalRequest(payload) {
     endpoint: "/filesystem/approvals",
     body: { ...payload },
   };
+}
+
+function updateFilesystemPolicyFieldVisibility() {
+  const action = qs("#filesystemPolicyActionInput").value;
+  const showRecursive = ["delete", "copy"].includes(action);
+  const showOverwrite = ["move", "copy", "rename"].includes(action);
+  const showCreateParents = ["write", "binary_write"].includes(action);
+  qs("#filesystemPolicyRecursiveField").hidden = !showRecursive;
+  qs("#filesystemPolicyOverwriteField").hidden = !showOverwrite;
+  qs("#filesystemPolicyCreateParentsField").hidden = !showCreateParents;
+  qs("#filesystemPolicyContentField").hidden = action !== "write";
+  qs("#filesystemPolicyContentBase64Field").hidden = action !== "binary_write";
 }
 
 function filesystemDecisionState(decision) {
@@ -5043,17 +5126,28 @@ async function checkFilesystemPolicy(event) {
   event.preventDefault();
   const target = qs("#filesystemPolicyCheckOutput");
   const approvalButton = qs("#filesystemPolicyApprovalButton");
-  const payload = filesystemPolicyPayload();
+  const accessPayload = filesystemPolicyAccessPayload();
+  const approvalPayload = filesystemPolicyPayload();
   latestFilesystemPolicyPreflight = null;
   approvalButton.disabled = true;
   clear(target);
-  target.append(statusBox("Checking filesystem guardrail", `${payload.action} ${payload.path}`, "running"));
+  target.append(
+    statusBox(
+      "Checking filesystem guardrail",
+      `${accessPayload.action} ${accessPayload.path}`,
+      "running",
+    ),
+  );
   try {
-    const decision = await api("/guardrails/filesystem", { method: "POST", body: payload });
+    const decision = await api("/guardrails/filesystem", {
+      method: "POST",
+      body: accessPayload,
+    });
     clear(target);
     latestFilesystemPolicyPreflight = {
-      payload,
-      payloadKey: filesystemPolicyPayloadKey(payload),
+      accessPayload,
+      accessPayloadKey: filesystemPolicyPayloadKey(accessPayload),
+      approvalPayloadKey: filesystemPolicyPayloadKey(approvalPayload),
       decision,
     };
     approvalButton.disabled = decision.permission_mode !== "approval_required";
@@ -5072,7 +5166,7 @@ async function requestFilesystemPolicyApproval() {
   const payload = filesystemPolicyPayload();
   if (
     !latestFilesystemPolicyPreflight ||
-    latestFilesystemPolicyPreflight.payloadKey !== filesystemPolicyPayloadKey(payload) ||
+    latestFilesystemPolicyPreflight.approvalPayloadKey !== filesystemPolicyPayloadKey(payload) ||
     latestFilesystemPolicyPreflight.decision.permission_mode !== "approval_required"
   ) {
     clear(target);
@@ -6021,6 +6115,11 @@ function bindEvents() {
     "#filesystemPolicyActionInput",
     "#filesystemPolicyPathInput",
     "#filesystemPolicyTargetInput",
+    "#filesystemPolicyRecursiveInput",
+    "#filesystemPolicyOverwriteInput",
+    "#filesystemPolicyCreateParentsInput",
+    "#filesystemPolicyContentInput",
+    "#filesystemPolicyContentBase64Input",
     "#filesystemPolicyRoleInput",
     "#filesystemPolicyAgentInput",
     "#filesystemPolicyTaskInput",
@@ -6028,6 +6127,11 @@ function bindEvents() {
     qs(selector).addEventListener("input", resetFilesystemPolicyApprovalState);
     qs(selector).addEventListener("change", resetFilesystemPolicyApprovalState);
   });
+  qs("#filesystemPolicyActionInput").addEventListener(
+    "change",
+    updateFilesystemPolicyFieldVisibility,
+  );
+  updateFilesystemPolicyFieldVisibility();
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();

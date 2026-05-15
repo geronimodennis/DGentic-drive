@@ -6,6 +6,37 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010bg Filesystem Approval Detail Editors
+
+Status: completed for the scoped filesystem approval detail editor slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected filesystem approval detail editors as the next bounded Sprint 16 slice because BL-010bf opened the filesystem preflight-to-approval path and the backend already exposes bound approval review and execution contracts.
+- Completed: Architect/Reviewer confirmed the slice could stay on existing `/guardrails/filesystem`, `/filesystem/approvals`, filesystem review, and bound filesystem execution contracts without adding backend execution routes.
+- Completed: Developer split filesystem preflight access payloads from approval payloads so guardrail checks stay lean while approval creation can carry action-specific options/content.
+- Completed: Developer added filesystem approval request fields for recursive, overwrite, create-parent-directories, text content, and base64 content with action-specific visibility and stale-preflight invalidation.
+- Completed: Developer expanded filesystem review summaries with hook/orchestration detail plus path, target, payload, state, options, policy, and approval digests.
+- Completed: Developer added client-side validation so approved filesystem bound execution blocks mismatched path, target/new-name, recursive, overwrite, and create-parent-directory values before posting.
+- Completed: QA expanded static UI coverage for the new DOM hooks, helpers, review fields, CSS hook, and validation messages.
+- Completed: QA added browser coverage for copy approval creation with overwrite, approval review digest visibility, client-side target mismatch blocking, and successful bound copy execution after correction.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: filesystem approval requests from the Policy panel can include the options and content fields needed for bound approval digests.
+- Implemented in this slice: filesystem approval review provides richer digest and decision context before operators approve or execute.
+- Implemented in this slice: the dashboard refuses obvious filesystem bound-execution payload drift before calling backend execution endpoints.
+- Still out of scope after this slice: persisted configurable filesystem policy rules, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_policy_panel_preserves_filesystem_approval_options tests\test_ui_browser.py::test_browser_policy_panel_can_request_filesystem_approval_after_preflight tests\test_ui_browser.py::test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approval` with 5 passed.
+- Additional focused filesystem/browser validation passed earlier in the slice with 5 passed across filesystem preflight approval creation, option preservation, and seeded filesystem delete execution.
+- Full regression passed: `uv run pytest -q` with 1,368 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bf Filesystem Preflight Approval Requests
 
 Status: completed for the scoped filesystem preflight-to-approval UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, richer filesystem approval detail editors, and persistent or multi-worker project activation semantics.

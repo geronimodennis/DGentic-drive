@@ -788,6 +788,31 @@ review</textarea>
                       Target Path
                       <input id="filesystemPolicyTargetInput" type="text" maxlength="500" placeholder="Required for move, copy, or rename">
                     </label>
+                    <details id="filesystemPolicyRequestDetails" class="json-details">
+                      <summary>Approval Request Details</summary>
+                      <div class="two-column">
+                        <label id="filesystemPolicyRecursiveField" class="checkbox-row">
+                          <input id="filesystemPolicyRecursiveInput" type="checkbox">
+                          Recursive
+                        </label>
+                        <label id="filesystemPolicyOverwriteField" class="checkbox-row">
+                          <input id="filesystemPolicyOverwriteInput" type="checkbox">
+                          Overwrite
+                        </label>
+                      </div>
+                      <label id="filesystemPolicyCreateParentsField" class="checkbox-row">
+                        <input id="filesystemPolicyCreateParentsInput" type="checkbox" checked>
+                        Create parent directories
+                      </label>
+                      <label id="filesystemPolicyContentField">
+                        Text Content
+                        <textarea id="filesystemPolicyContentInput" rows="4" maxlength="20000"></textarea>
+                      </label>
+                      <label id="filesystemPolicyContentBase64Field">
+                        Base64 Content
+                        <textarea id="filesystemPolicyContentBase64Input" rows="4" maxlength="30000"></textarea>
+                      </label>
+                    </details>
                     <div class="two-column">
                       <label>
                         Agent Role

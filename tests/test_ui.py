@@ -113,6 +113,11 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "filesystemPolicyActionInput" in response.text
     assert "filesystemPolicyPathInput" in response.text
     assert "filesystemPolicyTargetInput" in response.text
+    assert "filesystemPolicyRecursiveInput" in response.text
+    assert "filesystemPolicyOverwriteInput" in response.text
+    assert "filesystemPolicyCreateParentsInput" in response.text
+    assert "filesystemPolicyContentInput" in response.text
+    assert "filesystemPolicyContentBase64Input" in response.text
     assert "filesystemPolicyRoleInput" in response.text
     assert "filesystemPolicyAgentInput" in response.text
     assert "filesystemPolicyTaskInput" in response.text
@@ -195,18 +200,19 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "checkNetworkPolicy" in script_response.text
     assert "requestNetworkPolicyApproval" in script_response.text
     assert "latestFilesystemPolicyPreflight" in script_response.text
+    assert "filesystemPolicyAccessPayload" in script_response.text
     assert "filesystemPolicyPayload" in script_response.text
     assert "filesystemPolicyPayloadKey" in script_response.text
     assert "filesystemPolicyApprovalRequest" in script_response.text
+    assert "updateFilesystemPolicyFieldVisibility" in script_response.text
     assert "filesystemDecisionState" in script_response.text
     assert "renderFilesystemPolicyDecision" in script_response.text
     assert "checkFilesystemPolicy" in script_response.text
     assert "requestFilesystemPolicyApproval" in script_response.text
     assert "resetFilesystemPolicyApprovalState" in script_response.text
     assert '"/guardrails/network"' in script_response.text
-    assert 'api("/guardrails/filesystem", { method: "POST", body: payload })' in (
-        script_response.text
-    )
+    assert 'api("/guardrails/filesystem", {' in script_response.text
+    assert "body: accessPayload" in script_response.text
     assert '"/web-retrieval/network/check"' in script_response.text
     assert 'endpoint: "/network/approvals"' in script_response.text
     assert 'endpoint: "/web-retrieval/network/approvals"' in script_response.text
@@ -219,6 +225,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Network approval created" in script_response.text
     assert "Filesystem approval created" in script_response.text
     assert "Filesystem approval failed" in script_response.text
+    assert "approvalPayloadKey" in script_response.text
+    assert "filesystemBoundExecutionExpectedFields" in script_response.text
+    assert "validateFilesystemBoundExecutionPayload" in script_response.text
+    assert "must match the approved filesystem request." in script_response.text
+    assert "Path digest" in script_response.text
+    assert "Target digest" in script_response.text
+    assert "Payload digest" in script_response.text
+    assert "Options digest" in script_response.text
+    assert "Policy digest" in script_response.text
     assert 'qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy)' in (
         script_response.text
     )
@@ -289,6 +304,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Bound request executed" in script_response.text
     assert "Bound execution failed" in script_response.text
     assert "Bound execution handoff only" in script_response.text
+    assert ".checkbox-row" in style_response.text
     assert "Dashboard execute" in script_response.text
     assert "network_approval_id" in script_response.text
     assert "await Promise.all([loadApprovals(), loadTaskChatContext()])" in (script_response.text)

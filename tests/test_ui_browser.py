@@ -660,6 +660,173 @@ def test_browser_policy_panel_can_request_filesystem_approval_after_preflight(
     )
 
 
+def test_browser_policy_panel_preserves_filesystem_approval_options(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    source = root_dir / "copy-source.txt"
+    target = root_dir / "copy-target.txt"
+    source.write_text("fresh", encoding="utf-8")
+    target.write_text("stale", encoding="utf-8")
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#policy"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#filesystemPolicyCheckForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#filesystemPolicyCheckPanel").open = true;
+          document.querySelector("#filesystemPolicyRequestDetails").open = true;
+          document.querySelector("#filesystemPolicyActionInput").value = "copy";
+          document.querySelector("#filesystemPolicyActionInput")
+            .dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#filesystemPolicyPathInput").value = "copy-source.txt";
+          document.querySelector("#filesystemPolicyTargetInput").value = "copy-target.txt";
+          document.querySelector("#filesystemPolicyOverwriteInput").checked = true;
+          document.querySelector("#filesystemPolicyOverwriteInput")
+            .dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#filesystemPolicyCheckForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#filesystemPolicyCheckOutput")
+          ?.textContent.includes("approval_required")
+          && !document.querySelector("#filesystemPolicyApprovalButton")?.disabled
+        """
+    )
+    devtools_page.eval('document.querySelector("#filesystemPolicyApprovalButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#filesystemPolicyCheckOutput")
+          ?.textContent.includes("Filesystem approval created")
+          && document.querySelector("#filesystemPolicyCheckOutput")
+            ?.textContent.includes('"overwrite": true')
+        """
+    )
+
+    approvals_status, approvals_body = _http_json(
+        "GET",
+        f"{base_url}/filesystem/approvals?status=pending",
+    )
+    assert approvals_status == 200
+    approval = next(
+        item
+        for item in approvals_body
+        if item["path"] == "copy-source.txt" and item["target_path"] == "copy-target.txt"
+    )
+    assert approval["action"] == "copy"
+    assert approval["overwrite"] is True
+    assert approval["recursive"] is False
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "filesystem";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("copy-source.txt"))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("copy-source.txt"));
+          row.querySelector("button").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Filesystem review")
+          && document.querySelector("#approvalReview")?.textContent.includes("Path digest")
+          && document.querySelector("#approvalReview")?.textContent.includes("Options digest")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser copy approval.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value
+            .includes('"overwrite": true')
+          && document.querySelector("#boundExecutionPayloadInput")
+            ?.value.includes('"target_path": "copy-target.txt"')
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const textarea = document.querySelector("#boundExecutionPayloadInput");
+          const payload = JSON.parse(textarea.value);
+          payload.target_path = "wrong-target.txt";
+          textarea.value = JSON.stringify(payload, null, 2);
+          document.querySelector("#boundExecutionExecuteButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("target_path must match the approved filesystem request")
+        """
+    )
+    assert target.read_text(encoding="utf-8") == "stale"
+
+    devtools_page.eval(
+        """
+        (() => {
+          const textarea = document.querySelector("#boundExecutionPayloadInput");
+          const payload = JSON.parse(textarea.value);
+          payload.target_path = "copy-target.txt";
+          textarea.value = JSON.stringify(payload, null, 2);
+          document.querySelector("#boundExecutionExecuteButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+        """
+    )
+    assert source.read_text(encoding="utf-8") == "fresh"
+    assert target.read_text(encoding="utf-8") == "fresh"
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/filesystem/approvals/{approval['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"
+
+
 def test_browser_approval_dashboard_can_execute_seeded_web_retrieval_network_approval(
     ui_live_server,
     devtools_page,

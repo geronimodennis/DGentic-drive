@@ -9,11 +9,10 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 
 from dgentic.database import reset_database_state
 from dgentic.main import create_app
@@ -44,6 +43,23 @@ def _wait_for_http_json(url: str, *, timeout_seconds: float = 10.0) -> dict:
             last_error = exc
             time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for {url}: {last_error}")
+
+
+def _http_json(
+    method: str,
+    url: str,
+    *,
+    payload: dict | None = None,
+) -> tuple[int, dict]:
+    body = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = Request(url, data=body, headers=headers, method=method)
+    with urlopen(request, timeout=5.0) as response:
+        response_body = response.read().decode("utf-8")
+        return response.status, json.loads(response_body) if response_body else {}
 
 
 def _find_browser_executable() -> Path | None:
@@ -233,7 +249,7 @@ def ui_live_server(tmp_path, monkeypatch):
     _wait_for_http_json(f"{base_url}/health")
 
     try:
-        yield base_url, TestClient(app)
+        yield base_url, root_dir
     finally:
         server.should_exit = True
         thread.join(timeout=5)
@@ -291,12 +307,13 @@ def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,
 ) -> None:
-    base_url, client = ui_live_server
-    create_response = client.post(
-        "/cli/approvals?requested_by=browser-seed",
-        json={"command": "python --version", "timeout_seconds": 10},
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/cli/approvals?requested_by=browser-seed",
+        payload={"command": "python --version", "timeout_seconds": 10},
     )
-    assert create_response.status_code == 201
+    assert create_status == 201
 
     devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
     devtools_page.wait_for("document.readyState === 'complete'")
@@ -353,7 +370,95 @@ def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
         """
     )
 
-    review_response = client.get(f"/cli/approvals/{create_response.json()['id']}/review")
-    assert review_response.status_code == 200
-    assert review_response.json()["status"] == "approved"
-    assert review_response.json()["decision_reason"] == "Browser approval smoke."
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/cli/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "approved"
+    assert review_body["decision_reason"] == "Browser approval smoke."
+
+
+def test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approval(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    target = root_dir / "delete-me.txt"
+    target.write_text("remove", encoding="utf-8")
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/filesystem/approvals",
+        payload={"path": "delete-me.txt", "action": "delete"},
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#approvals"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#approvalSourceInput'))")
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#approvalSourceInput");
+          input.value = "filesystem";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("delete-me.txt"))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("delete-me.txt"));
+          row.querySelector("button").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Filesystem review")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Browser filesystem smoke.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("approved")
+          && Boolean(document.querySelector("#boundExecutionExecuteButton:not([disabled])"))
+          && document.querySelector("#boundExecutionPayloadInput")?.value.includes('"approval_id"')
+          && document.querySelector("#boundExecutionPayloadInput")
+            ?.value.includes('"delete-me.txt"')
+        """
+    )
+    devtools_page.eval('document.querySelector("#boundExecutionExecuteButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#boundExecutionOutput")
+          ?.textContent.includes("Bound request executed")
+        """
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/filesystem/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"
+    assert not target.exists()

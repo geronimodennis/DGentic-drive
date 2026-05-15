@@ -1,5 +1,7 @@
 import asyncio
+import threading
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -12,7 +14,10 @@ from dgentic.auth import require_route_capability, validate_auth_configuration
 from dgentic.settings import get_settings
 
 UI_ASSETS_DIR = Path(__file__).with_name("ui")
-_HTTP_RUNTIME_ROOT_SWITCH_LOCK = asyncio.Lock()
+_HTTP_RUNTIME_ROOT_SWITCH_LOCKS_GUARD = threading.Lock()
+_HTTP_RUNTIME_ROOT_SWITCH_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    WeakKeyDictionary()
+)
 
 
 def create_app() -> FastAPI:
@@ -49,8 +54,18 @@ async def _request_validation_exception_handler(
 
 
 async def _runtime_root_switch_middleware(request, call_next):
-    async with _HTTP_RUNTIME_ROOT_SWITCH_LOCK:
+    async with _http_runtime_root_switch_lock():
         return await call_next(request)
+
+
+def _http_runtime_root_switch_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    with _HTTP_RUNTIME_ROOT_SWITCH_LOCKS_GUARD:
+        lock = _HTTP_RUNTIME_ROOT_SWITCH_LOCKS.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            _HTTP_RUNTIME_ROOT_SWITCH_LOCKS[loop] = lock
+        return lock
 
 
 app = create_app()

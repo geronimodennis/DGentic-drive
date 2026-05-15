@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ah Browser-Driven Seeded Filesystem Approval Execution
+
+Status: completed for the scoped browser-driven seeded filesystem approval execution scenario; Sprint 16 remains active for remaining network/provider/tool browser approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected filesystem delete approval as the next non-CLI browser scenario because BL-010ag covered CLI review/approval but did not verify bound non-CLI execution through the dashboard.
+- Completed: QA updated the browser smoke harness to seed approvals through the live FastAPI server instead of mixing `TestClient` with Uvicorn during browser tests.
+- Completed: QA added a browser-driven filesystem scenario that filters the unified approval inbox to filesystem, reviews and approves a seeded delete approval, executes the guided bound filesystem payload, verifies the executed review state, and confirms the file was deleted.
+- Completed: Developer fixed the validation-discovered HTTP runtime root-switch guard issue by using event-loop-scoped async locks so repeated local browser servers do not share a stale module-level lock across event loops.
+- Completed: PM updated README, usage, architecture, project status, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: browser smoke coverage now validates a seeded filesystem approval from inbox filtering through safe review, visible approval decision, guided bound execution, backend executed status, and filesystem side effect.
+- Implemented in this slice: the HTTP request barrier keeps its root-switch serialization behavior while avoiding cross-event-loop lock binding when multiple local app servers are created in one test process.
+- Still out of scope after this slice: network/provider/tool browser approval scenarios, provider/tool network approval consuming flows, deeper nested type-specific editors, persistent AI-change artifact apply/revert workflows, and full unified chat.
+
+Validation:
+- Focused browser/UI validation passed: `uv run pytest -q tests\test_ui_browser.py tests\test_ui.py` with 6 passed.
+- Focused browser/source lint checks passed: `uv run ruff format --check src\dgentic\main.py tests\test_ui_browser.py` and `uv run ruff check src\dgentic\main.py tests\test_ui_browser.py`.
+- Full regression passed: `uv run pytest -q` with 1,356 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010ag Browser-Driven Seeded CLI Approval Scenario
 
 Status: completed for the scoped first browser-driven seeded approval scenario; Sprint 16 remains active for broader non-CLI browser approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

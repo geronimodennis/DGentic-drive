@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010as Local Plugin Trust Controls
+
+Status: completed for the scoped local plugin trust control UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, command recipes, and plugin trust, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local plugin trust controls as the next low-risk Sprint 16 policy UI slice because the backend already exposes guarded plugin discovery and trust mutation contracts.
+- Completed: Developer added dashboard Policy controls to trust or block local plugin manifests through the existing `/plugins/{plugin_id}/trust` route, with an operator-supplied reason field and result output.
+- Completed: Developer kept deployment-managed plugin trust read-only in the UI, including managed trust-source records and managed `plugin_trust` locks from effective settings.
+- Completed: QA expanded Web UI static coverage for the plugin trust editor DOM hooks, route wiring, managed-lock checks, trust/block controls, result messages, and CSS selector.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: local plugin manifests can now be explicitly trusted or blocked from the Policy dashboard without adding new backend mutation authority.
+- Implemented in this slice: managed plugin trust decisions remain visible but read-only, and managed `plugin_trust` locks disable trust/block actions even when settings load after policy data.
+- Still out of scope after this slice: plugin hook-code/tool/agent/skill loading beyond inert/declarative records, broader policy/settings editors beyond CLI policy, hook policy, command recipes, and plugin trust; actual AI-change file apply/revert mutation; full unified chat; and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_plugin_trust_persists_redacted_decision_and_becomes_stale tests\test_api.py::test_managed_plugin_trust_records_are_read_only_and_digest_scoped` with 4 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010ar Local Command Recipe Editor UI
 
 Status: completed for the scoped local command recipe editor UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI policy, hook policy, and command recipes, and persistent or multi-worker project activation semantics.

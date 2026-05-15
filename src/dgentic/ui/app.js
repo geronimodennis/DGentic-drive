@@ -3783,6 +3783,9 @@ async function loadSettings() {
   if (latestPolicyReviewResults?.hooks) {
     renderHookPolicyList(latestPolicyReviewResults.hooks);
   }
+  if (latestPolicyReviewResults?.plugins) {
+    renderPluginList(latestPolicyReviewResults.plugins);
+  }
 }
 
 function renderSettingsReview(settingsView, target) {
@@ -4182,14 +4185,7 @@ async function loadPolicySurfaces() {
   renderCliPolicyList(cliRules);
   renderRecipeList(recipes);
   renderHookPolicyList(hooks);
-  const pluginItems = plugins.ok ? plugins.data.plugins || [] : [];
-  renderPolicyList(qs("#pluginList"), { ...plugins, data: pluginItems }, (plugin) => ({
-    title: plugin.plugin_id || plugin.id || plugin.name,
-    meta: `${plugin.trust_status || plugin.status || "unknown"} - ${
-      plugin.trust_source || "local"
-    }`,
-    status: plugin.trust_status === "trusted" ? "ok" : "pending",
-  }));
+  renderPluginList(plugins);
 }
 
 function resultList(result, nestedKey = "") {
@@ -4613,6 +4609,97 @@ function renderPolicyList(target, result, mapper) {
     item.append(make("div", "item-meta", mapped.meta || ""));
     item.append(statusChip(mapped.status || "ok"));
     target.append(item);
+  }
+}
+
+function pluginRecordsFromResult(result) {
+  return result.ok ? result.data.plugins || [] : [];
+}
+
+function pluginTrustLocked() {
+  return managedPolicyLocks().includes("plugin_trust");
+}
+
+async function patchPluginTrust(pluginId, status) {
+  const target = qs("#pluginTrustOutput");
+  const locked = pluginTrustLocked();
+  clear(target);
+  if (locked) {
+    target.append(statusBox("Plugin trust locked", "Managed settings make plugin trust read-only.", "blocked"));
+    return;
+  }
+  const reason = qs("#pluginTrustReasonInput").value.trim() || "Reviewed from dashboard.";
+  target.append(statusBox(status === "trusted" ? "Trusting plugin" : "Blocking plugin", pluginId, "running"));
+  try {
+    const plugin = await api(`/plugins/${encodeURIComponent(pluginId)}/trust`, {
+      method: "PATCH",
+      body: { status, reason },
+    });
+    clear(target);
+    target.append(statusBox("Plugin trust updated", plugin.plugin_id || pluginId, plugin.trust_status === "trusted" ? "ok" : "blocked"));
+    target.append(jsonBlock(plugin));
+    await loadPolicySurfaces();
+    showToast("Plugin trust updated.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Plugin trust update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderPluginList(result) {
+  const target = qs("#pluginList");
+  const output = qs("#pluginTrustOutput");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  const locked = pluginTrustLocked();
+  const plugins = pluginRecordsFromResult(result);
+  const errors = result.data?.errors || [];
+  if (locked) {
+    target.append(statusBox("Plugin trust locked", "Managed settings make plugin trust read-only.", "blocked"));
+  }
+  if (!plugins.length && !errors.length) {
+    target.append(statusBox("No plugins", "Nothing configured for this surface.", "pending"));
+    return;
+  }
+  for (const plugin of plugins.slice(0, 8)) {
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", plugin.name || plugin.plugin_id));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${plugin.plugin_id} - ${plugin.trust_status || "untrusted"} - ${
+          plugin.trust_source || "none"
+        } - ${plugin.version || "-"}`,
+      ),
+    );
+    const actions = make("div", "recipe-action-buttons");
+    const trustButton = make("button", "success-button", "Trust");
+    trustButton.type = "button";
+    trustButton.dataset.testid = "plugin-trust-trust";
+    trustButton.dataset.pluginId = plugin.plugin_id || "";
+    trustButton.disabled = locked || plugin.trust_source === "managed" || plugin.trust_status === "trusted";
+    trustButton.addEventListener("click", () => patchPluginTrust(plugin.plugin_id, "trusted"));
+    const blockButton = make("button", "danger-button", "Block");
+    blockButton.type = "button";
+    blockButton.dataset.testid = "plugin-trust-block";
+    blockButton.dataset.pluginId = plugin.plugin_id || "";
+    blockButton.disabled = locked || plugin.trust_source === "managed" || plugin.trust_status === "blocked";
+    blockButton.addEventListener("click", () => patchPluginTrust(plugin.plugin_id, "blocked"));
+    actions.append(statusChip(plugin.trust_status === "trusted" ? "ok" : plugin.trust_status || "pending"), trustButton, blockButton);
+    item.append(detail, actions);
+    target.append(item);
+  }
+  for (const error of errors.slice(0, 4)) {
+    target.append(statusBox(error.plugin_id || "Plugin error", error.reason || error.manifest_path, "blocked"));
+  }
+  if (!output.childNodes.length && locked) {
+    output.append(statusBox("Plugin trust locked", "Managed settings make plugin trust read-only.", "blocked"));
   }
 }
 

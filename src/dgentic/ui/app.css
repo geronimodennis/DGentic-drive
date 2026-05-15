@@ -443,6 +443,11 @@ textarea {
   min-width: 0;
 }
 
+.plugin-trust-editor {
+  display: grid;
+  gap: 8px;
+}
+
 .policy-editor,
 .git-approval-actions {
   border: 1px solid var(--line);

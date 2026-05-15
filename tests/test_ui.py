@@ -90,6 +90,8 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "recipeAddParameterButton" in response.text
     assert "recipeEnabledInput" in response.text
     assert "recipeActionPanel" in response.text
+    assert "pluginTrustReasonInput" in response.text
+    assert "pluginTrustOutput" in response.text
     assert "settingsOutput" in response.text
     assert 'rel="icon" href="data:,"' in response.text
     assert "./app.js" in response.text
@@ -285,6 +287,17 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "/cli/recipes/${encodeURIComponent(recipeId)}/${action}" in script_response.text
     assert 'api("/guardrails/hooks/rules")' in script_response.text
     assert 'api("/plugins")' in script_response.text
+    assert "renderPluginList" in script_response.text
+    assert "patchPluginTrust" in script_response.text
+    assert "pluginRecordsFromResult" in script_response.text
+    assert "pluginTrustLocked" in script_response.text
+    assert 'managedPolicyLocks().includes("plugin_trust")' in script_response.text
+    assert "/plugins/${encodeURIComponent(pluginId)}/trust" in script_response.text
+    assert "body: { status, reason }" in script_response.text
+    assert "plugin-trust-trust" in script_response.text
+    assert "plugin-trust-block" in script_response.text
+    assert "Plugin trust locked" in script_response.text
+    assert "Plugin trust updated" in script_response.text
     assert 'api("/settings/effective")' in script_response.text
     assert "renderProjectContext" in script_response.text
     assert "activeRootDir" in script_response.text
@@ -532,6 +545,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".recipe-parameter-editor" in style_response.text
     assert ".recipe-parameter-builder" in style_response.text
     assert ".recipe-parameter-row" in style_response.text
+    assert ".plugin-trust-editor" in style_response.text
     assert ".recipe-parameter-grid" in style_response.text
     assert ".recipe-action-buttons" in style_response.text
     assert ".approval-list" in style_response.text

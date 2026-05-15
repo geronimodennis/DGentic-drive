@@ -21,6 +21,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatForm" in response.text
     assert "taskChatInput" in response.text
     assert "taskChatTranscript" in response.text
+    assert "taskChatContextStream" in response.text
     assert "taskChatHistoryStatus" in response.text
     assert "taskChatSubmitButton" in response.text
     assert "taskChatRunInput" in response.text
@@ -151,7 +152,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Bound execution handoff only" in script_response.text
     assert "Dashboard execute" in script_response.text
     assert "network_approval_id" in script_response.text
-    assert "await loadApprovals()" in script_response.text
+    assert "await Promise.all([loadApprovals(), loadTaskChatContext()])" in (script_response.text)
     assert "renderReviewWarnings" in script_response.text
     assert "reviewValue" in script_response.text
     assert "Raw review" in script_response.text
@@ -207,6 +208,23 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Saved history is display only." in script_response.text
     assert "localStorage.setItem(TOKEN_KEY" not in script_response.text
     assert "taskChatPayload" in script_response.text
+    assert "loadTaskChatContext" in script_response.text
+    assert "renderTaskChatContextStream" in script_response.text
+    assert "renderTaskChatContextCard" in script_response.text
+    assert "insertTaskChatContext" in script_response.text
+    assert "taskChatLatestActivity" in script_response.text
+    assert "taskChatContextLines" in script_response.text
+    assert "openTaskChatContextSection" in script_response.text
+    assert "isAuthorizationError" in script_response.text
+    assert "unavailable_count" in script_response.text
+    assert "Limited sources" in script_response.text
+    assert "Context added to task chat." in script_response.text
+    assert "Use Context" in script_response.text
+    assert 'api("/projects/active")' in script_response.text
+    assert 'api("/logs")' in script_response.text
+    assert "api(`${source.base}?status=pending`)" in script_response.text
+    assert "Promise.all([loadTasks(), loadTaskChatContext()])" in script_response.text
+    assert "Promise.all([loadProjects(), loadTaskChatContext()])" in script_response.text
     assert "submitTaskChatMessage" in script_response.text
     assert "appendTaskChatMessage" in script_response.text
     assert "renderTaskChatThread" in script_response.text
@@ -438,6 +456,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-chat-header-actions" in style_response.text
     assert ".task-chat-history-status" in style_response.text
     assert ".task-chat-transcript" in style_response.text
+    assert ".task-chat-context-stream" in style_response.text
+    assert ".task-chat-context-summary" in style_response.text
+    assert ".task-chat-context-cards" in style_response.text
+    assert ".task-chat-context-card" in style_response.text
+    assert ".task-chat-context-actions" in style_response.text
     assert ".task-chat-message" in style_response.text
     assert ".task-chat-message-user" in style_response.text
     assert ".task-chat-message-agent" in style_response.text

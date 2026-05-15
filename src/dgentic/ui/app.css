@@ -483,6 +483,48 @@ textarea {
   font-weight: 800;
 }
 
+.task-chat-context-stream {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.task-chat-context-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.task-chat-context-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.task-chat-context-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.task-chat-context-card > div:first-child {
+  min-width: 0;
+}
+
+.task-chat-context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .task-chat-transcript {
   display: grid;
   gap: 10px;

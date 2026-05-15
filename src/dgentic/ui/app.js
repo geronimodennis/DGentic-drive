@@ -34,6 +34,14 @@ let latestGitChangeReviewArtifacts = [];
 let editingCliPolicyRuleId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
+let latestTaskChatContext = {
+  plans: [],
+  runs: [],
+  approvals: [],
+  logs: [],
+  active: null,
+  errors: [],
+};
 let gitDiffReviewDecisions = {};
 
 function qs(selector) {
@@ -310,6 +318,7 @@ async function refreshDashboard() {
     loadProjects(),
     loadPolicySurfaces(),
     loadSettings(),
+    loadTaskChatContext(),
     loadLogs(),
   ]);
 }
@@ -471,6 +480,192 @@ function taskChatPayload() {
     acceptance_criteria: splitLines(qs("#taskChatAcceptanceInput").value),
     priority: qs("#taskChatPriorityInput").value,
   };
+}
+
+function isAuthorizationError(result) {
+  return /^(401|403)\b/.test(String(result?.error || ""));
+}
+
+async function loadTaskChatContext() {
+  const approvalLoads = approvalSources.map(async (source) => {
+    const result = await safeLoad(`${source.label} pending approvals`, () => api(`${source.base}?status=pending`));
+    return { source, ...result };
+  });
+  const [plans, runs, active, logs, ...approvalResults] = await Promise.all([
+    safeLoad("task chat plans", () => api("/tasks/plans")),
+    safeLoad("task chat runs", () => api("/tasks/runs")),
+    safeLoad("task chat active project", () => api("/projects/active")),
+    safeLoad("task chat logs", () => api("/logs")),
+    ...approvalLoads,
+  ]);
+  const approvals = [];
+  for (const result of approvalResults) {
+    if (result.ok) {
+      for (const approval of result.data || []) {
+        approvals.push({ source: result.source, approval });
+      }
+    }
+  }
+  const loadResults = [plans, runs, active, logs, ...approvalResults];
+  latestTaskChatContext = {
+    plans: plans.ok ? plans.data || [] : [],
+    runs: runs.ok ? runs.data || [] : [],
+    approvals,
+    logs: logs.ok ? (logs.data || []).slice(-8).reverse() : [],
+    active: active.ok ? active.data : null,
+    errors: loadResults.filter((result) => !result.ok && !isAuthorizationError(result)),
+    unavailable_count: loadResults.filter((result) => !result.ok && isAuthorizationError(result)).length,
+  };
+  renderTaskChatContextStream();
+}
+
+function taskChatLatestActivity(context) {
+  const timestamps = [
+    ...context.logs.map((event) => event.created_at),
+    ...context.runs.map((run) => run.completed_at || run.started_at),
+    ...context.plans.map((plan) => plan.created_at),
+    ...context.approvals.map((item) => item.approval.created_at),
+  ]
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter((value) => Number.isFinite(value));
+  if (!timestamps.length) {
+    return "-";
+  }
+  return formatTimestamp(new Date(Math.max(...timestamps)).toISOString());
+}
+
+function taskChatContextLines(title, lines) {
+  return [title, ...lines].filter(Boolean).map((line) => boundedString(String(line), 280));
+}
+
+function insertTaskChatContext(title, lines) {
+  const input = qs("#taskChatContextInput");
+  const block = taskChatContextLines(title, lines).join("\n");
+  input.value = input.value.trim() ? `${input.value.trim()}\n\n${block}` : block;
+  input.focus();
+  showToast("Context added to task chat.");
+}
+
+function openTaskChatContextSection(sectionId) {
+  const target = document.getElementById(sectionId);
+  if (!target) {
+    return;
+  }
+  window.location.hash = sectionId;
+  target.scrollIntoView({ block: "start" });
+}
+
+function renderTaskChatContextCard(target, card) {
+  const item = make("div", "task-chat-context-card");
+  const copy = make("div");
+  copy.append(make("div", "item-title", card.title));
+  copy.append(make("div", "item-meta", card.meta));
+  if (card.state) {
+    copy.append(statusChip(card.state));
+  }
+  const actions = make("div", "task-chat-context-actions");
+  const useButton = make("button", "link-button", "Use Context");
+  useButton.type = "button";
+  useButton.addEventListener("click", () => insertTaskChatContext(card.title, card.lines || []));
+  actions.append(useButton);
+  if (card.sectionId) {
+    const openButton = make("button", "link-button", "Open");
+    openButton.type = "button";
+    openButton.addEventListener("click", () => openTaskChatContextSection(card.sectionId));
+    actions.append(openButton);
+  }
+  item.append(copy, actions);
+  target.append(item);
+}
+
+function renderTaskChatContextStream() {
+  const target = qs("#taskChatContextStream");
+  if (!target) {
+    return;
+  }
+  clear(target);
+  const context = latestTaskChatContext;
+  const activeRoot = context.active?.active_root_dir || activeRootDir || "-";
+  const summary = make("div", "task-chat-context-summary");
+  appendKeyValue(summary, "Root", compactPath(activeRoot));
+  appendKeyValue(summary, "Tasks", `${context.plans.length} plans / ${context.runs.length} runs`);
+  appendKeyValue(summary, "Pending approvals", String(context.approvals.length), context.approvals.length ? "pending" : "ok");
+  appendKeyValue(summary, "Latest activity", taskChatLatestActivity(context));
+  if (context.unavailable_count) {
+    appendKeyValue(summary, "Limited sources", String(context.unavailable_count), "pending");
+  }
+  target.append(summary);
+  if (context.errors.length) {
+    target.append(
+      statusBox(
+        "Context partially loaded",
+        context.errors
+          .slice(0, 3)
+          .map((error) => `${error.label}: ${error.error}`)
+          .join("; "),
+        "pending",
+      ),
+    );
+  }
+  const cards = make("div", "task-chat-context-cards");
+  for (const plan of context.plans.slice(-2).reverse()) {
+    renderTaskChatContextCard(cards, {
+      title: `Plan ${plan.id}`,
+      meta: `${formatTimestamp(plan.created_at)} - ${plan.steps?.length || 0} steps`,
+      state: plan.status || "ready",
+      sectionId: "tasks",
+      lines: [
+        `Plan ID: ${plan.id}`,
+        `Objective: ${plan.objective || "-"}`,
+        `Steps: ${(plan.steps || []).map((step) => step.title || step.id).slice(0, 4).join("; ") || "-"}`,
+      ],
+    });
+  }
+  for (const run of context.runs.slice(-2).reverse()) {
+    renderTaskChatContextCard(cards, {
+      title: `Run ${run.id}`,
+      meta: `${run.plan_id || "plan"} - ${formatTimestamp(run.completed_at || run.started_at)}`,
+      state: run.status,
+      sectionId: "tasks",
+      lines: [
+        `Run ID: ${run.id}`,
+        `Plan ID: ${run.plan_id || "-"}`,
+        `Status: ${run.status || "-"}`,
+        `Results: ${(run.results || []).map((result) => `${result.step_id}:${result.status}`).slice(0, 6).join("; ") || "-"}`,
+      ],
+    });
+  }
+  for (const item of context.approvals.slice(0, 3)) {
+    renderTaskChatContextCard(cards, {
+      title: `${item.source.label} approval ${item.approval.id}`,
+      meta: approvalTitle(item),
+      state: item.approval.status,
+      sectionId: "approvals",
+      lines: [
+        `Approval: ${item.source.label} ${item.approval.id}`,
+        `Status: ${item.approval.status || "-"}`,
+        `Subject: ${approvalTitle(item)}`,
+      ],
+    });
+  }
+  for (const event of context.logs.slice(0, 2)) {
+    renderTaskChatContextCard(cards, {
+      title: `Event ${event.event_type || "log"}`,
+      meta: formatTimestamp(event.created_at),
+      state: "event",
+      sectionId: "logs",
+      lines: [
+        `Event: ${event.event_type || "-"}`,
+        `Actor: ${event.actor || "-"}`,
+        `Message: ${event.message || "-"}`,
+      ],
+    });
+  }
+  if (!cards.childElementCount) {
+    cards.append(statusBox("No context cards", "Plans, runs, approvals, and logs will appear here as work starts.", "pending"));
+  }
+  target.append(cards);
 }
 
 function boundedString(value, limit = 600) {
@@ -723,7 +918,7 @@ async function runTaskChatPlan(plan) {
       state: run.status,
       run,
     });
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
     showToast("Task plan executed.");
   } catch (error) {
     appendTaskChatMessage({
@@ -774,7 +969,7 @@ async function submitTaskChatMessage(event) {
     if (qs("#taskChatRunInput").checked) {
       await runTaskChatPlan(plan);
     } else {
-      await loadTasks();
+      await Promise.all([loadTasks(), loadTaskChatContext()]);
       showToast("Task plan created.");
     }
   } catch (error) {
@@ -905,7 +1100,7 @@ async function executeTaskPlan(plan) {
     target.append(statusBox("Task plan executed", `${run.id} - ${run.results?.length || 0} step results`, run.status));
     renderTaskRunResult(target, run);
     target.append(jsonBlock(run));
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
     showToast("Task plan executed.");
   } catch (error) {
     clear(target);
@@ -1468,7 +1663,7 @@ async function postOrchestrationRunAction(runId, action) {
     });
     showToast(`Orchestration ${action} completed.`);
     await loadOrchestrationDetail(run.id, run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Orchestration action failed", error.message, "failed"));
@@ -1490,7 +1685,7 @@ async function postOrchestrationLoop(runId) {
     });
     showToast(`Loop stopped: ${result.stopped_reason}.`);
     await loadOrchestrationDetail(result.run.id, result.run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Orchestration loop failed", error.message, "failed"));
@@ -1513,7 +1708,7 @@ async function postOrchestrationExecution(runId) {
     showToast("Background execution started.");
     target.append(jsonBlock(execution));
     await loadOrchestrationDetail(runId);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Execution start failed", error.message, "failed"));
@@ -1531,7 +1726,7 @@ async function cancelOrchestrationExecution(runId, executionId) {
     showToast("Background execution cancel requested.");
     target.append(jsonBlock(execution));
     await loadOrchestrationDetail(runId);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Execution cancel failed", error.message, "failed"));
@@ -1564,7 +1759,7 @@ async function submitOrchestrationTaskUpdate(event, runId, taskId, form) {
     );
     showToast("Task updated.");
     await loadOrchestrationDetail(run.id, run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Task update failed", error.message, "failed"));
@@ -1600,7 +1795,7 @@ async function submitOrchestrationTaskRecovery(event, runId, taskId, form) {
     );
     showToast("Task recovery submitted.");
     await loadOrchestrationDetail(run.id, run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Task recovery failed", error.message, "failed"));
@@ -1630,7 +1825,7 @@ async function submitOrchestrationBlockerResolution(event, runId, blockerId, for
     );
     showToast("Blocker resolved.");
     await loadOrchestrationDetail(run.id, run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Blocker resolution failed", error.message, "failed"));
@@ -1656,7 +1851,7 @@ async function submitOrchestrationCloseout(event, runId, form) {
     });
     showToast("Orchestration closed.");
     await loadOrchestrationDetail(run.id, run);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Closeout failed", error.message, "failed"));
@@ -1685,7 +1880,7 @@ async function createTaskPlan(event) {
     target.append(statusBox("Plan created", `${plan.id} - ${plan.steps?.length || 0} steps`, "ready"));
     target.append(jsonBlock(plan));
     qs("#taskForm").reset();
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
   } catch (error) {
     clear(target);
     target.append(statusBox("Plan failed", error.message, "failed"));
@@ -1902,7 +2097,7 @@ async function createOrchestrationRun(event) {
     qs("#orchestrationCreateForm").reset();
     writeOrchestrationTasksInput([]);
     resetOrchestrationTaskDraft();
-    await loadTasks();
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
     await loadOrchestrationDetail(run.id, run);
   } catch (error) {
     clear(target);
@@ -2494,7 +2689,7 @@ async function executeBoundExecutionRequest(scaffold) {
     clear(output);
     output.append(statusBox("Bound request executed", scaffold.endpoint, "ready"));
     output.append(jsonBlock(result));
-    await loadApprovals();
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
     showToast("Bound request executed.");
   } catch (error) {
     button.disabled = false;
@@ -2674,7 +2869,7 @@ async function decideApproval(decision, reason) {
     const review = await api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`);
     selectedApproval = { source, approval: result, review };
     renderApprovalReview(selectedApproval);
-    await loadApprovals();
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
   }
@@ -2689,7 +2884,7 @@ async function executeCliApproval(approvalId) {
     });
     showToast("CLI approval executed.");
     target.append(jsonBlock(result));
-    await Promise.all([loadApprovals(), loadCliRuns()]);
+    await Promise.all([loadApprovals(), loadCliRuns(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
     target.append(statusBox("Execution failed", error.message, "failed"));
@@ -3316,7 +3511,7 @@ async function createGitApproval(event) {
     target.append(statusBox("Git approval created", approval.id, approval.status || "pending"));
     target.append(jsonBlock(approval));
     setApprovalFilterState("cli", "pending");
-    await loadApprovals();
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
     showToast("Git approval created.");
   } catch (error) {
     clear(target);
@@ -3478,7 +3673,7 @@ async function registerProject(event) {
     clear(target);
     target.append(statusBox("Project registered", project.name, "ok"));
     qs("#projectForm").reset();
-    await loadProjects();
+    await Promise.all([loadProjects(), loadTaskChatContext()]);
   } catch (error) {
     clear(target);
     target.append(statusBox("Registration failed", error.message, "failed"));
@@ -3498,7 +3693,7 @@ async function activateProject(projectId) {
     qs("#workspaceEditorTitle").textContent = "No file open";
     qs("#workspaceEditor").value = "";
     await Promise.all([loadSettings(), loadWorkspace("."), loadLogs()]);
-    await loadProjects();
+    await Promise.all([loadProjects(), loadTaskChatContext()]);
     showToast(result.switched ? "Project opened." : "Project is already active.");
   } catch (error) {
     clear(target);
@@ -4527,7 +4722,7 @@ async function postCommandRecipeAction(recipeId, action) {
     target.append(statusBox(actionLabels[action] || "Recipe action", recipeId, result.status || "ok"));
     target.append(jsonBlock(result));
     if (action === "approvals") {
-      await loadApprovals();
+      await Promise.all([loadApprovals(), loadTaskChatContext()]);
     }
     if (action === "runs" || action === "execute") {
       await loadCliRuns();
@@ -4577,10 +4772,11 @@ function bindEvents() {
     refreshDashboard();
   });
   qs("#refreshButton").addEventListener("click", refreshDashboard);
-  qs("#loadTasksButton").addEventListener("click", loadTasks);
+  qs("#loadTasksButton").addEventListener("click", () => Promise.all([loadTasks(), loadTaskChatContext()]));
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
   loadTaskChatHistory();
+  renderTaskChatContextStream();
   renderTaskChatThread();
   qs("#taskForm").addEventListener("submit", createTaskPlan);
   qs("#orchestrationCreateForm").addEventListener("submit", createOrchestrationRun);

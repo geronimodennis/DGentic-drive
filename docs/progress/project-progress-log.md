@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010aq Unified Task Chat Context Stream
+
+Status: completed for the scoped unified task-chat context stream slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI and hook policy, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a bounded chat-context slice after confirming actual AI-change apply/revert needs a safer backend mutation contract before UI exposure.
+- Completed: Developer added a task-chat context stream that reads existing project, task plan/run, pending approval, and log APIs and renders compact summary/context cards above the transcript.
+- Completed: Developer added Use Context controls that insert bounded plan/run/approval/log summaries into the existing chat context composer without storing bearer tokens or replacing the approval dashboard as execution authority.
+- Completed: Developer kept expected authorization gaps for optional context sources as quiet limited-source counts, and refreshed context after project activation so the displayed root does not stay stale.
+- Completed: QA expanded Web UI static coverage for the new DOM hooks, route wiring, insert helpers, authorization-gap handling, refresh wiring, and CSS selectors.
+- Completed: Reviewer identified stale project activation context and noisy optional-capability failures; Developer fixed both and QA covered the fixes.
+- Completed: PM updated README, usage, developer setup, project status, backlog, Agile plan, architecture notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: task chat now shows active root/project context, task/run counts, pending approval counts, latest activity, and insertable recent plan/run/approval/log context cards.
+- Implemented in this slice: context cards use existing backend reads only and do not add new mutation authority or duplicate the approval execution surface.
+- Still out of scope after this slice: backend conversational memory/session semantics, autonomous follow-up execution from chat, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused UI validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Full regression passed: `uv run pytest -q` with 1,364 passed and 2 skipped.
+- Lint/static checks passed before full regression: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ap Local Hook Policy Editor UI
 
 Status: completed for the scoped local hook policy editor UI slice; Sprint 16 remains active for full unified chat beyond local task history, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond CLI and hook policy, and persistent or multi-worker project activation semantics.

@@ -4966,6 +4966,85 @@ function renderNetworkPolicyDecision(target, decision) {
   target.append(jsonBlock(decision));
 }
 
+function filesystemPolicyPayload() {
+  const payload = {
+    action: qs("#filesystemPolicyActionInput").value,
+    path: qs("#filesystemPolicyPathInput").value.trim() || ".",
+  };
+  const targetPath = qs("#filesystemPolicyTargetInput").value.trim();
+  const agentRole = qs("#filesystemPolicyRoleInput").value.trim();
+  const agentId = qs("#filesystemPolicyAgentInput").value.trim();
+  const taskId = qs("#filesystemPolicyTaskInput").value.trim();
+  if (targetPath) {
+    payload.target_path = targetPath;
+  }
+  if (agentRole) {
+    payload.agent_role = agentRole;
+  }
+  if (agentId) {
+    payload.agent_id = agentId;
+  }
+  if (taskId) {
+    payload.task_id = taskId;
+  }
+  return payload;
+}
+
+function filesystemDecisionState(decision) {
+  if (decision.permission_mode === "approval_required") {
+    return "pending";
+  }
+  return decision.allowed ? "ok" : "blocked";
+}
+
+function renderFilesystemPolicyDecision(target, decision) {
+  const state = filesystemDecisionState(decision);
+  target.append(statusBox("Filesystem guardrail decision", decision.reason || "Policy evaluated.", state));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Allowed", decision.allowed ? "true" : "false", state);
+  appendKeyValue(grid, "Mode", decision.permission_mode || "unknown", decision.permission_mode || "");
+  appendKeyValue(grid, "Path", compactPath(decision.path || "-"));
+  appendKeyValue(grid, "Resolved", compactPath(decision.resolved_path || "-"));
+  appendKeyValue(grid, "Target", compactPath(decision.target_path || "-"));
+  appendKeyValue(grid, "Resolved target", compactPath(decision.resolved_target_path || "-"));
+  if (decision.orchestration) {
+    appendKeyValue(
+      grid,
+      "Orchestration",
+      decision.orchestration.allowed ? "allowed" : "blocked",
+      decision.orchestration.allowed ? "ok" : "blocked",
+    );
+  }
+  if (decision.hook_policy) {
+    appendKeyValue(
+      grid,
+      "Hook policy",
+      decision.hook_policy.effect || "matched",
+      decision.hook_policy.effect || "",
+    );
+  }
+  target.append(grid);
+  target.append(jsonBlock(decision));
+}
+
+async function checkFilesystemPolicy(event) {
+  event.preventDefault();
+  const target = qs("#filesystemPolicyCheckOutput");
+  const payload = filesystemPolicyPayload();
+  clear(target);
+  target.append(statusBox("Checking filesystem guardrail", `${payload.action} ${payload.path}`, "running"));
+  try {
+    const decision = await api("/guardrails/filesystem", { method: "POST", body: payload });
+    clear(target);
+    renderFilesystemPolicyDecision(target, decision);
+    showToast("Filesystem guardrail checked.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Filesystem guardrail check failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function checkNetworkPolicy(event) {
   event.preventDefault();
   const target = qs("#networkPolicyCheckOutput");
@@ -5855,6 +5934,7 @@ function bindEvents() {
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);
+  qs("#filesystemPolicyCheckForm").addEventListener("submit", checkFilesystemPolicy);
   qs("#networkPolicyUrlInput").addEventListener("input", () => {
     latestNetworkPolicyPreflight = null;
     qs("#networkPolicyApprovalButton").disabled = true;

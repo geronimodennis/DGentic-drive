@@ -108,6 +108,17 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "networkPolicySurfaceInput" in response.text
     assert "networkPolicyApprovalButton" in response.text
     assert "networkPolicyCheckOutput" in response.text
+    assert "filesystemPolicyCheckPanel" in response.text
+    assert "filesystemPolicyCheckForm" in response.text
+    assert "filesystemPolicyActionInput" in response.text
+    assert "filesystemPolicyPathInput" in response.text
+    assert "filesystemPolicyTargetInput" in response.text
+    assert "filesystemPolicyRoleInput" in response.text
+    assert "filesystemPolicyAgentInput" in response.text
+    assert "filesystemPolicyTaskInput" in response.text
+    assert "filesystemPolicyCheckButton" in response.text
+    assert "filesystemPolicyCheckOutput" in response.text
+    assert "Check Filesystem" in response.text
     assert "cliPolicyForm" in response.text
     assert "cliPolicyEditor" in response.text
     assert "cliPolicyEditorOutput" in response.text
@@ -182,7 +193,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderNetworkPolicyDecision" in script_response.text
     assert "checkNetworkPolicy" in script_response.text
     assert "requestNetworkPolicyApproval" in script_response.text
+    assert "filesystemPolicyPayload" in script_response.text
+    assert "filesystemDecisionState" in script_response.text
+    assert "renderFilesystemPolicyDecision" in script_response.text
+    assert "checkFilesystemPolicy" in script_response.text
     assert '"/guardrails/network"' in script_response.text
+    assert 'api("/guardrails/filesystem", { method: "POST", body: payload })' in (
+        script_response.text
+    )
     assert '"/web-retrieval/network/check"' in script_response.text
     assert 'endpoint: "/network/approvals"' in script_response.text
     assert 'endpoint: "/web-retrieval/network/approvals"' in script_response.text
@@ -194,11 +212,21 @@ def test_web_ui_static_assets_are_served() -> None:
         script_response.text
     )
     assert (
+        'qs("#filesystemPolicyCheckForm").addEventListener("submit", checkFilesystemPolicy)'
+        in script_response.text
+    )
+    assert (
         'qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval)'
         in script_response.text
     )
     assert "Network policy decision" in script_response.text
     assert "Network policy checked" in script_response.text
+    assert "Filesystem guardrail decision" in script_response.text
+    assert "Filesystem guardrail checked" in script_response.text
+    assert "Filesystem guardrail check failed" in script_response.text
+    assert "Checking filesystem guardrail" in script_response.text
+    assert "resolved_target_path" in script_response.text
+    assert 'decision.permission_mode === "approval_required"' in script_response.text
     assert "providerBoundExecutionScaffold" in script_response.text
     assert "toolBoundExecutionScaffold" in script_response.text
     assert "copyBoundExecutionPayload" in script_response.text

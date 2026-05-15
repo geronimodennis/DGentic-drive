@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010be Filesystem Guardrail Preflight Controls
+
+Status: completed for the scoped filesystem guardrail preflight UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression apply controls, and filesystem guardrail preflight, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a read-only filesystem guardrail preflight slice because the backend already exposes `/guardrails/filesystem` and the Policy panel already has a network preflight pattern.
+- Completed: Developer added a Filesystem Check panel with action, path, optional target path, and optional agent/task context fields.
+- Completed: Developer wired the panel only to the existing `/guardrails/filesystem` contract, renders allowed/mode/path/target/orchestration/hook-policy review details plus raw JSON, and does not execute filesystem operations or create approval records.
+- Completed: QA expanded Web UI static coverage for the new DOM hooks, payload helper, decision renderer, endpoint wiring, submit binding, success/failure messages, and browser-driven preflight behavior.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can preview filesystem guardrail outcomes from the Policy panel before attempting guarded filesystem operations.
+- Implemented in this slice: the preflight is review-only and preserves existing filesystem approval, auth, hook-policy, and orchestration boundaries.
+- Still out of scope after this slice: filesystem policy editing, filesystem approval creation from preflight, richer filesystem approval detail editors, actual AI-change file apply/revert mutation, full unified chat, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Browser smoke validation passed: `uv run pytest -q tests\test_ui_browser.py::test_browser_policy_panel_can_preflight_filesystem_guardrail` with 1 passed.
+- Full regression passed: `uv run pytest -q` with 1,366 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bd Memory Lifecycle And Compression Apply Controls
 
 Status: completed for the scoped memory lifecycle/compression apply UI slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, and memory lifecycle/compression apply controls, and persistent or multi-worker project activation semantics.

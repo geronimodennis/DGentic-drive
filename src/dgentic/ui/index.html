@@ -759,6 +759,58 @@ review</textarea>
                 </details>
               </section>
               <section>
+                <h3>Filesystem Check</h3>
+                <details id="filesystemPolicyCheckPanel" class="policy-editor">
+                  <summary>Guardrail Preflight</summary>
+                  <form id="filesystemPolicyCheckForm" class="stacked-form">
+                    <div class="two-column">
+                      <label>
+                        Action
+                        <select id="filesystemPolicyActionInput">
+                          <option value="read">Read</option>
+                          <option value="write">Write</option>
+                          <option value="binary_read">Binary Read</option>
+                          <option value="binary_write">Binary Write</option>
+                          <option value="delete">Delete</option>
+                          <option value="move">Move</option>
+                          <option value="copy">Copy</option>
+                          <option value="rename">Rename</option>
+                          <option value="list">List</option>
+                          <option value="metadata">Metadata</option>
+                        </select>
+                      </label>
+                      <label>
+                        Path
+                        <input id="filesystemPolicyPathInput" type="text" maxlength="500" value="." required>
+                      </label>
+                    </div>
+                    <label>
+                      Target Path
+                      <input id="filesystemPolicyTargetInput" type="text" maxlength="500" placeholder="Required for move, copy, or rename">
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Agent Role
+                        <input id="filesystemPolicyRoleInput" type="text" maxlength="120">
+                      </label>
+                      <label>
+                        Agent ID
+                        <input id="filesystemPolicyAgentInput" type="text" maxlength="160">
+                      </label>
+                    </div>
+                    <label>
+                      Task ID
+                      <input id="filesystemPolicyTaskInput" type="text" maxlength="160">
+                    </label>
+                    <button id="filesystemPolicyCheckButton" type="submit" class="primary-button">
+                      <span class="button-icon" aria-hidden="true">?</span>
+                      <span>Check Filesystem</span>
+                    </button>
+                  </form>
+                  <div id="filesystemPolicyCheckOutput" class="output-region" aria-live="polite"></div>
+                </details>
+              </section>
+              <section>
                 <h3>CLI Rules</h3>
                 <details id="cliPolicyEditor" class="policy-editor">
                   <summary id="cliPolicyEditorSummary">New CLI Rule</summary>

@@ -557,6 +557,37 @@ def test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approva
     assert not target.exists()
 
 
+def test_browser_policy_panel_can_preflight_filesystem_guardrail(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#policy"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#filesystemPolicyCheckForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#filesystemPolicyCheckPanel").open = true;
+          document.querySelector("#filesystemPolicyActionInput").value = "list";
+          document.querySelector("#filesystemPolicyPathInput").value = ".";
+          document.querySelector("#filesystemPolicyCheckForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#filesystemPolicyCheckOutput")
+          ?.textContent.includes("Filesystem guardrail decision")
+          && document.querySelector("#filesystemPolicyCheckOutput")
+            ?.textContent.includes("autopilot_safe")
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_execute_seeded_web_retrieval_network_approval(
     ui_live_server,
     devtools_page,

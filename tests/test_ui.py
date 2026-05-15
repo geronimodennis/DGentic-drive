@@ -69,6 +69,18 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "memoryLifecycleLimitInput" in response.text
     assert "memoryLifecycleInactiveInput" in response.text
     assert "memoryLifecyclePreviewOutput" in response.text
+    assert "memoryCompressionPreviewPanel" in response.text
+    assert "memoryCompressionPreviewForm" in response.text
+    assert "memoryCompressionEntityTypesInput" in response.text
+    assert "memoryCompressionTagsInput" in response.text
+    assert "memoryCompressionCategoryInput" in response.text
+    assert "memoryCompressionRetentionInput" in response.text
+    assert "memoryCompressionLimitInput" in response.text
+    assert "memoryCompressionSummaryInput" in response.text
+    assert "memoryCompressionAgeInput" in response.text
+    assert "memoryCompressionAccessInput" in response.text
+    assert "memoryCompressionInactiveInput" in response.text
+    assert "memoryCompressionPreviewOutput" in response.text
     assert "memoryReliabilityList" in response.text
     assert "toolReliabilityList" in response.text
     assert "approvalSourceInput" in response.text
@@ -321,6 +333,21 @@ def test_web_ui_static_assets_are_served() -> None:
     )
     assert "Memory lifecycle preview complete" in script_response.text
     assert "Memory lifecycle preview failed" in script_response.text
+    assert "memoryCompressionPreviewPayload" in script_response.text
+    assert "runMemoryCompressionPreview" in script_response.text
+    assert "renderMemoryCompressionPreview" in script_response.text
+    assert "compressionSavings" in script_response.text
+    assert 'api("/api/v1/memory/compression/preview", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert "compressed_description" in script_response.text
+    assert "original_length" in script_response.text
+    assert "compressed_length" in script_response.text
+    assert "embedding_reindexed" in script_response.text
+    assert 'qs("#memoryCompressionPreviewForm").addEventListener("submit"' in script_response.text
+    assert "runMemoryCompressionPreview" in script_response.text
+    assert "Memory compression preview complete" in script_response.text
+    assert "Memory compression preview failed" in script_response.text
     assert "latestSettingsView" in script_response.text
     assert "renderSettingsReview" in script_response.text
     assert "renderSettingsGroups" in script_response.text

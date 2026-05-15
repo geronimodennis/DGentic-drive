@@ -624,6 +624,62 @@ review</textarea>
               </form>
               <div id="memoryLifecyclePreviewOutput" class="output-region" aria-live="polite"></div>
             </details>
+            <details id="memoryCompressionPreviewPanel" class="policy-editor">
+              <summary>Compression Preview</summary>
+              <form id="memoryCompressionPreviewForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Entity Types
+                    <input id="memoryCompressionEntityTypesInput" type="text" placeholder="memory, tool">
+                  </label>
+                  <label>
+                    Tags
+                    <input id="memoryCompressionTagsInput" type="text" placeholder="sprint, planning">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Category
+                    <input id="memoryCompressionCategoryInput" type="text" maxlength="120">
+                  </label>
+                  <label>
+                    Retention Policy
+                    <input id="memoryCompressionRetentionInput" type="text" maxlength="120">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Limit
+                    <input id="memoryCompressionLimitInput" type="number" min="1" max="500" value="100">
+                  </label>
+                  <label>
+                    Max Summary Chars
+                    <input id="memoryCompressionSummaryInput" type="number" min="80" max="4000" value="240">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Compress After Days
+                    <input id="memoryCompressionAgeInput" type="number" min="1" max="3650" value="30">
+                  </label>
+                  <label>
+                    Access Count Threshold
+                    <input id="memoryCompressionAccessInput" type="number" min="1" max="1000000" value="10">
+                  </label>
+                </div>
+                <div class="form-footer">
+                  <label class="checkbox-label">
+                    <input id="memoryCompressionInactiveInput" type="checkbox">
+                    Include Inactive
+                  </label>
+                  <button id="memoryCompressionPreviewButton" type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">?</span>
+                    <span>Preview Compression</span>
+                  </button>
+                </div>
+              </form>
+              <div id="memoryCompressionPreviewOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div class="reliability-grid">
               <section>
                 <h3>Memory Lifecycle</h3>

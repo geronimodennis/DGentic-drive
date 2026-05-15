@@ -4391,6 +4391,88 @@ async function runMemoryLifecyclePreview(event) {
   }
 }
 
+function memoryCompressionPreviewPayload() {
+  const payload = {
+    limit: Math.trunc(boundedNumber("#memoryCompressionLimitInput", 100, 1, 500)),
+    compress_after_days: Math.trunc(boundedNumber("#memoryCompressionAgeInput", 30, 1, 3650)),
+    compress_access_count_threshold: Math.trunc(boundedNumber("#memoryCompressionAccessInput", 10, 1, 1000000)),
+    max_summary_chars: Math.trunc(boundedNumber("#memoryCompressionSummaryInput", 240, 80, 4000)),
+    include_inactive: qs("#memoryCompressionInactiveInput").checked,
+  };
+  const entityTypes = splitCsv(qs("#memoryCompressionEntityTypesInput").value);
+  const tags = splitCsv(qs("#memoryCompressionTagsInput").value);
+  const category = qs("#memoryCompressionCategoryInput").value.trim();
+  const retentionPolicy = qs("#memoryCompressionRetentionInput").value.trim();
+  if (entityTypes.length) {
+    payload.entity_types = entityTypes;
+  }
+  if (tags.length) {
+    payload.tags = tags;
+  }
+  if (category) {
+    payload.category = category;
+  }
+  if (retentionPolicy) {
+    payload.retention_policy = retentionPolicy;
+  }
+  return payload;
+}
+
+function compressionSavings(candidate) {
+  const originalLength = Number(candidate.original_length || 0);
+  const compressedLength = Number(candidate.compressed_length || 0);
+  const saved = Math.max(0, originalLength - compressedLength);
+  return `${saved} chars saved (${originalLength} -> ${compressedLength})`;
+}
+
+function renderMemoryCompressionPreview(target, result) {
+  const candidates = result.candidates || [];
+  target.append(
+    statusBox(
+      "Compression preview",
+      `${result.total ?? candidates.length} candidate(s), applied=${result.applied === true ? "true" : "false"}`,
+      result.applied ? "blocked" : "ok",
+    ),
+  );
+  if (!candidates.length) {
+    target.append(statusBox("No compression candidates", "No memory matched the compression policy.", "pending"));
+    target.append(jsonBlock(result));
+    return;
+  }
+  const list = make("div", "compact-list");
+  for (const candidate of candidates.slice(0, 10)) {
+    const row = make("div", "list-item");
+    row.append(make("div", "item-title", `${candidate.entity_type || "memory"}: ${candidate.entity_id || "-"}`));
+    row.append(make("div", "item-meta", compressionSavings(candidate)));
+    row.append(make("div", "item-meta", candidate.reason || "No reason returned."));
+    if (candidate.compressed_description) {
+      row.append(make("div", "item-meta", candidate.compressed_description));
+    }
+    row.append(statusChip(candidate.embedding_reindexed ? "ok" : "pending"));
+    list.append(row);
+  }
+  target.append(list);
+  target.append(jsonBlock(result));
+}
+
+async function runMemoryCompressionPreview(event) {
+  event.preventDefault();
+  const target = qs("#memoryCompressionPreviewOutput");
+  const payload = memoryCompressionPreviewPayload();
+  clear(target);
+  target.append(statusBox("Previewing memory compression", `limit ${payload.limit}`, "running"));
+  try {
+    const result = await api("/api/v1/memory/compression/preview", { method: "POST", body: payload });
+    clear(target);
+    renderMemoryCompressionPreview(target, result);
+    showToast("Memory compression preview complete.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Memory compression preview failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function loadReliability() {
   const [memory, registry] = await Promise.all([
     safeLoad("memory metadata", () => api("/api/v1/memory/metadata?limit=50")),
@@ -5585,6 +5667,7 @@ function bindEvents() {
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval);
   qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview);
+  qs("#memoryCompressionPreviewForm").addEventListener("submit", runMemoryCompressionPreview);
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);

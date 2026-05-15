@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ba Memory Compression Preview UI
+
+Status: completed for the scoped read-only memory compression preview UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle/compression apply actions beyond preview, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected memory compression preview as the next safe Sprint 16 reliability slice because the backend already exposes deterministic compression preview and apply contracts, and only preview is needed for a safe dashboard surface.
+- Completed: Developer added a Compression Preview panel with entity type, tag, category, retention policy, limit, max summary characters, age, access-count threshold, and include-inactive controls.
+- Completed: Developer wired the panel only to `/api/v1/memory/compression/preview`, renders total candidates, applied=false status, original/compressed lengths, estimated savings, reasons, compressed descriptions, embedding reindex status, and safe raw JSON, and did not expose compression apply.
+- Completed: QA expanded Web UI static coverage for compression preview DOM hooks, payload helper, preview route wiring, candidate renderer, candidate fields, submit binding, and success/failure messages.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage status notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can preview deterministic compression candidates from the dashboard before any memory mutation.
+- Implemented in this slice: compression preview remains read-only and does not compact, reindex, archive, delete, or edit memory records.
+- Still out of scope after this slice: compression apply, lifecycle apply, metadata editing, full unified chat, actual AI-change file apply/revert mutation, and persistent or multi-worker project activation semantics.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_api.py::test_memory_compression_api_applies_and_retrieves_compressed_metadata` with 3 passed.
+- Full regression passed: `uv run pytest -q` with 1,365 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010az Memory Lifecycle Preview UI
 
 Status: completed for the scoped read-only memory lifecycle preview UI slice; Sprint 16 remains active for deeper full-chat execution semantics, actual AI-change file apply/revert mutation workflows, broader editable settings and policy workflows beyond the implemented CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance surfaces, memory lifecycle apply/compression actions beyond preview, and persistent or multi-worker project activation semantics.

@@ -54,6 +54,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "networkPolicyCheckForm" in response.text
     assert "networkPolicyUrlInput" in response.text
     assert "networkPolicySurfaceInput" in response.text
+    assert "networkPolicyApprovalButton" in response.text
     assert "networkPolicyCheckOutput" in response.text
     assert "cliPolicyForm" in response.text
     assert "cliPolicyEditor" in response.text
@@ -124,13 +125,25 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "filesystemBoundExecutionScaffold" in script_response.text
     assert "networkBoundExecutionScaffold" in script_response.text
     assert "networkPolicyCheckEndpoint" in script_response.text
+    assert "networkPolicyApprovalRequest" in script_response.text
     assert "networkPolicyDecisionState" in script_response.text
     assert "renderNetworkPolicyDecision" in script_response.text
     assert "checkNetworkPolicy" in script_response.text
+    assert "requestNetworkPolicyApproval" in script_response.text
     assert '"/guardrails/network"' in script_response.text
     assert '"/web-retrieval/network/check"' in script_response.text
+    assert 'endpoint: "/network/approvals"' in script_response.text
+    assert 'endpoint: "/web-retrieval/network/approvals"' in script_response.text
+    assert 'body: { url, surface: "provider", action: "request" }' in script_response.text
+    assert 'decision.mode !== "approval_required"' in script_response.text
+    assert "Approval requires a fresh check" in script_response.text
+    assert "Network approval created" in script_response.text
     assert 'qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy)' in (
         script_response.text
+    )
+    assert (
+        'qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval)'
+        in script_response.text
     )
     assert "Network policy decision" in script_response.text
     assert "Network policy checked" in script_response.text

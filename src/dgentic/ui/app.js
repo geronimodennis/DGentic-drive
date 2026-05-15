@@ -27,6 +27,7 @@ let selectedOrchestrationId = "";
 let taskGraphBuilderTasks = [];
 let latestSettingsView = null;
 let latestPolicyReviewResults = null;
+let latestNetworkPolicyPreflight = null;
 let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
@@ -4283,6 +4284,20 @@ function networkPolicyCheckEndpoint() {
     : "/guardrails/network";
 }
 
+function networkPolicyApprovalRequest() {
+  const url = qs("#networkPolicyUrlInput").value.trim();
+  if (qs("#networkPolicySurfaceInput").value === "web_retrieval") {
+    return {
+      endpoint: "/web-retrieval/network/approvals",
+      body: { url },
+    };
+  }
+  return {
+    endpoint: "/network/approvals",
+    body: { url, surface: "provider", action: "request" },
+  };
+}
+
 function networkPolicyDecisionState(decision) {
   if (decision.mode === "approval_required") {
     return "pending";
@@ -4296,6 +4311,7 @@ function renderNetworkPolicyDecision(target, decision) {
   const grid = make("div", "checkpoint-grid");
   appendKeyValue(grid, "Mode", decision.mode || "unknown", decision.mode || "");
   appendKeyValue(grid, "Host", decision.host || "-", modeState);
+  appendKeyValue(grid, "Review URL", decision.url || "-");
   appendKeyValue(grid, "Matched domain", decision.matched_domain || "-");
   appendKeyValue(grid, "Matched rule", decision.matched_rule_id || "-");
   appendKeyValue(grid, "Rule source", decision.matched_rule_source || "-");
@@ -4309,7 +4325,11 @@ function renderNetworkPolicyDecision(target, decision) {
 async function checkNetworkPolicy(event) {
   event.preventDefault();
   const target = qs("#networkPolicyCheckOutput");
+  const approvalButton = qs("#networkPolicyApprovalButton");
   const url = qs("#networkPolicyUrlInput").value.trim();
+  const surface = qs("#networkPolicySurfaceInput").value;
+  latestNetworkPolicyPreflight = null;
+  approvalButton.disabled = true;
   clear(target);
   target.append(statusBox("Checking network policy", url, "running"));
   try {
@@ -4318,11 +4338,50 @@ async function checkNetworkPolicy(event) {
       body: { url },
     });
     clear(target);
+    latestNetworkPolicyPreflight = { url, surface, decision };
+    approvalButton.disabled = decision.mode !== "approval_required";
     renderNetworkPolicyDecision(target, decision);
     showToast("Network policy checked.");
   } catch (error) {
     clear(target);
     target.append(statusBox("Network policy check failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+async function requestNetworkPolicyApproval() {
+  const target = qs("#networkPolicyCheckOutput");
+  const approvalButton = qs("#networkPolicyApprovalButton");
+  const url = qs("#networkPolicyUrlInput").value.trim();
+  const surface = qs("#networkPolicySurfaceInput").value;
+  if (
+    !latestNetworkPolicyPreflight ||
+    latestNetworkPolicyPreflight.url !== url ||
+    latestNetworkPolicyPreflight.surface !== surface ||
+    latestNetworkPolicyPreflight.decision.mode !== "approval_required"
+  ) {
+    clear(target);
+    target.append(statusBox("Approval requires a fresh check", url || "URL is missing.", "blocked"));
+    approvalButton.disabled = true;
+    return;
+  }
+  const request = networkPolicyApprovalRequest();
+  clear(target);
+  target.append(statusBox("Creating network approval", url, "running"));
+  try {
+    const approval = await api(request.endpoint, {
+      method: "POST",
+      body: request.body,
+    });
+    approvalButton.disabled = true;
+    clear(target);
+    target.append(statusBox("Network approval created", approval.id, "pending"));
+    target.append(jsonBlock(approval));
+    await loadApprovals();
+    showToast("Network approval created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Network approval failed", error.message, "failed"));
     showToast(error.message);
   }
 }
@@ -5145,6 +5204,15 @@ function bindEvents() {
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
+  qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);
+  qs("#networkPolicyUrlInput").addEventListener("input", () => {
+    latestNetworkPolicyPreflight = null;
+    qs("#networkPolicyApprovalButton").disabled = true;
+  });
+  qs("#networkPolicySurfaceInput").addEventListener("change", () => {
+    latestNetworkPolicyPreflight = null;
+    qs("#networkPolicyApprovalButton").disabled = true;
+  });
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();

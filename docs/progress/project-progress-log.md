@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ac Responsive Browser Validation Hardening
+
+Status: completed for the scoped responsive/browser validation slice; Sprint 16 remains active for deeper conversational history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, richer type-specific non-CLI request editors, provider/tool network-approval consuming flows, persistent or multi-worker project activation semantics, and end-to-end approval scenarios.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected responsive/browser validation as the next bounded Sprint 16 slice after BL-010ab because the dashboard had accumulated several dense approval, task, and Git surfaces that needed real viewport coverage.
+- Completed: QA reproduced the mobile issue at 390x844 where the approval panel created horizontal overflow through an unconstrained internal grid track and segmented approval filter controls.
+- Completed: Developer constrained panel grid tracks, allowed panel children and action rows to shrink/wrap, wrapped mobile segmented controls, and added an inline empty favicon declaration to remove `/favicon.ico` 404 browser noise.
+- Completed: QA added static UI coverage for the favicon declaration, panel shrink guard, and mobile segmented-control wrapping.
+- Completed: PM updated README, project status, backlog, architecture notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: `/ui/` desktop/tablet/mobile smoke coverage is clean, mobile approval filters stay inside the viewport, panel content no longer widens the page, and browser startup no longer emits favicon 404 noise.
+- Still out of scope after this slice: richer end-to-end approval scenarios with seeded approvals and operator decisions, persistent AI-change artifact apply/revert behavior, deeper task-chat history, and broader editable policy/settings workflows.
+
+Validation:
+- Focused UI validation passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check tests\test_ui.py`, `uv run ruff check tests\test_ui.py`, `uv run pytest tests\test_ui.py -q` with 3 tests, and `git diff --check`.
+- Responsive Playwright smoke passed against a temporary Uvicorn server on `127.0.0.1:8769` for desktop 1440x1100, tablet 820x1180, and mobile 390x844. Each viewport reported `scrollWidth == clientWidth`, zero overflowing elements, visible overview/tasks/approvals/git/settings panels, zero console messages, zero page errors, zero failed requests, and zero HTTP responses at status 400 or higher. Screenshots were refreshed under `.dgentic/ui-smoke/bl010ac-desktop.png`, `.dgentic/ui-smoke/bl010ac-tablet.png`, and `.dgentic/ui-smoke/bl010ac-mobile.png`.
+- Full regression passed: `uv run pytest -q` with 1,336 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, `node --check src\dgentic\ui\app.js`, and `git diff --check`.
+
 ### Sprint 16 BL-010ab Non-CLI Bound Request Editor And Execution UX
 
 Status: completed for the scoped editable non-CLI bound execution slice; Sprint 16 remains active for richer type-specific non-CLI editors, provider/tool network-approval consuming flows, persistent AI-change artifact apply/revert workflows, deeper conversational history, broader editable settings and policy workflows, persistent or multi-worker project activation semantics, end-to-end approval scenarios, and broader browser validation.

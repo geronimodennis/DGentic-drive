@@ -58,6 +58,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "cliPolicyRolesInput" in response.text
     assert "recipeActionPanel" in response.text
     assert "settingsOutput" in response.text
+    assert 'rel="icon" href="data:,"' in response.text
     assert "./app.js" in response.text
     assert "./app.css" in response.text
 
@@ -323,6 +324,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'qs("#cliPolicyCancelEditButton").addEventListener("click"' in script_response.text
     assert style_response.status_code == 200
     assert ".app-shell" in style_response.text
+    assert ".panel > *" in style_response.text
+    assert "grid-template-columns: minmax(0, 1fr);" in style_response.text
     assert ".task-chat" in style_response.text
     assert ".task-chat-transcript" in style_response.text
     assert ".task-chat-message" in style_response.text
@@ -344,6 +347,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".dependency-list" in style_response.text
     assert ".builder-task-actions" in style_response.text
     assert ".approval-filter-row" in style_response.text
+    assert ".segmented-control button" in style_response.text
+    assert "flex: 1 1 96px;" in style_response.text
     assert ".approval-summary-grid" in style_response.text
     assert ".approval-review-summary" in style_response.text
     assert ".bound-execution-panel" in style_response.text

@@ -6,6 +6,29 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-15
 
+### Sprint 16 BL-010ag Browser-Driven Seeded CLI Approval Scenario
+
+Status: completed for the scoped first browser-driven seeded approval scenario; Sprint 16 remains active for broader non-CLI browser approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected the smallest browser-driven seeded approval path after BL-010af: CLI approval review and approval through the actual dashboard UI.
+- Completed: QA explorer confirmed CLI approvals are the lowest-friction seeded source and recommended stopping before direct command execution for this first browser slice.
+- Completed: QA added `tests/test_ui_browser.py`, including a live FastAPI UI fixture, dependency-light local Chromium/Edge DevTools driver, seeded CLI approval setup, browser inbox filtering, review-panel interaction, dashboard approval submission, and refreshed approved-state assertion.
+- Completed: PM updated README, usage, architecture, project status, backlog, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: the test suite now drives a real browser against `/ui/` to verify that a seeded pending CLI approval appears in the dashboard, can be reviewed, can be approved through the visible form, and refreshes to an approved review state with the direct-execute affordance enabled.
+- Still out of scope after this slice: direct browser execution of the approved command, browser-driven filesystem/network/provider/tool approval scenarios, provider/tool network approval consuming flows, and type-specific nested editor browser tests.
+
+Validation:
+- Focused browser/UI validation passed: `uv run pytest -q tests\test_ui_browser.py tests\test_ui.py` with 5 passed.
+- Focused browser lint/static checks passed: `uv run ruff format --check tests\test_ui_browser.py` and `uv run ruff check tests\test_ui_browser.py`.
+- Full regression passed: `uv run pytest -q` with 1,355 passed and 2 skipped.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010af Approval Dashboard Contract Coverage
 
 Status: completed for the scoped approval-dashboard backend contract and redaction-hardening slice; Sprint 16 remains active for browser-driven seeded approval scenarios, deeper nested type-specific request editors, provider/tool network-approval consuming browser flows, full unified chat beyond local task history, persistent AI-change artifact apply/revert workflows, broader editable settings and policy workflows, and persistent or multi-worker project activation semantics.

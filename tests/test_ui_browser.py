@@ -480,6 +480,78 @@ def test_browser_workspace_editor_can_apply_and_revert_file_change(
     assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
+def test_browser_task_chat_can_plan_run_and_insert_execution_evidence(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatInput").value =
+            "Plan and run browser task-chat execution evidence.";
+          document.querySelector("#taskChatContextInput").value =
+            "Use existing task contracts only.";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Transcript shows execution status.";
+          document.querySelector("#taskChatRunInput").checked = true;
+          document.querySelector("#taskChatSubmitButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          const execution = document.querySelector(".task-chat-execution-card")?.textContent || "";
+          return transcript.includes("Plan created")
+            && transcript.includes("Task plan executed")
+            && execution.includes("Execution Summary")
+            && execution.includes("5 completed")
+            && execution.includes("step-1")
+            && Boolean(document.querySelector('[data-testid="task-chat-execution-use-evidence"]'));
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const context = document.querySelector("#taskChatContextStream")?.textContent || "";
+          return document.querySelector("#plansMetric")?.textContent === "1"
+            && document.querySelector("#runsMetric")?.textContent === "Runs: 1"
+            && context.includes("1 plans / 1 runs");
+        })()
+        """
+    )
+
+    runs_status, runs_body = _http_json("GET", f"{base_url}/tasks/runs")
+    assert runs_status == 200
+    assert len(runs_body) == 1
+    assert runs_body[0]["status"] == "completed"
+    assert len(runs_body[0]["results"]) == 5
+    assert all(result["status"] == "completed" for result in runs_body[0]["results"])
+
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"task-chat-execution-use-evidence\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Run ID:")
+            && value.includes("Plan ID:")
+            && value.includes("Status: completed")
+            && value.includes("step-1:completed");
+        })()
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,

@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-16
 
+### Sprint 16 BL-010bi Task-Chat Execution Transcript Status Cards
+
+Status: completed for the scoped deterministic task-chat execution transcript slice; Sprint 16 remains active for task-chat to orchestration-run handoff and richer unified chat semantics, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a bounded task-chat execution transcript/status slice because BL-010z, BL-010ad, BL-010aq, and BL-010bc already provided the composer, local history, context stream, and reusable plan/run evidence controls.
+- Completed: Architect/Reviewer confirmed the slice should stay on existing `/tasks/plan`, `/tasks/execute`, `/tasks/plans`, and `/tasks/runs` contracts and treat deterministic task execution as evidence only, not as orchestration or approval bypass.
+- Completed: Developer updated task-chat run handling so a single transcript execution card is created while running and then updated to completed or failed instead of appending detached run messages.
+- Completed: Developer added bounded execution/run compaction, step-result summaries, duration/status metadata, and an execution-card `Use Evidence` action that inserts deterministic run evidence through the existing task-chat context helper.
+- Completed: QA expanded static UI coverage for the execution transcript helpers, DOM hooks, and CSS hooks.
+- Completed: QA added browser coverage for task-chat plan creation with auto-run, execution transcript rendering, dashboard metric/context refresh, backend run persistence, and evidence insertion back into the composer.
+- Completed: Reviewer/Security confirmed the slice adds no new mutation authority, uses text-safe DOM construction, keeps restored browser-history plan cards display-only, and continues to rely on backend capability gates for protected routes.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: task-chat auto-run now produces a live execution transcript/status card that transitions to completed or failed for the deterministic `/tasks/execute` run.
+- Implemented in this slice: execution cards show plan/run ids, run timing, result counts, and bounded per-step result summaries without exposing raw execution output beyond the existing safe task-run contract.
+- Implemented in this slice: operators can insert deterministic run evidence from the execution card back into the task-chat context composer for follow-up turns.
+- Still out of scope after this slice: model-backed chat, streaming assistant responses, task-chat to orchestration-run draft creation, starting orchestration cycles from chat, and any approval/filesystem/provider/tool bypass.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_can_plan_run_and_insert_execution_evidence` with 2 passed.
+- Broader UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 15 passed.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010bh Guarded Workspace File Change Apply/Revert Controls
 
 Status: completed for the scoped guarded workspace file mutation slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.

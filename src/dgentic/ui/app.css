@@ -575,7 +575,8 @@ textarea {
 }
 
 .task-chat-message,
-.task-chat-plan-card {
+.task-chat-plan-card,
+.task-chat-execution-card {
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -601,6 +602,32 @@ textarea {
 .task-chat-plan-card {
   border-top: 1px solid var(--line);
   padding-top: 10px;
+}
+
+.task-chat-execution-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.task-chat-execution-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.task-chat-execution-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-chat-execution-results {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .task-chat-actions {
@@ -1369,6 +1396,8 @@ textarea {
   .task-title-row,
   .execution-row,
   .task-plan-header,
+  .task-chat-execution-header,
+  .task-chat-execution-grid,
   .task-step-title-row,
   .task-run-row,
   .task-step-detail-grid {

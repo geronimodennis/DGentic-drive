@@ -39,6 +39,7 @@ let editingCliPolicyRuleId = "";
 let editingCommandRecipeId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
+let taskChatMessageSequence = 0;
 let latestTaskChatContext = {
   plans: [],
   runs: [],
@@ -701,7 +702,10 @@ function taskPlanContextLines(plan) {
 
 function taskRunContextLines(run) {
   const results = (run.results || [])
-    .map((result) => `${result.step_id}:${result.status}`)
+    .map((result) => {
+      const title = result.output?.title ? ` - ${result.output.title}` : "";
+      return `${result.step_id}:${result.status}${title}`;
+    })
     .slice(0, 8)
     .join("; ");
   return [
@@ -849,6 +853,23 @@ function boundedStringList(values, limit = 8, itemLimit = 280) {
     .filter(Boolean);
 }
 
+function compactTaskChatStepResult(result) {
+  const safeResult = result && typeof result === "object" ? result : {};
+  const safeOutput = safeResult.output && typeof safeResult.output === "object" ? safeResult.output : {};
+  return {
+    step_id: boundedString(safeResult.step_id, 120),
+    status: boundedString(safeResult.status, 80),
+    error: boundedString(safeResult.error, 360),
+    retry_count: Number.isFinite(Number(safeResult.retry_count)) ? Number(safeResult.retry_count) : 0,
+    completed_at: boundedString(safeResult.completed_at, 80),
+    output: {
+      title: boundedString(safeOutput.title, 240),
+      validation: boundedString(safeOutput.validation, 360),
+      agent_role: boundedString(safeOutput.agent_role, 120),
+    },
+  };
+}
+
 function compactTaskChatPlan(plan) {
   if (!plan || typeof plan !== "object") {
     return null;
@@ -883,17 +904,31 @@ function compactTaskChatRun(run) {
   }
   return {
     id: boundedString(run.id, 120),
+    plan_id: boundedString(run.plan_id, 120),
     status: boundedString(run.status, 80),
+    started_at: boundedString(run.started_at, 80),
     completed_at: boundedString(run.completed_at, 80),
-    results: (Array.isArray(run.results) ? run.results : []).slice(0, 12).map((result) => {
-      const safeResult = result && typeof result === "object" ? result : {};
-      return {
-        step_id: boundedString(safeResult.step_id, 120),
-        status: boundedString(safeResult.status, 80),
-        error: boundedString(safeResult.error, 360),
-      };
-    }),
+    results: (Array.isArray(run.results) ? run.results : []).slice(0, 12).map(compactTaskChatStepResult),
   };
+}
+
+function compactTaskChatExecution(execution) {
+  if (!execution || typeof execution !== "object") {
+    return null;
+  }
+  const compact = {
+    status: boundedString(execution.status, 80),
+    detail: boundedString(execution.detail, 800),
+    error: boundedString(execution.error, 800),
+    created_at: boundedString(execution.created_at, 80),
+  };
+  if (execution.plan) {
+    compact.plan = compactTaskChatPlan(execution.plan);
+  }
+  if (execution.run) {
+    compact.run = compactTaskChatRun(execution.run);
+  }
+  return compact;
 }
 
 function compactTaskChatMessage(message, { restored = false } = {}) {
@@ -912,6 +947,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.run) {
     compact.run = compactTaskChatRun(message.run);
+  }
+  if (message.execution) {
+    compact.execution = compactTaskChatExecution(message.execution);
   }
   if (restored) {
     compact.restored = true;
@@ -988,11 +1026,34 @@ function clearTaskChatHistory() {
   updateTaskChatHistoryStatus();
 }
 
+function nextTaskChatMessageId() {
+  taskChatMessageSequence += 1;
+  return `task-chat-message-${Date.now()}-${taskChatMessageSequence}`;
+}
+
 function appendTaskChatMessage(message) {
-  taskChatMessages.push({
+  const nextMessage = {
+    clientId: nextTaskChatMessageId(),
     createdAt: new Date().toISOString(),
     ...message,
-  });
+  };
+  taskChatMessages.push(nextMessage);
+  saveTaskChatHistory();
+  renderTaskChatThread();
+  return nextMessage;
+}
+
+function updateTaskChatMessage(clientId, patch) {
+  const index = taskChatMessages.findIndex((message) => message.clientId === clientId);
+  if (index < 0) {
+    appendTaskChatMessage(patch);
+    return;
+  }
+  taskChatMessages[index] = {
+    ...taskChatMessages[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
   saveTaskChatHistory();
   renderTaskChatThread();
 }
@@ -1027,6 +1088,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.plan) {
     renderTaskChatPlan(item, message.plan, { historical: message.restored });
+  }
+  if (message.execution) {
+    renderTaskChatExecution(item, message.execution);
   }
   if (message.run) {
     renderTaskRunResult(item, message.run);
@@ -1072,30 +1136,125 @@ async function runTaskPlan(plan) {
   return api("/tasks/execute", { method: "POST", body: plan });
 }
 
+function taskRunStatusCounts(run) {
+  const counts = {};
+  for (const result of run?.results || []) {
+    const status = result.status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  return counts;
+}
+
+function taskRunSummaryLine(run) {
+  const counts = taskRunStatusCounts(run);
+  const total = (run?.results || []).length;
+  if (!total) {
+    return "No step results yet";
+  }
+  return Object.entries(counts)
+    .map(([status, count]) => `${count} ${status}`)
+    .join(", ");
+}
+
+function taskRunDurationLine(run) {
+  const started = run?.started_at ? new Date(run.started_at).getTime() : NaN;
+  const completed = run?.completed_at ? new Date(run.completed_at).getTime() : NaN;
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) {
+    return "-";
+  }
+  return `${Math.max(0, completed - started)} ms`;
+}
+
+function taskChatExecutionRecord(plan, run = null, error = null) {
+  const status = run?.status || (error ? "failed" : "running");
+  return {
+    plan: compactTaskChatPlan(plan),
+    run: run ? compactTaskChatRun(run) : null,
+    status,
+    detail: run ? taskRunSummaryLine(run) : `Waiting for ${plan.steps?.length || 0} planned steps.`,
+    error: error ? boundedString(error.message || String(error), 800) : "",
+    created_at: new Date().toISOString(),
+  };
+}
+
+function renderTaskChatExecution(target, execution) {
+  const card = make("div", "task-chat-execution-card");
+  const plan = execution.plan || {};
+  const run = execution.run || {};
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Execution Summary"));
+  copy.append(make("div", "item-meta", `${plan.id || "plan"} -> ${run.id || "pending run"}`));
+  const actions = make("div", "task-run-actions");
+  if (run.id) {
+    const evidenceButton = make("button", "link-button", "Use Evidence");
+    evidenceButton.type = "button";
+    evidenceButton.dataset.testid = "task-chat-execution-use-evidence";
+    evidenceButton.addEventListener("click", () =>
+      insertTaskChatContext(`Run ${run.id}`, taskRunContextLines(run)),
+    );
+    actions.append(evidenceButton);
+  }
+  const openButton = make("button", "link-button", "Open Tasks");
+  openButton.type = "button";
+  openButton.addEventListener("click", () => openTaskChatContextSection("tasks"));
+  actions.append(statusChip(execution.status), openButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Plan", plan.id || "-");
+  appendKeyValue(grid, "Run", run.id || "-");
+  appendKeyValue(grid, "Results", run.results?.length ? taskRunSummaryLine(run) : execution.detail || "-");
+  appendKeyValue(grid, "Duration", taskRunDurationLine(run));
+  appendKeyValue(grid, "Started", formatTimestamp(run.started_at));
+  appendKeyValue(grid, "Completed", formatTimestamp(run.completed_at));
+  card.append(grid);
+
+  if (execution.error) {
+    card.append(statusBox("Execution error", execution.error, "failed"));
+  }
+
+  const resultList = make("div", "task-chat-execution-results");
+  for (const result of (run.results || []).slice(0, 8)) {
+    const row = make("div", "finding-row");
+    const title = result.output?.title || result.error || result.output?.validation || "Step result";
+    row.append(statusChip(result.status), make("span", "", `${result.step_id} - ${title}`));
+    resultList.append(row);
+  }
+  if (!resultList.childElementCount && !execution.error) {
+    resultList.append(statusBox("Execution pending", execution.detail || "Waiting for task results.", "running"));
+  }
+  card.append(resultList);
+  target.append(card);
+}
+
 async function runTaskChatPlan(plan) {
-  appendTaskChatMessage({
+  const runningMessage = appendTaskChatMessage({
     role: "agent",
     title: "Running plan",
     detail: plan.id,
     state: "running",
+    execution: taskChatExecutionRecord(plan),
   });
   try {
     const run = await runTaskPlan(plan);
-    appendTaskChatMessage({
+    updateTaskChatMessage(runningMessage.clientId, {
       role: "agent",
       title: "Task plan executed",
       detail: `${run.id} - ${run.results?.length || 0} step results`,
       state: run.status,
-      run,
+      execution: taskChatExecutionRecord(plan, run),
     });
     await Promise.all([loadTasks(), loadTaskChatContext()]);
     showToast("Task plan executed.");
   } catch (error) {
-    appendTaskChatMessage({
+    updateTaskChatMessage(runningMessage.clientId, {
       role: "agent",
       title: "Task execution failed",
       detail: error.message,
       state: "failed",
+      execution: taskChatExecutionRecord(plan, null, error),
     });
     showToast(error.message);
   }

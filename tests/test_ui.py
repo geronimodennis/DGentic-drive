@@ -506,6 +506,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatThread" in script_response.text
     assert "renderTaskChatMessage" in script_response.text
     assert "renderTaskChatPlan" in script_response.text
+    assert "renderTaskChatExecution" in script_response.text
+    assert "taskChatExecutionRecord" in script_response.text
+    assert "taskRunSummaryLine" in script_response.text
+    assert "taskRunDurationLine" in script_response.text
+    assert "compactTaskChatExecution" in script_response.text
+    assert "compactTaskChatStepResult" in script_response.text
+    assert "updateTaskChatMessage" in script_response.text
+    assert "task-chat-execution-use-evidence" in script_response.text
     assert "runTaskChatPlan" in script_response.text
     assert "runTaskPlan" in script_response.text
     assert 'qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage)' in (
@@ -801,6 +809,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-chat-message-agent" in style_response.text
     assert ".task-chat-composer" in style_response.text
     assert ".task-chat-plan-card" in style_response.text
+    assert ".task-chat-execution-card" in style_response.text
+    assert ".task-chat-execution-header" in style_response.text
+    assert ".task-chat-execution-grid" in style_response.text
+    assert ".task-chat-execution-results" in style_response.text
     assert ".task-run-actions" in style_response.text
     assert "grid-column: 1 / -1;" in style_response.text
     assert ".workspace-layout" in style_response.text

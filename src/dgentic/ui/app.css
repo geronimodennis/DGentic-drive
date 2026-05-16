@@ -576,7 +576,8 @@ textarea {
 
 .task-chat-message,
 .task-chat-plan-card,
-.task-chat-execution-card {
+.task-chat-execution-card,
+.task-chat-orchestration-card {
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -604,7 +605,8 @@ textarea {
   padding-top: 10px;
 }
 
-.task-chat-execution-card {
+.task-chat-execution-card,
+.task-chat-orchestration-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;

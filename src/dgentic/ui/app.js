@@ -931,6 +931,21 @@ function compactTaskChatExecution(execution) {
   return compact;
 }
 
+function compactTaskChatOrchestrationRun(run) {
+  if (!run || typeof run !== "object") {
+    return null;
+  }
+  return {
+    id: boundedString(run.id, 120),
+    objective: boundedString(run.objective, 800),
+    status: boundedString(run.status, 80),
+    created_at: boundedString(run.created_at, 80),
+    updated_at: boundedString(run.updated_at, 80),
+    task_count: Array.isArray(run.tasks) ? run.tasks.length : Number(run.task_count || 0),
+    required_dod_evidence: boundedStringList(run.required_dod_evidence, 8, 120),
+  };
+}
+
 function compactTaskChatMessage(message, { restored = false } = {}) {
   if (!message || typeof message !== "object") {
     return null;
@@ -950,6 +965,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.execution) {
     compact.execution = compactTaskChatExecution(message.execution);
+  }
+  if (message.orchestration) {
+    compact.orchestration = compactTaskChatOrchestrationRun(message.orchestration);
   }
   if (restored) {
     compact.restored = true;
@@ -1092,6 +1110,9 @@ function renderTaskChatMessage(target, message) {
   if (message.execution) {
     renderTaskChatExecution(item, message.execution);
   }
+  if (message.orchestration) {
+    renderTaskChatOrchestration(item, message.orchestration);
+  }
   if (message.run) {
     renderTaskRunResult(item, message.run);
   }
@@ -1124,7 +1145,15 @@ function renderTaskChatPlan(target, plan, options = {}) {
     runButton.title = "Saved history is display only.";
   }
   runButton.addEventListener("click", () => runTaskChatPlan(plan));
-  actions.append(statusChip(plan.status), contextButton, runButton);
+  const orchestrationButton = make("button", "link-button", "Create Orchestration");
+  orchestrationButton.type = "button";
+  orchestrationButton.dataset.testid = "task-plan-create-orchestration";
+  orchestrationButton.disabled = options.historical || !(plan.steps || []).length;
+  if (options.historical) {
+    orchestrationButton.title = "Saved history is display only.";
+  }
+  orchestrationButton.addEventListener("click", () => createTaskChatOrchestration(plan));
+  actions.append(statusChip(plan.status), contextButton, runButton, orchestrationButton);
   header.append(copy, actions);
   card.append(header);
   renderTaskPlanContext(card, plan);
@@ -1175,6 +1204,53 @@ function taskChatExecutionRecord(plan, run = null, error = null) {
     error: error ? boundedString(error.message || String(error), 800) : "",
     created_at: new Date().toISOString(),
   };
+}
+
+function taskPlanOrchestrationPayload(plan) {
+  return {
+    objective: plan.objective || plan.id || "Task chat orchestration",
+    requested_by: "dashboard-task-chat",
+    tasks: (plan.steps || []).map((step) => ({
+      id: step.id,
+      title: step.title || step.id,
+      description: step.description || step.title || step.id,
+      role: step.agent_role || "orchestrator",
+      dependencies: step.dependencies || [],
+      declared_write_paths: [],
+      shared_memory_tags: [],
+      expected_output: step.validation || "",
+      validation: step.validation || "",
+      retry_limit: 0,
+    })),
+    required_dod_evidence: ["tests", "docs", "review"],
+    shared_memory_tags: [],
+    shared_memory_policy: "owner",
+  };
+}
+
+function renderTaskChatOrchestration(target, run) {
+  const card = make("div", "task-chat-orchestration-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Orchestration Run"));
+  copy.append(make("div", "item-meta", `${run.id || "run"} - ${run.task_count || 0} tasks`));
+  const actions = make("div", "task-run-actions");
+  const openButton = make("button", "link-button", "Open Orchestration");
+  openButton.type = "button";
+  openButton.addEventListener("click", () => openTaskChatContextSection("orchestrationDetail"));
+  actions.append(statusChip(run.status), openButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Run", run.id || "-");
+  appendKeyValue(grid, "Status", run.status || "-");
+  appendKeyValue(grid, "Tasks", String(run.task_count || 0));
+  appendKeyValue(grid, "Evidence", (run.required_dod_evidence || []).join(", ") || "-");
+  appendKeyValue(grid, "Created", formatTimestamp(run.created_at));
+  appendKeyValue(grid, "Updated", formatTimestamp(run.updated_at));
+  card.append(grid);
+  target.append(card);
 }
 
 function renderTaskChatExecution(target, execution) {
@@ -1255,6 +1331,38 @@ async function runTaskChatPlan(plan) {
       detail: error.message,
       state: "failed",
       execution: taskChatExecutionRecord(plan, null, error),
+    });
+    showToast(error.message);
+  }
+}
+
+async function createTaskChatOrchestration(plan) {
+  const creatingMessage = appendTaskChatMessage({
+    role: "agent",
+    title: "Creating orchestration",
+    detail: plan.id,
+    state: "running",
+  });
+  try {
+    const payload = taskPlanOrchestrationPayload(plan);
+    const run = await api("/tasks/orchestrations", { method: "POST", body: payload });
+    selectedOrchestrationId = run.id;
+    updateTaskChatMessage(creatingMessage.clientId, {
+      role: "agent",
+      title: "Orchestration created",
+      detail: `${run.id} - ${(run.tasks || []).length} tasks`,
+      state: run.status,
+      orchestration: compactTaskChatOrchestrationRun(run),
+    });
+    await Promise.all([loadTasks(), loadTaskChatContext()]);
+    await loadOrchestrationDetail(run.id, run);
+    showToast("Orchestration created.");
+  } catch (error) {
+    updateTaskChatMessage(creatingMessage.clientId, {
+      role: "agent",
+      title: "Orchestration create failed",
+      detail: error.message,
+      state: "failed",
     });
     showToast(error.message);
   }

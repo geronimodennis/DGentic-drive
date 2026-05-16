@@ -356,6 +356,15 @@ review</textarea>
                   </button>
                 </div>
                 <textarea id="workspaceEditor" rows="18" spellcheck="false"></textarea>
+                <div class="workspace-change-actions button-row">
+                  <button id="workspacePreviewButton" type="button" class="link-button" disabled>Preview Change</button>
+                  <button id="workspaceApplyButton" type="button" class="primary-button" disabled>
+                    <span class="button-icon" aria-hidden="true">A</span>
+                    Apply Change
+                  </button>
+                  <button id="workspaceRevertButton" type="button" class="link-button" disabled>Revert Last</button>
+                </div>
+                <div id="workspaceChangeReview" class="workspace-change-review"></div>
                 <div id="workspaceStatus" class="output-region"></div>
               </div>
             </div>

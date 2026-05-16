@@ -396,6 +396,90 @@ def devtools_page(tmp_path):
             process.wait(timeout=5)
 
 
+def test_browser_workspace_editor_can_apply_and_revert_file_change(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    target = root_dir / "review-me.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#workspace"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".file-row")]
+          .some((row) => row.textContent.includes("review-me.txt"))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll(".file-row")]
+            .find((candidate) => candidate.textContent.includes("review-me.txt"));
+          row.click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#workspaceEditorTitle")?.textContent.includes("review-me.txt")
+          && document.querySelector("#workspaceEditor")?.value === "alpha\\n"
+          && document.querySelector("#workspaceChangeReview")?.textContent
+            .includes("No pending editor change")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const editor = document.querySelector("#workspaceEditor");
+          editor.value = "alpha\\nbeta\\n";
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const review = document.querySelector("#workspaceChangeReview")?.textContent || "";
+          return review.includes("Pending file change")
+            && review.includes("Changed lines")
+            && !document.querySelector("#workspaceApplyButton")?.disabled;
+        })()
+        """
+    )
+    devtools_page.eval('document.querySelector("#workspacePreviewButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#toast")?.textContent.includes("Workspace change preview refreshed")
+        """
+    )
+    devtools_page.eval('document.querySelector("#workspaceApplyButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#workspaceStatus")?.textContent.includes("File change applied")
+          && document.querySelector("#workspaceChangeReview")?.textContent
+            .includes("No pending editor change")
+          && document.querySelector("#workspaceChangeReview")?.textContent
+            .includes("Revert available")
+          && !document.querySelector("#workspaceRevertButton")?.disabled
+        """
+    )
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+    devtools_page.eval('document.querySelector("#workspaceRevertButton").click()')
+    devtools_page.wait_for(
+        """
+        document.querySelector("#workspaceStatus")?.textContent.includes("File change reverted")
+          && document.querySelector("#workspaceEditor")?.value === "alpha\\n"
+          && document.querySelector("#workspaceRevertButton")?.disabled
+        """
+    )
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,

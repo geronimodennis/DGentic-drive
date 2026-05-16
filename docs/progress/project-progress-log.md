@@ -4,6 +4,37 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 For the current sprint, priority order, safe stopping rules, and source-of-truth links, start with [docs/project-status.md](../project-status.md). Keep this file as the historical append-only progress ledger.
 
+## 2026-05-16
+
+### Sprint 16 BL-010bh Guarded Workspace File Change Apply/Revert Controls
+
+Status: completed for the scoped guarded workspace file mutation slice; Sprint 16 remains active for deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected guarded workspace file change apply/revert as the next bounded Sprint 16 slice because the dashboard already had active-root file browsing/editing and existing guarded filesystem read/write contracts.
+- Completed: Architect/Reviewer confirmed raw Git diff reviews remain evidence-only because they can be redacted, truncated, protected-path omitted, and exclude untracked file content; full Git hunk/patch apply or revert stays deferred rather than forced through unsafe client patch semantics.
+- Completed: Developer added workspace editor baseline tracking, pending-change preview summaries, guarded Apply Change, and Revert Last controls that call the existing `/filesystem/write` route instead of adding backend mutation routes.
+- Completed: Developer kept the existing Save button aligned with the guarded apply path so dashboard-written content records a reversible last-applied baseline.
+- Completed: QA expanded static UI coverage for the new DOM hooks, helper functions, guarded write payloads, status text, and CSS hooks.
+- Completed: QA added browser coverage for opening a file, previewing a pending editor delta, applying the change through the dashboard, and reverting the last dashboard-applied content.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can preview pending workspace editor changes with byte, line, changed-line, and revert-availability summaries before mutating the file.
+- Implemented in this slice: Apply Change and Save both use the existing guarded filesystem write contract and preserve the previous loaded/applied content for a one-step dashboard revert.
+- Implemented in this slice: Revert Last writes the preserved prior content through the same guarded filesystem route and refreshes the workspace state.
+- Still out of scope after this slice: authoritative Git hunk/file patch application, Git checkout/restore/revert flows, untracked file content review, and backend rollback/revert workflows.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_workspace_editor_can_apply_and_revert_file_change` with 3 passed.
+- Broader UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 14 passed.
+- Full regression passed: `uv run pytest -q` with 1,369 passed and 2 skipped.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Lint/static checks passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ## 2026-05-15
 
 ### Sprint 16 BL-010bg Filesystem Approval Detail Editors

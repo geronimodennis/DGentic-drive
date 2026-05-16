@@ -14,6 +14,13 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "DGentic Control" in response.text
     assert "Workspace" in response.text
+    assert "workspacePreviewButton" in response.text
+    assert "workspaceApplyButton" in response.text
+    assert "workspaceRevertButton" in response.text
+    assert "workspaceChangeReview" in response.text
+    assert "Preview Change" in response.text
+    assert "Apply Change" in response.text
+    assert "Revert Last" in response.text
     assert "Project" in response.text
     assert "Context" in response.text
     assert "Active root" in response.text
@@ -508,6 +515,24 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/filesystem/list"' in script_response.text
     assert 'api("/filesystem/read"' in script_response.text
     assert 'api("/filesystem/write"' in script_response.text
+    assert "openFileBaselineContent" in script_response.text
+    assert "lastWorkspaceAppliedChange" in script_response.text
+    assert "workspaceChangeStats" in script_response.text
+    assert "renderWorkspaceChangeReview" in script_response.text
+    assert "previewWorkspaceFileChange" in script_response.text
+    assert "applyWorkspaceFileChange" in script_response.text
+    assert "revertWorkspaceFileChange" in script_response.text
+    assert 'qs("#workspacePreviewButton").addEventListener("click"' in script_response.text
+    assert 'qs("#workspaceApplyButton").addEventListener("click"' in script_response.text
+    assert 'qs("#workspaceRevertButton").addEventListener("click"' in script_response.text
+    assert 'qs("#workspaceEditor").addEventListener("input", renderWorkspaceChangeReview)' in (
+        script_response.text
+    )
+    assert "Pending file change" in script_response.text
+    assert "File change applied" in script_response.text
+    assert "File change reverted" in script_response.text
+    assert "Discard unsaved editor changes" in script_response.text
+    assert "body: { path: change.path, content: change.previousContent }" in script_response.text
     assert 'api("/cli/runs"' in script_response.text
     assert "api(`/cli/runs/${encodeURIComponent(runId)}/output`)" in script_response.text
     assert "api(`/cli/approvals/${encodeURIComponent(approvalId)}/execute`" in script_response.text
@@ -791,6 +816,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-builder-grid" in style_response.text
     assert ".dependency-list" in style_response.text
     assert ".builder-task-actions" in style_response.text
+    assert ".workspace-change-actions" in style_response.text
+    assert ".workspace-change-review" in style_response.text
+    assert ".workspace-change-review:empty" in style_response.text
     assert ".approval-filter-row" in style_response.text
     assert ".segmented-control button" in style_response.text
     assert "flex: 1 1 96px;" in style_response.text

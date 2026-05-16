@@ -19,6 +19,8 @@ let approvalSource = "";
 let selectedApproval = null;
 let workspacePath = ".";
 let openFilePath = "";
+let openFileBaselineContent = "";
+let lastWorkspaceAppliedChange = null;
 let toastTimer = null;
 let activeRootDir = "";
 let activeRootSource = "";
@@ -394,35 +396,182 @@ async function openWorkspaceFile(path) {
   try {
     const response = await api("/filesystem/read", { method: "POST", body: { path } });
     openFilePath = String(response.path || path);
+    openFileBaselineContent = response.content || "";
     qs("#workspaceEditorTitle").textContent = openFilePath;
-    qs("#workspaceEditor").value = response.content || "";
+    qs("#workspaceEditor").value = openFileBaselineContent;
     clear(target);
     target.append(statusBox("File loaded", `${response.bytes_read} bytes`, "ok"));
+    renderWorkspaceChangeReview();
   } catch (error) {
     clear(target);
     target.append(statusBox("Open failed", error.message, "failed"));
+    renderWorkspaceChangeReview();
   }
 }
 
 async function saveWorkspaceFile() {
+  await applyWorkspaceFileChange({ unchangedTitle: "No changes to save", successTitle: "File saved" });
+}
+
+function workspaceTextBytes(value) {
+  return new TextEncoder().encode(String(value || "")).length;
+}
+
+function workspaceLineCount(value) {
+  const text = String(value || "");
+  return text ? text.split(/\r?\n/).length : 0;
+}
+
+function workspaceChangeStats(previous, next) {
+  const previousText = String(previous || "");
+  const nextText = String(next || "");
+  const previousLines = previousText.split(/\r?\n/);
+  const nextLines = nextText.split(/\r?\n/);
+  const maxLines = Math.max(previousLines.length, nextLines.length);
+  let changedLines = 0;
+  for (let index = 0; index < maxLines; index += 1) {
+    if ((previousLines[index] || "") !== (nextLines[index] || "")) {
+      changedLines += 1;
+    }
+  }
+  return {
+    previousBytes: workspaceTextBytes(previousText),
+    nextBytes: workspaceTextBytes(nextText),
+    byteDelta: workspaceTextBytes(nextText) - workspaceTextBytes(previousText),
+    previousLines: workspaceLineCount(previousText),
+    nextLines: workspaceLineCount(nextText),
+    changedLines,
+  };
+}
+
+function workspaceHasPendingEditorChange() {
+  return Boolean(openFilePath) && qs("#workspaceEditor").value !== openFileBaselineContent;
+}
+
+function workspaceCanRevertLastChange() {
+  return Boolean(lastWorkspaceAppliedChange?.path && lastWorkspaceAppliedChange.path === openFilePath);
+}
+
+function updateWorkspaceChangeButtons() {
+  qs("#workspacePreviewButton").disabled = !openFilePath;
+  qs("#workspaceApplyButton").disabled = !workspaceHasPendingEditorChange();
+  qs("#workspaceRevertButton").disabled = !workspaceCanRevertLastChange();
+}
+
+function renderWorkspaceChangeReview() {
+  const target = qs("#workspaceChangeReview");
+  clear(target);
+  updateWorkspaceChangeButtons();
+  if (!openFilePath) {
+    target.append(statusBox("No file open", "Open a workspace file to review and apply changes.", "pending"));
+    return;
+  }
+  const currentContent = qs("#workspaceEditor").value;
+  const stats = workspaceChangeStats(openFileBaselineContent, currentContent);
+  const changed = currentContent !== openFileBaselineContent;
+  target.append(
+    statusBox(
+      changed ? "Pending file change" : "No pending editor change",
+      changed
+        ? "Review the editor delta before applying through the guarded filesystem write contract."
+        : "The editor matches the last loaded or applied file content.",
+      changed ? "pending" : "ok",
+    ),
+  );
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Path", openFilePath);
+  appendKeyValue(grid, "Bytes", `${stats.previousBytes} -> ${stats.nextBytes}`);
+  appendKeyValue(grid, "Byte delta", String(stats.byteDelta), stats.byteDelta ? "pending" : "ok");
+  appendKeyValue(grid, "Lines", `${stats.previousLines} -> ${stats.nextLines}`);
+  appendKeyValue(grid, "Changed lines", String(stats.changedLines), stats.changedLines ? "pending" : "ok");
+  appendKeyValue(grid, "Revert available", workspaceCanRevertLastChange() ? "Yes" : "No");
+  target.append(grid);
+}
+
+function previewWorkspaceFileChange() {
+  renderWorkspaceChangeReview();
+  showToast(openFilePath ? "Workspace change preview refreshed." : "Open a file before previewing changes.");
+}
+
+async function applyWorkspaceFileChange(options = {}) {
   const target = qs("#workspaceStatus");
   clear(target);
   if (!openFilePath) {
     target.append(statusBox("No file open", "Open a file before saving.", "blocked"));
+    renderWorkspaceChangeReview();
     return;
   }
-  target.append(statusBox("Saving file", openFilePath, "running"));
+  const nextContent = qs("#workspaceEditor").value;
+  if (nextContent === openFileBaselineContent) {
+    target.append(
+      statusBox(
+        options.unchangedTitle || "No changes to apply",
+        "The editor already matches the last loaded or applied file content.",
+        "ok",
+      ),
+    );
+    renderWorkspaceChangeReview();
+    return;
+  }
+  const previousContent = openFileBaselineContent;
+  target.append(statusBox(options.runningTitle || "Applying file change", openFilePath, "running"));
   try {
     const response = await api("/filesystem/write", {
       method: "POST",
-      body: { path: openFilePath, content: qs("#workspaceEditor").value },
+      body: { path: openFilePath, content: nextContent },
     });
+    lastWorkspaceAppliedChange = {
+      path: openFilePath,
+      previousContent,
+      appliedContent: nextContent,
+      appliedAt: new Date().toISOString(),
+    };
+    openFileBaselineContent = nextContent;
     clear(target);
-    target.append(statusBox("File saved", `${response.bytes_written} bytes`, "ok"));
+    target.append(statusBox(options.successTitle || "File change applied", `${response.bytes_written} bytes`, "ok"));
+    renderWorkspaceChangeReview();
     await loadWorkspace(workspacePath);
   } catch (error) {
     clear(target);
-    target.append(statusBox("Save failed", error.message, "failed"));
+    target.append(statusBox(options.failureTitle || "Apply failed", error.message, "failed"));
+    renderWorkspaceChangeReview();
+  }
+}
+
+async function revertWorkspaceFileChange() {
+  const target = qs("#workspaceStatus");
+  clear(target);
+  if (!workspaceCanRevertLastChange()) {
+    target.append(statusBox("No revert available", "Apply a workspace file change before reverting.", "blocked"));
+    renderWorkspaceChangeReview();
+    return;
+  }
+  if (
+    workspaceHasPendingEditorChange() &&
+    !window.confirm("Discard unsaved editor changes and revert the last applied file change?")
+  ) {
+    target.append(statusBox("Revert cancelled", "Unsaved editor changes were preserved.", "pending"));
+    renderWorkspaceChangeReview();
+    return;
+  }
+  const change = lastWorkspaceAppliedChange;
+  target.append(statusBox("Reverting file change", change.path, "running"));
+  try {
+    const response = await api("/filesystem/write", {
+      method: "POST",
+      body: { path: change.path, content: change.previousContent },
+    });
+    openFileBaselineContent = change.previousContent;
+    qs("#workspaceEditor").value = change.previousContent;
+    lastWorkspaceAppliedChange = null;
+    clear(target);
+    target.append(statusBox("File change reverted", `${response.bytes_written} bytes`, "ok"));
+    renderWorkspaceChangeReview();
+    await loadWorkspace(workspacePath);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Revert failed", error.message, "failed"));
+    renderWorkspaceChangeReview();
   }
 }
 
@@ -6087,6 +6236,10 @@ function bindEvents() {
   qs("#workspaceRootButton").addEventListener("click", () => loadWorkspace("."));
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);
+  qs("#workspacePreviewButton").addEventListener("click", previewWorkspaceFileChange);
+  qs("#workspaceApplyButton").addEventListener("click", () => applyWorkspaceFileChange());
+  qs("#workspaceRevertButton").addEventListener("click", revertWorkspaceFileChange);
+  qs("#workspaceEditor").addEventListener("input", renderWorkspaceChangeReview);
   qs("#loadReliabilityButton").addEventListener("click", loadReliability);
   qs("#memoryRetrievalForm").addEventListener("submit", runMemoryRetrieval);
   qs("#memoryLifecyclePreviewForm").addEventListener("submit", runMemoryLifecyclePreview);

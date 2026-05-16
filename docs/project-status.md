@@ -1,15 +1,15 @@
 # DGentic Project Status
 
-Last updated: 2026-05-15.
+Last updated: 2026-05-16.
 
 Use this page as the current PM control panel. It does not replace the backlog or progress log; it points to the right source of truth so work can move faster without losing planned features.
 
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010bg filesystem approval detail editors are implemented and validation-clean.
-- Latest completed slice: BL-010bg, the Policy panel supports filesystem approval options/content on request creation, filesystem reviews show richer digest and decision detail, and bound filesystem execution validates approved path/target/options before posting.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with actual AI-change file apply/revert mutation workflows beyond saved review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010bh guarded workspace file change apply/revert controls are implemented and validation-clean.
+- Latest completed slice: BL-010bh, the workspace editor can preview pending text changes, apply them through the existing guarded `/filesystem/write` contract, and revert the last dashboard-applied change through the same guarded route.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with deeper AI-change apply/revert semantics beyond guarded workspace editor mutations and metadata-only Git review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, deeper full-chat execution semantics beyond the context stream and reusable plan/run evidence controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -59,7 +59,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bg implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bh implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

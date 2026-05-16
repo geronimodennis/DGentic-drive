@@ -991,6 +991,14 @@ textarea {
   font-size: 0.82rem;
 }
 
+.workspace-change-actions {
+  justify-content: flex-start;
+}
+
+.workspace-change-review:empty {
+  display: none;
+}
+
 .decision-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1062,6 +1070,7 @@ textarea {
 .chip-list,
 .approval-review-summary,
 .bound-execution-panel,
+.workspace-change-review,
 .git-change-review,
 .git-change-review-artifacts,
 .git-diff-review,
@@ -1097,6 +1106,7 @@ textarea {
 .bound-execution-panel,
 .bound-execution-editor,
 .bound-execution-guided-fields,
+.workspace-change-review,
 .git-change-review,
 .git-change-review-artifacts,
 .git-diff-review,

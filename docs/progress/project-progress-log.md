@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010br Provider And Tool Approval Request Builders
+
+Status: completed for the scoped Providers runtime approval-request slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact approval-dashboard gap after BL-010bq because provider/tool approvals could already be reviewed and executed once seeded, but operators still needed an API-side path to create those requests.
+- Completed: Architect/Reviewer kept the slice on existing provider and generated-tool approval creation routes; no new provider execution, network approval consumption, backend Git expansion, or plugin loading authority was added.
+- Completed: Developer added Providers-panel request builders for external-provider generation approvals and generated-tool execution approvals, including provider/model/tool dropdown population from existing `/providers` and `/tools` reads.
+- Completed: Developer omitted execution-only fields such as `approval_id`, `approved`, `network_approval_id`, and provider `base_url` from creation payloads, preserving bound execution semantics for the existing review panel.
+- Completed: QA added static UI contract coverage plus browser coverage that creates provider and generated-tool approval requests through the dashboard and verifies the unified inbox can review the newly pending records.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Providers runtime panel can create pending external-provider generation approvals with role, prompt, model, options, timeout, requester, and agent/task context fields.
+- Implemented in this slice: Providers runtime panel can create pending generated-tool execution approvals with JSON payload, timeout, requester, and agent/task context fields.
+- Implemented in this slice: successful creation refreshes the unified approval inbox to the matching provider or tool pending filter.
+- Still out of scope after this slice: consuming provider/tool network approvals during creation, executing approved provider/tool requests before review approval, model-backed chat orchestration, and deeper domain-specific approval editors beyond the existing bound request panel.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_can_create_provider_and_tool_approval_requests_from_runtime_panel tests\test_ui_browser.py::test_browser_provider_runtime_can_create_provider_approval_request tests\test_ui_browser.py::test_browser_provider_runtime_can_create_tool_approval_request` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 27 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bq Plugin Activation Console
 
 Status: completed for the scoped Policy-panel plugin activation slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

@@ -42,6 +42,8 @@ let editingCommandRecipeId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
 let taskChatMessageSequence = 0;
+let latestProviderCatalog = [];
+let latestToolCatalog = [];
 let latestTaskChatContext = {
   plans: [],
   runs: [],
@@ -4623,11 +4625,75 @@ function renderProjectContext(settingsView, error = "") {
   }
 }
 
+function populateDatalist(selector, values) {
+  const target = qs(selector);
+  clear(target);
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    const option = make("option");
+    option.value = text;
+    target.append(option);
+  }
+}
+
+function populateProviderApprovalControls(result) {
+  latestProviderCatalog = result.ok ? result.data || [] : [];
+  populateDatalist(
+    "#providerApprovalProviderOptions",
+    latestProviderCatalog.map((provider) => provider.id),
+  );
+  const providerInput = qs("#providerApprovalProviderInput");
+  if (!providerInput.value && latestProviderCatalog.length) {
+    const preferred =
+      latestProviderCatalog.find((provider) => provider.id === "external-openai-compatible") ||
+      latestProviderCatalog.find(
+        (provider) => provider.enabled && provider.permission_mode === "approval_required",
+      ) ||
+      latestProviderCatalog[0];
+    providerInput.value = preferred.id || "";
+  }
+  updateProviderApprovalModelOptions();
+}
+
+function updateProviderApprovalModelOptions() {
+  const providerId = qs("#providerApprovalProviderInput").value.trim();
+  const provider = latestProviderCatalog.find((candidate) => candidate.id === providerId);
+  const models = provider?.model_names || [];
+  const modelInput = qs("#providerApprovalModelInput");
+  populateDatalist("#providerApprovalModelOptions", models);
+  if (models.length && (!modelInput.value || !models.includes(modelInput.value))) {
+    modelInput.value = models[0];
+  }
+  if (provider?.supports_streaming === false) {
+    qs("#providerApprovalStreamInput").checked = false;
+  }
+}
+
+function populateToolApprovalControls(result) {
+  latestToolCatalog = result.ok ? result.data || [] : [];
+  const names = latestToolCatalog.map((tool) => tool.name).filter(Boolean);
+  populateDatalist("#toolApprovalNameOptions", names);
+  const toolInput = qs("#toolApprovalNameInput");
+  if (!toolInput.value && names.length) {
+    const approvalRequired =
+      latestToolCatalog.find((tool) => tool.permission_mode === "approval_required") ||
+      latestToolCatalog[0];
+    toolInput.value = approvalRequired.name || names[0];
+  }
+}
+
 async function loadProviders() {
   const [providers, tools] = await Promise.all([
     safeLoad("providers", () => api("/providers")),
     safeLoad("tools", () => api("/tools")),
   ]);
+  populateProviderApprovalControls(providers);
+  populateToolApprovalControls(tools);
   setMetric("#providersMetric", providers.ok ? String(providers.data.length) : "-");
   setMetric("#toolsMetric", `Tools: ${tools.ok ? tools.data.length : "-"}`);
 
@@ -4782,6 +4848,132 @@ function renderToolGovernanceList(result) {
   }
 }
 
+function requesterQuery(requestedBy) {
+  return requestedBy ? `?requested_by=${encodeURIComponent(requestedBy)}` : "";
+}
+
+function providerApprovalPayload() {
+  const providerId = qs("#providerApprovalProviderInput").value.trim();
+  const model = qs("#providerApprovalModelInput").value.trim();
+  const content = qs("#providerApprovalMessageInput").value.trim();
+  if (!providerId || !model || !content) {
+    throw new Error("Provider ID, model, and message are required.");
+  }
+  const payload = {
+    provider_id: providerId,
+    model,
+    messages: [{ role: qs("#providerApprovalRoleInput").value, content }],
+    stream: qs("#providerApprovalStreamInput").checked,
+    timeout_seconds: Math.trunc(boundedNumber("#providerApprovalTimeoutInput", 60, 1, 600)),
+  };
+  const temperature = optionalNumber("#providerApprovalTemperatureInput");
+  const maxTokens = optionalNumber("#providerApprovalMaxTokensInput");
+  const options = parseJsonObjectInput("#providerApprovalOptionsInput", {});
+  if (temperature !== null) {
+    payload.temperature = Math.min(2, Math.max(0, temperature));
+  }
+  if (maxTokens !== null) {
+    payload.max_tokens = Math.trunc(Math.min(200000, Math.max(1, maxTokens)));
+  }
+  if (Object.keys(options).length) {
+    payload.options = options;
+  }
+  appendOptionalText(payload, "requested_by", "#providerApprovalRequesterInput");
+  appendOptionalText(payload, "agent_id", "#providerApprovalAgentInput");
+  appendOptionalText(payload, "agent_role", "#providerApprovalAgentRoleInput");
+  appendOptionalText(payload, "task_id", "#providerApprovalTaskInput");
+  return payload;
+}
+
+function providerApprovalRequest() {
+  const body = providerApprovalPayload();
+  return {
+    endpoint: `/providers/${encodeURIComponent(body.provider_id)}/approvals${requesterQuery(body.requested_by)}`,
+    body,
+  };
+}
+
+async function createProviderApprovalRequest(event) {
+  event.preventDefault();
+  const target = qs("#providerApprovalRequestOutput");
+  clear(target);
+  let request;
+  try {
+    request = providerApprovalRequest();
+  } catch (error) {
+    target.append(statusBox("Provider approval request invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  target.append(statusBox("Creating provider approval", request.body.provider_id, "running"));
+  try {
+    const approval = await api(request.endpoint, { method: "POST", body: request.body });
+    clear(target);
+    target.append(statusBox("Provider approval created", approval.id, "pending"));
+    target.append(jsonBlock(approval));
+    setApprovalFilterState("provider", "pending");
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
+    showToast("Provider approval created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Provider approval failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function toolApprovalPayload() {
+  const toolName = qs("#toolApprovalNameInput").value.trim();
+  if (!toolName) {
+    throw new Error("Tool name is required.");
+  }
+  const payload = {
+    payload: parseJsonObjectInput("#toolApprovalPayloadInput", {}),
+    timeout_seconds: Math.trunc(boundedNumber("#toolApprovalTimeoutInput", 30, 1, 300)),
+  };
+  appendOptionalText(payload, "requested_by", "#toolApprovalRequesterInput");
+  appendOptionalText(payload, "agent_id", "#toolApprovalAgentInput");
+  appendOptionalText(payload, "agent_role", "#toolApprovalAgentRoleInput");
+  appendOptionalText(payload, "task_id", "#toolApprovalTaskInput");
+  return { toolName, payload };
+}
+
+function toolApprovalRequest() {
+  const request = toolApprovalPayload();
+  return {
+    endpoint: `/tools/${encodeURIComponent(request.toolName)}/approvals${requesterQuery(request.payload.requested_by)}`,
+    body: request.payload,
+    toolName: request.toolName,
+  };
+}
+
+async function createToolApprovalRequest(event) {
+  event.preventDefault();
+  const target = qs("#toolApprovalRequestOutput");
+  clear(target);
+  let request;
+  try {
+    request = toolApprovalRequest();
+  } catch (error) {
+    target.append(statusBox("Tool approval request invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  target.append(statusBox("Creating tool approval", request.toolName, "running"));
+  try {
+    const approval = await api(request.endpoint, { method: "POST", body: request.body });
+    clear(target);
+    target.append(statusBox("Tool approval created", approval.id, "pending"));
+    target.append(jsonBlock(approval));
+    setApprovalFilterState("tool", "pending");
+    await Promise.all([loadApprovals(), loadTaskChatContext()]);
+    showToast("Tool approval created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Tool approval failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 function optionalNumber(selector) {
   const value = qs(selector).value.trim();
   if (!value) {
@@ -4789,6 +4981,25 @@ function optionalNumber(selector) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseJsonObjectInput(selector, fallback = {}) {
+  const value = qs(selector).value.trim();
+  if (!value) {
+    return fallback;
+  }
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("JSON input must be an object.");
+  }
+  return parsed;
+}
+
+function appendOptionalText(payload, key, selector) {
+  const value = qs(selector).value.trim();
+  if (value) {
+    payload[key] = value;
+  }
 }
 
 function routingPreviewPayload() {
@@ -7119,6 +7330,9 @@ function bindEvents() {
   qs("#loadCliRunsButton").addEventListener("click", loadCliRuns);
   qs("#loadPolicyButton").addEventListener("click", loadPolicySurfaces);
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);
+  qs("#providerApprovalRequestForm").addEventListener("submit", createProviderApprovalRequest);
+  qs("#providerApprovalProviderInput").addEventListener("change", updateProviderApprovalModelOptions);
+  qs("#toolApprovalRequestForm").addEventListener("submit", createToolApprovalRequest);
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);
   qs("#filesystemPolicyCheckForm").addEventListener("submit", checkFilesystemPolicy);

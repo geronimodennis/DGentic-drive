@@ -1075,6 +1075,43 @@ def test_web_ui_approval_sources_match_backend_contracts() -> None:
         assert source in script_response.text
 
 
+def test_web_ui_can_create_provider_and_tool_approval_requests_from_runtime_panel() -> None:
+    client = TestClient(create_app())
+
+    index_response = client.get("/ui/")
+    script_response = client.get("/ui/app.js")
+
+    assert index_response.status_code == 200
+    assert script_response.status_code == 200
+    for expected in [
+        'article id="providers"',
+        "providerApprovalRequestForm",
+        "providerApprovalProviderInput",
+        "providerApprovalModelOptions",
+        "providerApprovalOptionsInput",
+        "toolApprovalRequestForm",
+        "toolApprovalPayloadInput",
+        "toolApprovalNameOptions",
+    ]:
+        assert expected in index_response.text
+    for expected in [
+        "populateProviderApprovalControls",
+        "updateProviderApprovalModelOptions",
+        "providerApprovalPayload",
+        "providerApprovalRequest",
+        "createProviderApprovalRequest",
+        "toolApprovalPayload",
+        "toolApprovalRequest",
+        "createToolApprovalRequest",
+        "`/providers/${encodeURIComponent(body.provider_id)}/approvals${requesterQuery(body.requested_by)}`",
+        "`/tools/${encodeURIComponent(request.toolName)}/approvals${requesterQuery(request.payload.requested_by)}`",
+        'setApprovalFilterState("provider", "pending")',
+        'setApprovalFilterState("tool", "pending")',
+        "loadTaskChatContext()",
+    ]:
+        assert expected in script_response.text
+
+
 def test_web_ui_is_public_while_api_routes_remain_protected(tmp_path, monkeypatch) -> None:
     root_dir = tmp_path / "workspace"
     root_dir.mkdir()

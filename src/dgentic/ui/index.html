@@ -470,7 +470,7 @@ review</textarea>
             </details>
           </article>
 
-          <article class="panel">
+          <article id="providers" class="panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Providers</p>
@@ -513,6 +513,86 @@ review</textarea>
               </form>
               <div id="routingOutput" class="output-region" aria-live="polite"></div>
             </details>
+            <details id="providerApprovalRequestPanel" class="policy-editor">
+              <summary>Provider Approval Request</summary>
+              <form id="providerApprovalRequestForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Provider ID
+                    <input id="providerApprovalProviderInput" type="text" maxlength="128" list="providerApprovalProviderOptions" required>
+                    <datalist id="providerApprovalProviderOptions"></datalist>
+                  </label>
+                  <label>
+                    Model
+                    <input id="providerApprovalModelInput" type="text" maxlength="256" list="providerApprovalModelOptions" placeholder="gpt-browser" required>
+                    <datalist id="providerApprovalModelOptions"></datalist>
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Message Role
+                    <select id="providerApprovalRoleInput">
+                      <option value="user">User</option>
+                      <option value="system">System</option>
+                      <option value="developer">Developer</option>
+                      <option value="assistant">Assistant</option>
+                      <option value="tool">Tool</option>
+                    </select>
+                  </label>
+                  <label>
+                    Requested By
+                    <input id="providerApprovalRequesterInput" type="text" maxlength="256" value="dashboard-provider-request">
+                  </label>
+                </div>
+                <label>
+                  Message
+                  <textarea id="providerApprovalMessageInput" rows="4" maxlength="100000" required></textarea>
+                </label>
+                <div class="two-column">
+                  <label>
+                    Temperature
+                    <input id="providerApprovalTemperatureInput" type="number" min="0" max="2" step="0.1">
+                  </label>
+                  <label>
+                    Max Tokens
+                    <input id="providerApprovalMaxTokensInput" type="number" min="1" max="200000">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Timeout Seconds
+                    <input id="providerApprovalTimeoutInput" type="number" min="1" max="600" step="1" value="60">
+                  </label>
+                  <label class="checkbox-label">
+                    <input id="providerApprovalStreamInput" type="checkbox">
+                    Stream
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Agent ID
+                    <input id="providerApprovalAgentInput" type="text" maxlength="256">
+                  </label>
+                  <label>
+                    Agent Role
+                    <input id="providerApprovalAgentRoleInput" type="text" maxlength="256">
+                  </label>
+                </div>
+                <label>
+                  Task ID
+                  <input id="providerApprovalTaskInput" type="text" maxlength="256">
+                </label>
+                <label>
+                  Options JSON
+                  <textarea id="providerApprovalOptionsInput" rows="4" spellcheck="false" placeholder='{"top_p": 0.9}'></textarea>
+                </label>
+                <button id="providerApprovalSubmitButton" type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">A</span>
+                  <span>Create Provider Approval</span>
+                </button>
+              </form>
+              <div id="providerApprovalRequestOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div id="providerList" class="compact-list"></div>
             <div id="providerHealthOutput" class="output-region" aria-live="polite"></div>
             <details id="toolGovernancePanel" class="policy-editor">
@@ -523,6 +603,51 @@ review</textarea>
               </label>
               <div id="toolGovernanceList" class="compact-list"></div>
               <div id="toolGovernanceOutput" class="output-region" aria-live="polite"></div>
+            </details>
+            <details id="toolApprovalRequestPanel" class="policy-editor">
+              <summary>Tool Approval Request</summary>
+              <form id="toolApprovalRequestForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Tool Name
+                    <input id="toolApprovalNameInput" type="text" maxlength="128" list="toolApprovalNameOptions" required>
+                    <datalist id="toolApprovalNameOptions"></datalist>
+                  </label>
+                  <label>
+                    Requested By
+                    <input id="toolApprovalRequesterInput" type="text" maxlength="256" value="dashboard-tool-request">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Timeout Seconds
+                    <input id="toolApprovalTimeoutInput" type="number" min="1" max="300" step="1" value="30">
+                  </label>
+                  <label>
+                    Task ID
+                    <input id="toolApprovalTaskInput" type="text" maxlength="256">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Agent ID
+                    <input id="toolApprovalAgentInput" type="text" maxlength="256">
+                  </label>
+                  <label>
+                    Agent Role
+                    <input id="toolApprovalAgentRoleInput" type="text" maxlength="256">
+                  </label>
+                </div>
+                <label>
+                  Payload JSON
+                  <textarea id="toolApprovalPayloadInput" rows="6" spellcheck="false">{}</textarea>
+                </label>
+                <button id="toolApprovalSubmitButton" type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">A</span>
+                  <span>Create Tool Approval</span>
+                </button>
+              </form>
+              <div id="toolApprovalRequestOutput" class="output-region" aria-live="polite"></div>
             </details>
           </article>
 

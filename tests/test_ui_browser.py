@@ -1941,6 +1941,77 @@ def test_browser_approval_dashboard_can_execute_seeded_provider_approval(
     assert network_review_body["status"] == "executed"
 
 
+def test_browser_provider_runtime_can_create_provider_approval_request(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    message = "browser-provider-builder-secret"
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#providers"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#providerApprovalRequestForm'))")
+    devtools_page.eval(
+        f"""
+        (() => {{
+          document.querySelector("#providerApprovalRequestPanel").open = true;
+          document.querySelector("#providerApprovalProviderInput").value = "{PROVIDER_ID}";
+          document.querySelector("#providerApprovalModelInput").value = "gpt-browser";
+          document.querySelector("#providerApprovalRoleInput").value = "user";
+          document.querySelector("#providerApprovalMessageInput").value = {json.dumps(message)};
+          document.querySelector("#providerApprovalTemperatureInput").value = "0.2";
+          document.querySelector("#providerApprovalMaxTokensInput").value = "32";
+          document.querySelector("#providerApprovalTaskInput").value =
+            "sprint-16-provider-builder";
+          document.querySelector("#providerApprovalOptionsInput").value =
+            JSON.stringify({{ top_p: 0.9 }}, null, 2);
+          document.querySelector("#providerApprovalRequestForm").requestSubmit();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#providerApprovalRequestOutput")
+          ?.textContent.includes("Provider approval created")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    list_status, list_body = _http_json("GET", f"{base_url}/providers/approvals?status=pending")
+    assert list_status == 200
+    approval = next(item for item in list_body if item["task_id"] == "sprint-16-provider-builder")
+    assert approval["provider_id"] == PROVIDER_ID
+    assert approval["model"] == "gpt-browser"
+    assert approval["option_keys"] == ["top_p"]
+    assert approval["review_messages"] == [{"role": "user", "content_length": len(message)}]
+    assert message not in json.dumps(approval)
+
+    devtools_page.wait_for(
+        f"""
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("{PROVIDER_ID}"))
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("{PROVIDER_ID}"));
+          row.querySelector("button").click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Provider review")
+          && document.querySelector("#approvalReview")?.textContent.includes("gpt-browser")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
     ui_live_server,
     devtools_page,
@@ -2041,6 +2112,86 @@ def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
     )
     assert review_status == 200
     assert review_body["status"] == "executed"
+
+
+def test_browser_provider_runtime_can_create_tool_approval_request(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    tool_name = "browser-builder-approval-tool"
+    payload_value = "browser-tool-builder-value"
+    generate_status, _generate_body = _http_json(
+        "POST",
+        f"{base_url}/tools/generate",
+        payload={
+            "name": tool_name,
+            "description": "Browser approval request builder smoke tool.",
+            "trigger_source": "main_agent",
+            "permission_mode": "approval_required",
+            "source_code": (
+                "def run(payload):\n    return {'ok': True, 'value': payload.get('value')}\n"
+            ),
+        },
+    )
+    assert generate_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#providers"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#toolApprovalRequestForm'))")
+    devtools_page.eval(
+        f"""
+        (() => {{
+          document.querySelector("#toolApprovalRequestPanel").open = true;
+          document.querySelector("#toolApprovalNameInput").value = "{tool_name}";
+          document.querySelector("#toolApprovalTaskInput").value = "sprint-16-tool-builder";
+          document.querySelector("#toolApprovalTimeoutInput").value = "5";
+          document.querySelector("#toolApprovalPayloadInput").value =
+            JSON.stringify({{ value: {json.dumps(payload_value)} }}, null, 2);
+          document.querySelector("#toolApprovalRequestForm").requestSubmit();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#toolApprovalRequestOutput")
+          ?.textContent.includes("Tool approval created")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    list_status, list_body = _http_json("GET", f"{base_url}/tools/approvals?status=pending")
+    assert list_status == 200
+    approval = next(item for item in list_body if item["task_id"] == "sprint-16-tool-builder")
+    assert approval["tool_name"] == tool_name
+    assert approval["review_payload"] == {"value": payload_value}
+    assert approval["timeout_seconds"] == 5
+
+    devtools_page.wait_for(
+        f"""
+        [...document.querySelectorAll(".approval-item")]
+          .some((row) => row.textContent.includes("{tool_name}"))
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const row = [...document.querySelectorAll(".approval-item")]
+            .find((candidate) => candidate.textContent.includes("{tool_name}"));
+          row.querySelector("button").click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#approvalReview")?.textContent.includes("Tool review")
+          && document.querySelector("#approvalReview")?.textContent
+            .includes("browser-builder-approval-tool")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
 
 
 def test_browser_approval_dashboard_can_execute_seeded_tool_network_approval(

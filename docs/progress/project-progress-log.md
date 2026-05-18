@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cg Task Chat Route-To-Reply Automation
+
+Status: completed for the scoped Task Chat route-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route-to-reply handoff, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact route-to-reply slice because Provider Route cards could already apply provider/model settings, but operators still needed a separate Ask Provider click for the obvious next action.
+- Completed: Architect kept the slice client-only on existing route-preview and provider-generation contracts; routing output is not treated as authorization.
+- Completed: Developer added an explicit Use Route & Ask control to Provider Route cards.
+- Completed: QA added static assertions and browser coverage proving the new control applies the route, invokes the existing provider reply path, preserves message role/prompt fields, and does not invent approval IDs.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Provider Route cards can apply provider/model controls and immediately call the existing guarded Task Chat provider reply flow.
+- Implemented in this slice: route-to-reply still uses the current composer/provider controls for message role, stream mode, prompt, and any manually supplied provider/network approval IDs.
+- Still out of scope after this slice: automatic approval creation, provider execution bypass, backend route/schema changes, persisted handoff packets, and broader autonomous multi-turn chat semantics.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Static QA validation passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 35 passed.
+
 ### Sprint 16 BL-010cf Task Chat Handoff Packet
 
 Status: completed for the scoped Task Chat handoff packet preview/copy slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

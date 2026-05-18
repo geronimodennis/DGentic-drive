@@ -717,8 +717,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatRouteDecision" in script_response.text
     assert "taskChatRouteContextLines" in script_response.text
     assert "applyTaskChatRoute" in script_response.text
+    assert "applyTaskChatRouteAndAsk" in script_response.text
     assert "task-chat-route-use-provider" in script_response.text
+    assert "task-chat-route-use-and-ask" in script_response.text
     assert "task-chat-route-use-context" in script_response.text
+    assert "Use Route & Ask" in script_response.text
     assert "Provider Route" in script_response.text
     assert 'api("/routing/decide", { method: "POST", body: payload })' in script_response.text
     assert 'qs("#taskChatRouteButton").addEventListener("click", previewTaskChatProviderRoute)' in (

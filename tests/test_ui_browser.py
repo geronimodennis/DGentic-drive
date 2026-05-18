@@ -1262,6 +1262,7 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
             && transcript.includes("chat-provider")
             && transcript.includes("Routed to the chat provider.")
             && Boolean(document.querySelector('[data-testid="task-chat-route-use-provider"]'))
+            && Boolean(document.querySelector('[data-testid="task-chat-route-use-and-ask"]'))
             && Boolean(document.querySelector('[data-testid="task-chat-route-use-context"]'));
         })()
         """,
@@ -1395,6 +1396,47 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert "Streaming context line" in stream_payload["messages"][0]["content"]
     assert "Stream card appears" in stream_payload["messages"][0]["content"]
 
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatProviderInput").value = "offline-provider";
+          document.querySelector("#taskChatProviderModelInput").value = "offline-model";
+          document.querySelector("#taskChatProviderApprovalInput").value = "";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value = "";
+          document.querySelector("#taskChatProviderRoleInput").value = "assistant";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value = "Use the selected route immediately.";
+          document.querySelector("#taskChatContextInput").value = "Route automation context";
+          document.querySelector("#taskChatAcceptanceInput").value = "Route automation reply";
+          document.querySelector('[data-testid="task-chat-route-use-and-ask"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const cards = [...document.querySelectorAll(".task-chat-execution-card")]
+            .map((card) => card.textContent || "");
+          return window.__taskChatProviderRequests.length >= 2
+            && cards.some((card) => card.includes("Provider Reply")
+              && card.includes("Task chat provider reply"));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    routed_payload = devtools_page.eval("window.__taskChatProviderRequests[1]")
+    assert routed_payload["provider_id"] == "chat-provider"
+    assert routed_payload["model"] == "chat-model"
+    assert routed_payload["stream"] is False
+    assert routed_payload["messages"][0]["role"] == "assistant"
+    assert "approval_id" not in routed_payload
+    assert "network_approval_id" not in routed_payload
+    routed_prompt = routed_payload["messages"][0]["content"]
+    assert "Message: Use the selected route immediately." in routed_prompt
+    assert "Route automation context" in routed_prompt
+    assert "Route automation reply" in routed_prompt
+
     handoff = devtools_page.eval(
         """
         (async () => {
@@ -1448,6 +1490,8 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
             "provider-approval-live";
           document.querySelector("#taskChatProviderNetworkApprovalInput").value =
             "network-approval-live";
+          document.querySelector("#taskChatProviderRoleInput").value = "system";
+          document.querySelector("#taskChatProviderStreamInput").checked = true;
           document.querySelector("#taskChatInput").value =
             "Prepare a portable Task Chat handoff token=composer-secret";
           document.querySelector("#taskChatHandoffPanel").open = true;

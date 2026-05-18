@@ -232,7 +232,7 @@ The Activity panel can capture session summaries through `/sessions/summary`, li
 
 Task-chat provider controls include a Message Role selector for the provider roles already accepted by the backend. The selected role is used for both Ask Provider generation payloads and Request Approval provider approval payloads.
 
-Task-chat provider route preview uses the existing `/routing/decide` contract. The Preview Route action adds a bounded Provider Route card, Use Route fills the selected provider and model into the Task Chat provider controls, and Use Context inserts the route rationale without starting generation.
+Task-chat provider route preview uses the existing `/routing/decide` contract. The Preview Route action adds a bounded Provider Route card, Use Route fills the selected provider and model into the Task Chat provider controls, Use Route & Ask then invokes the existing guarded provider reply path with the current composer/provider control state, and Use Context inserts the route rationale.
 
 The Settings panel parses `provider_role_routing` from `GET /settings/effective` into read-only role/provider/model cards. Use In Task Chat fills the existing Task Chat provider, model, and routing role controls, and Preview Role fills the Providers routing preview role input. These controls are handoffs only; they do not mutate settings or start provider execution.
 

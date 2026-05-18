@@ -2105,6 +2105,11 @@ function applyTaskChatRoute(route) {
   showToast("Provider route applied.");
 }
 
+async function applyTaskChatRouteAndAsk(route) {
+  applyTaskChatRoute(route);
+  await askTaskChatProvider();
+}
+
 function renderTaskChatRouteDecision(target, route) {
   const card = make("div", "task-chat-execution-card");
   const header = make("div", "task-chat-execution-header");
@@ -2117,6 +2122,11 @@ function renderTaskChatRouteDecision(target, route) {
   applyButton.dataset.testid = "task-chat-route-use-provider";
   applyButton.disabled = !route.provider_id || !route.model_name;
   applyButton.addEventListener("click", () => applyTaskChatRoute(route));
+  const askButton = make("button", "primary-button", "Use Route & Ask");
+  askButton.type = "button";
+  askButton.dataset.testid = "task-chat-route-use-and-ask";
+  askButton.disabled = !route.provider_id || !route.model_name;
+  askButton.addEventListener("click", () => applyTaskChatRouteAndAsk(route));
   const contextButton = make("button", "link-button", "Use Context");
   contextButton.type = "button";
   contextButton.dataset.testid = "task-chat-route-use-context";
@@ -2124,7 +2134,7 @@ function renderTaskChatRouteDecision(target, route) {
   contextButton.addEventListener("click", () =>
     insertTaskChatContext("Provider route", taskChatRouteContextLines(route)),
   );
-  actions.append(statusChip(route.provider_id ? "ready" : "blocked"), applyButton, contextButton);
+  actions.append(statusChip(route.provider_id ? "ready" : "blocked"), applyButton, askButton, contextButton);
   header.append(copy, actions);
   card.append(header);
 

@@ -994,6 +994,213 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert "Stream card appears" in stream_payload["messages"][0]["content"]
 
 
+def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    approval_id = "provider-approval-task-chat"
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        "Boolean(document.querySelector('#taskChatProviderApprovalRequestButton'))"
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          populateProviderApprovalControls({{
+            ok: true,
+            data: [
+              {{
+                id: "chat-provider",
+                name: "Task Chat Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["chat-model"],
+                supports_streaming: true,
+              }},
+            ],
+          }});
+
+          const approval = {{
+            id: {json.dumps(approval_id)},
+            provider_id: "chat-provider",
+            model: "chat-model",
+            status: "pending",
+            stream: true,
+            requested_by: "dashboard-task-chat",
+            message_count: 1,
+            review_messages: [{{ role: "user", content_length: 169 }}],
+            option_keys: [],
+            created_at: "2026-05-19T00:00:00+00:00",
+            expires_at: "2026-05-19T01:00:00+00:00",
+          }};
+          const review = {{
+            ...approval,
+            permission_mode: "approval_required",
+            policy_reason: "Task Chat provider approval smoke.",
+            requires_bound_execution_request: true,
+            direct_execute_available: false,
+            approval_digest: "provider-approval-digest",
+            timeout_seconds: 60,
+          }};
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderApprovalRequests = [];
+          window.__taskChatProviderApprovalRefreshes = [];
+          window.fetch = async (input, init = {{}}) => {{
+            const requestUrl = typeof input === "string" ? input : input.url;
+            const parsed = new URL(requestUrl, window.location.href);
+            const method = (init.method || "GET").toUpperCase();
+            const path = parsed.pathname;
+            if (
+              method === "POST"
+              && path === "/providers/chat-provider/approvals"
+              && parsed.searchParams.get("requested_by") === "dashboard-task-chat"
+            ) {{
+              window.__taskChatProviderApprovalRequests.push({{
+                url: `${{path}}${{parsed.search}}`,
+                body: JSON.parse(init.body),
+              }});
+              return new Response(JSON.stringify(approval), {{
+                status: 201,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (method === "GET" && path === "/providers/approvals") {{
+              window.__taskChatProviderApprovalRefreshes.push(`${{path}}${{parsed.search}}`);
+              return new Response(JSON.stringify([approval]), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (method === "GET" && path === `/providers/approvals/${{approval.id}}/review`) {{
+              return new Response(JSON.stringify(review), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (
+              method === "GET"
+              && [
+                "/cli/approvals",
+                "/filesystem/approvals",
+                "/network/approvals",
+                "/tools/approvals",
+              ].includes(path)
+              && parsed.searchParams.get("status") === "pending"
+            ) {{
+              return new Response(JSON.stringify([]), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (
+              method === "GET"
+              && ["/tasks/plans", "/tasks/runs", "/tasks/orchestrations", "/logs"].includes(path)
+            ) {{
+              return new Response(JSON.stringify([]), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (method === "GET" && path === "/projects/active") {{
+              return new Response(JSON.stringify({{ active_root_dir: "C:/workspace/AI Agent" }}), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            return originalFetch(input, init);
+          }};
+          return true;
+        }})()
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderApprovalInput").value =
+            "generation-only-provider-approval";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value =
+            "generation-only-network-approval";
+          document.querySelector("#taskChatProviderStreamInput").checked = true;
+          document.querySelector("#taskChatInput").value = "Draft an approval gated response.";
+          document.querySelector("#taskChatContextInput").value =
+            "Provider approval context\\nSecond context line";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Approval request card is reusable";
+          document.querySelector("#taskChatProviderApprovalRequestButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        (() => {{
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatProviderApprovalRequests.length === 1
+            && transcript.includes("Provider Approval Request")
+            && transcript.includes("{approval_id}")
+            && Boolean(document.querySelector('[data-testid="task-chat-provider-approval-use-id"]'))
+            && Boolean(
+              document.querySelector('[data-testid="task-chat-provider-approval-review"]')
+            );
+        }})()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    request = devtools_page.eval("window.__taskChatProviderApprovalRequests[0]")
+    payload = request["body"]
+    assert request["url"] == "/providers/chat-provider/approvals?requested_by=dashboard-task-chat"
+    assert payload["provider_id"] == "chat-provider"
+    assert payload["model"] == "chat-model"
+    assert payload["stream"] is True
+    assert payload["requested_by"] == "dashboard-task-chat"
+    assert payload["timeout_seconds"] == 60
+    assert "approval_id" not in payload
+    assert "network_approval_id" not in payload
+    assert payload["messages"][0]["role"] == "user"
+    prompt = payload["messages"][0]["content"]
+    assert "Message: Draft an approval gated response." in prompt
+    assert "Provider approval context" in prompt
+    assert "Second context line" in prompt
+    assert "Acceptance:" in prompt
+    assert "Approval request card is reusable" in prompt
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="task-chat-provider-approval-use-id"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        f'document.querySelector("#taskChatProviderApprovalInput")?.value === "{approval_id}"'
+    )
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="task-chat-provider-approval-review"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        window.location.hash === "#approvals"
+          && document.querySelector("#approvalSourceInput")?.value === "provider"
+          && document.querySelector("#approvalReview")?.textContent.includes("Provider review")
+          && document.querySelector("#approvalReview")?.textContent.includes("chat-model")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """,
+        timeout_seconds=10.0,
+    )
+    refreshes = devtools_page.eval("window.__taskChatProviderApprovalRefreshes")
+    assert "/providers/approvals?status=pending" in refreshes
+
+
 def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
     ui_live_server,
     devtools_page,

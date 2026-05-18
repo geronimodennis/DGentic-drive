@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bw Task-Chat Provider Approval Requests
+
+Status: completed for the scoped Task Chat provider-approval request handoff slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact approval-request handoff slice after BL-010bv because Task Chat could ask providers with existing approvals, but could not create the matching pending provider approval without leaving the chat flow.
+- Completed: Architect/Reviewer kept the slice on the existing guarded `POST /providers/{provider_id}/approvals`, provider review, approval inbox, and task-chat context contracts; no backend provider transport, credential handling, network approval pairing, approval bypass, or backend Git expansion was added.
+- Completed: Developer added a Task Chat Request Approval action that reuses the existing provider/model/stream controls and prompt assembly from message, context, and acceptance text.
+- Completed: Developer ensured the chat-created provider approval payload keeps provider/model/messages/stream/requester/timeout fields while omitting generation-only `approval_id` and `network_approval_id` values.
+- Completed: Developer rendered the created provider approval as a chat transcript card with Use ID and Review actions so operators can place the approval ID into the Ask Provider flow or jump to the exact provider review in the unified inbox.
+- Completed: QA added static UI contract coverage and a browser smoke that mocks the approval POST/review refresh path, validates the request payload, verifies Use ID, and verifies provider review navigation.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat can create pending provider approval requests through the existing guarded provider approval creation route.
+- Implemented in this slice: Task Chat approval request cards refresh the provider pending approval inbox/context stream and can open the exact safe provider review.
+- Implemented in this slice: chat-created provider approvals preserve request binding safety by excluding execution-only provider and network approval IDs from approval creation.
+- Still out of scope after this slice: automatic provider/network approval pairing, chat-side approve/deny decisions, durable backend chat transcripts, autonomous model-backed orchestration loops from chat, provider adapter expansion beyond existing backend contracts, and broader Git hunk apply/revert authority.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 32 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bv Task-Chat Provider Replies
 
 Status: completed for the scoped Task Chat provider-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, explicit provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

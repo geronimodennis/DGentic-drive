@@ -41,6 +41,8 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderApprovalInput" in response.text
     assert "taskChatProviderNetworkApprovalInput" in response.text
     assert "taskChatProviderButton" in response.text
+    assert "taskChatProviderApprovalRequestButton" in response.text
+    assert "Request Approval" in response.text
     assert "orchestrationCreateForm" in response.text
     assert "orchestrationTaskBuilder" in response.text
     assert "orchestrationTaskIdInput" in response.text
@@ -555,6 +557,16 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "taskPlanContextLines" in script_response.text
     assert "taskRunContextLines" in script_response.text
     assert "orchestrationContextLines" in script_response.text
+    assert "taskChatProviderApprovalRequest" in script_response.text
+    assert "createTaskChatProviderApprovalRequest" in script_response.text
+    assert "renderTaskChatProviderApproval" in script_response.text
+    assert "compactTaskChatProviderApproval" in script_response.text
+    assert "Provider Approval Request" in script_response.text
+    assert "task-chat-provider-approval-use-id" in script_response.text
+    assert "task-chat-provider-approval-review" in script_response.text
+    assert "delete body.approval_id" in script_response.text
+    assert "delete body.network_approval_id" in script_response.text
+    assert 'qs("#taskChatProviderApprovalRequestButton").addEventListener(' in script_response.text
     assert "task-plan-use-context" in script_response.text
     assert "task-run-use-evidence" in script_response.text
     assert "task-chat-orchestration-use-context" in script_response.text

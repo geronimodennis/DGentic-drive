@@ -675,6 +675,18 @@ function taskChatProviderPayload() {
   return { chatPayload, providerPayload: payload };
 }
 
+function taskChatProviderApprovalRequest() {
+  const { chatPayload, providerPayload } = taskChatProviderPayload();
+  const body = { ...providerPayload };
+  delete body.approval_id;
+  delete body.network_approval_id;
+  return {
+    chatPayload,
+    endpoint: `/providers/${encodeURIComponent(body.provider_id)}/approvals${requesterQuery(body.requested_by)}`,
+    body,
+  };
+}
+
 function isAuthorizationError(result) {
   return /^(401|403)\b/.test(String(result?.error || ""));
 }
@@ -1081,6 +1093,36 @@ function compactTaskChatProviderGeneration(result) {
   };
 }
 
+function compactTaskChatProviderApproval(approval) {
+  if (!approval || typeof approval !== "object") {
+    return null;
+  }
+  return {
+    id: boundedString(approval.id, 160),
+    provider_id: boundedString(approval.provider_id, 128),
+    model: boundedString(approval.model, 256),
+    status: boundedString(approval.status, 80),
+    stream: Boolean(approval.stream),
+    requested_by: boundedString(approval.requested_by, 256),
+    task_id: boundedString(approval.task_id, 256),
+    agent_id: boundedString(approval.agent_id, 256),
+    agent_role: boundedString(approval.agent_role, 256),
+    message_count: Number.isFinite(Number(approval.message_count)) ? Number(approval.message_count) : 0,
+    review_messages: (Array.isArray(approval.review_messages) ? approval.review_messages : [])
+      .slice(0, 8)
+      .map((message) => ({
+        role: boundedString(message?.role, 40),
+        content_length: Number.isFinite(Number(message?.content_length))
+          ? Number(message.content_length)
+          : 0,
+      })),
+    option_keys: boundedStringList(approval.option_keys, 12, 120),
+    created_at: boundedString(approval.created_at, 80),
+    updated_at: boundedString(approval.updated_at, 80),
+    expires_at: boundedString(approval.expires_at, 80),
+  };
+}
+
 function compactTaskChatMessage(message, { restored = false } = {}) {
   if (!message || typeof message !== "object") {
     return null;
@@ -1106,6 +1148,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.providerGeneration) {
     compact.providerGeneration = compactTaskChatProviderGeneration(message.providerGeneration);
+  }
+  if (message.providerApproval) {
+    compact.providerApproval = compactTaskChatProviderApproval(message.providerApproval);
   }
   if (restored) {
     compact.restored = true;
@@ -1253,6 +1298,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.providerGeneration) {
     renderTaskChatProviderGeneration(item, message.providerGeneration);
+  }
+  if (message.providerApproval) {
+    renderTaskChatProviderApproval(item, message.providerApproval);
   }
   if (message.run) {
     renderTaskRunResult(item, message.run);
@@ -1433,6 +1481,49 @@ function renderTaskChatProviderGeneration(target, result) {
   target.append(card);
 }
 
+function providerTaskChatApprovalItem(approval) {
+  return {
+    source: approvalSources.find((source) => source.key === "provider"),
+    approval,
+  };
+}
+
+function renderTaskChatProviderApproval(target, approval) {
+  const card = make("div", "task-chat-execution-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Provider Approval Request"));
+  copy.append(make("div", "item-meta", `${approval.provider_id || "-"} / ${approval.model || "-"}`));
+  const actions = make("div", "task-run-actions");
+  const useButton = make("button", "link-button", "Use ID");
+  useButton.type = "button";
+  useButton.dataset.testid = "task-chat-provider-approval-use-id";
+  useButton.disabled = !approval.id;
+  useButton.addEventListener("click", () => {
+    qs("#taskChatProviderApprovalInput").value = approval.id || "";
+    showToast("Provider approval ID added.");
+  });
+  const reviewButton = make("button", "link-button", "Review");
+  reviewButton.type = "button";
+  reviewButton.dataset.testid = "task-chat-provider-approval-review";
+  reviewButton.dataset.approvalId = approval.id || "";
+  reviewButton.disabled = !approval.id;
+  reviewButton.addEventListener("click", () => openTaskChatApprovalReview(providerTaskChatApprovalItem(approval)));
+  actions.append(statusChip(approval.status || "pending"), useButton, reviewButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Approval", approval.id || "-");
+  appendKeyValue(grid, "Stream", approval.stream ? "Yes" : "No");
+  appendKeyValue(grid, "Requested by", approval.requested_by || "-");
+  appendKeyValue(grid, "Messages", String(approval.message_count || approval.review_messages?.length || 0));
+  appendKeyValue(grid, "Created", formatTimestamp(approval.created_at));
+  appendKeyValue(grid, "Expires", formatTimestamp(approval.expires_at));
+  card.append(grid);
+  target.append(card);
+}
+
 function renderTaskChatExecution(target, execution) {
   const card = make("div", "task-chat-execution-card");
   const plan = execution.plan || {};
@@ -1590,6 +1681,50 @@ async function askTaskChatProvider() {
     updateTaskChatMessage(runningMessage.clientId, {
       role: "agent",
       title: "Provider reply failed",
+      detail: error.message,
+      state: "failed",
+    });
+    showToast(error.message);
+  }
+}
+
+async function createTaskChatProviderApprovalRequest() {
+  let request;
+  try {
+    request = taskChatProviderApprovalRequest();
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  const { chatPayload, body, endpoint } = request;
+  appendTaskChatMessage({
+    role: "user",
+    title: "You",
+    detail: chatPayload.objective,
+    state: "approval",
+  });
+  const runningMessage = appendTaskChatMessage({
+    role: "agent",
+    title: "Requesting provider approval",
+    detail: `${body.provider_id} / ${body.model}`,
+    state: "running",
+  });
+  try {
+    const approval = await api(endpoint, { method: "POST", body });
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: "Provider approval created",
+      detail: approval.id,
+      state: approval.status || "pending",
+      providerApproval: compactTaskChatProviderApproval(approval),
+    });
+    setApprovalFilterState("provider", "pending");
+    await Promise.all([loadApprovals(), loadTaskChatContext(), loadLogs()]);
+    showToast("Provider approval created.");
+  } catch (error) {
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: "Provider approval failed",
       detail: error.message,
       state: "failed",
     });
@@ -7889,6 +8024,10 @@ function bindEvents() {
   qs("#loadTasksButton").addEventListener("click", () => Promise.all([loadTasks(), loadTaskChatContext()]));
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider);
+  qs("#taskChatProviderApprovalRequestButton").addEventListener(
+    "click",
+    createTaskChatProviderApprovalRequest,
+  );
   qs("#taskChatProviderInput").addEventListener("change", updateTaskChatProviderModelOptions);
   qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
   loadTaskChatHistory();

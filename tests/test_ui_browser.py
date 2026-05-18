@@ -1072,8 +1072,33 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
               }});
             }}
             if (method === "GET" && path === "/providers/approvals") {{
+              if (
+                parsed.searchParams.get("status") === "pending"
+                && approval.status !== "pending"
+              ) {{
+                return new Response(JSON.stringify([]), {{
+                  status: 200,
+                  headers: {{ "Content-Type": "application/json" }},
+                }});
+              }}
               window.__taskChatProviderApprovalRefreshes.push(`${{path}}${{parsed.search}}`);
               return new Response(JSON.stringify([approval]), {{
+                status: 200,
+                headers: {{ "Content-Type": "application/json" }},
+              }});
+            }}
+            if (
+              method === "POST"
+              && path === `/providers/approvals/${{approval.id}}/approve`
+            ) {{
+              const body = JSON.parse(init.body || "{{}}");
+              approval.status = "approved";
+              approval.decided_by = "dashboard";
+              approval.decision_reason = body.reason || "";
+              review.status = "approved";
+              review.decided_by = "dashboard";
+              review.decision_reason = body.reason || "";
+              return new Response(JSON.stringify(approval), {{
                 status: 200,
                 headers: {{ "Content-Type": "application/json" }},
               }});
@@ -1203,6 +1228,56 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
     )
     refreshes = devtools_page.eval("window.__taskChatProviderApprovalRefreshes")
     assert "/providers/approvals?status=pending" in refreshes
+
+    devtools_page.eval(
+        """
+        (() => {
+          const review = document.querySelector("#approvalReview");
+          review.querySelector(".decision-form input").value = "Task Chat approval outcome.";
+          review.querySelector('button[data-decision="approve"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        (() => {{
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          const useButton = document.querySelector(
+            '[data-testid="task-chat-approval-outcome-use-context"]'
+          );
+          const reviewButton = document.querySelector(
+            '[data-testid="task-chat-approval-outcome-review"]'
+          );
+          return document.querySelector("#approvalReview")?.textContent.includes("approved")
+            && transcript.includes("Approval Outcome")
+            && transcript.includes("{approval_id}")
+            && transcript.includes("Task Chat approval outcome.")
+            && Boolean(useButton)
+            && Boolean(reviewButton);
+        }})()
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="task-chat-approval-outcome-use-context"]').click()
+        """
+    )
+    context_value = devtools_page.wait_for(
+        f"""
+        (() => {{
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Approval {approval_id}")
+            && value.includes("Status: approved")
+            && value.includes("Task Chat approval outcome.") ? value : null;
+        }})()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert f"Approval {approval_id}" in context_value
+    assert "Status: approved" in context_value
+    assert "Task Chat approval outcome." in context_value
 
 
 def test_browser_task_chat_can_insert_memory_context_from_stream_detail_and_retrieval(

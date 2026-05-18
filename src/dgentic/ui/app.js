@@ -1168,6 +1168,62 @@ function compactTaskChatProviderApproval(approval) {
   };
 }
 
+function compactTaskChatApprovalOutcome(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  if (item.id && (item.source_key || item.source_label)) {
+    return {
+      id: boundedString(item.id, 160),
+      source_key: boundedString(item.source_key, 40),
+      source_label: boundedString(item.source_label || item.source_key || "Approval", 80),
+      status: boundedString(item.status, 80),
+      subject: boundedString(item.subject, 300),
+      requested_by: boundedString(item.requested_by, 256),
+      decided_by: boundedString(item.decided_by, 256),
+      decision_reason: boundedString(item.decision_reason, 500),
+      executed_at: boundedString(item.executed_at, 80),
+      updated_at: boundedString(item.updated_at, 80),
+    };
+  }
+  const source = item.source || {};
+  const approval = item.approval || {};
+  const review = item.review || {};
+  const approvalId = approval.id || review.id;
+  if (!approvalId) {
+    return null;
+  }
+  return {
+    id: boundedString(approvalId, 160),
+    source_key: boundedString(source.key, 40),
+    source_label: boundedString(source.label || source.key || "Approval", 80),
+    status: boundedString(review.status || approval.status, 80),
+    subject: boundedString(approvalTitle(item), 300),
+    requested_by: boundedString(review.requested_by || approval.requested_by, 256),
+    decided_by: boundedString(review.decided_by || approval.decided_by, 256),
+    decision_reason: boundedString(
+      review.decision_reason || review.denial_reason || approval.decision_reason || approval.denial_reason,
+      500,
+    ),
+    executed_at: boundedString(review.executed_at || approval.executed_at, 80),
+    updated_at: boundedString(review.updated_at || review.decided_at || approval.updated_at || approval.created_at, 80),
+  };
+}
+
+function appendTaskChatApprovalOutcomeMessage(item) {
+  const outcome = compactTaskChatApprovalOutcome(item);
+  if (!outcome) {
+    return null;
+  }
+  return appendTaskChatMessage({
+    role: "agent",
+    title: `${outcome.source_label || "Approval"} approval ${outcome.status || "updated"}`,
+    detail: outcome.subject || outcome.id,
+    state: outcome.status || "updated",
+    approvalOutcome: outcome,
+  });
+}
+
 function compactTaskChatMessage(message, { restored = false } = {}) {
   if (!message || typeof message !== "object") {
     return null;
@@ -1196,6 +1252,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.providerApproval) {
     compact.providerApproval = compactTaskChatProviderApproval(message.providerApproval);
+  }
+  if (message.approvalOutcome) {
+    compact.approvalOutcome = compactTaskChatApprovalOutcome(message.approvalOutcome);
   }
   if (restored) {
     compact.restored = true;
@@ -1346,6 +1405,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.providerApproval) {
     renderTaskChatProviderApproval(item, message.providerApproval);
+  }
+  if (message.approvalOutcome) {
+    renderTaskChatApprovalOutcome(item, message.approvalOutcome);
   }
   if (message.run) {
     renderTaskRunResult(item, message.run);
@@ -1565,6 +1627,65 @@ function renderTaskChatProviderApproval(target, approval) {
   appendKeyValue(grid, "Messages", String(approval.message_count || approval.review_messages?.length || 0));
   appendKeyValue(grid, "Created", formatTimestamp(approval.created_at));
   appendKeyValue(grid, "Expires", formatTimestamp(approval.expires_at));
+  card.append(grid);
+  target.append(card);
+}
+
+function approvalOutcomeContextLines(outcome) {
+  return [
+    `Approval: ${outcome.source_label || "Approval"} ${outcome.id || "-"}`,
+    `Status: ${outcome.status || "-"}`,
+    `Subject: ${outcome.subject || "-"}`,
+    `Reason: ${outcome.decision_reason || "-"}`,
+    `Decided by: ${outcome.decided_by || "-"}`,
+    `Executed: ${formatTimestamp(outcome.executed_at)}`,
+  ];
+}
+
+function approvalOutcomeTaskChatItem(outcome) {
+  const source = approvalSources.find((candidate) => candidate.key === outcome.source_key);
+  if (!source) {
+    return null;
+  }
+  return {
+    source,
+    approval: {
+      id: outcome.id,
+      status: outcome.status,
+    },
+  };
+}
+
+function renderTaskChatApprovalOutcome(target, outcome) {
+  const card = make("div", "task-chat-execution-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Approval Outcome"));
+  copy.append(make("div", "item-meta", `${outcome.source_label || "Approval"} / ${outcome.id || "-"}`));
+  const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Outcome");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-chat-approval-outcome-use-context";
+  contextButton.disabled = !outcome.id;
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext(`Approval ${outcome.id}`, approvalOutcomeContextLines(outcome)),
+  );
+  const reviewButton = make("button", "link-button", "Review");
+  reviewButton.type = "button";
+  reviewButton.dataset.testid = "task-chat-approval-outcome-review";
+  reviewButton.disabled = !approvalOutcomeTaskChatItem(outcome);
+  reviewButton.addEventListener("click", () => openTaskChatApprovalReview(approvalOutcomeTaskChatItem(outcome)));
+  actions.append(statusChip(outcome.status || "updated"), contextButton, reviewButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Status", outcome.status || "-");
+  appendKeyValue(grid, "Subject", outcome.subject || "-");
+  appendKeyValue(grid, "Requested by", outcome.requested_by || "-");
+  appendKeyValue(grid, "Decided by", outcome.decided_by || "-");
+  appendKeyValue(grid, "Reason", outcome.decision_reason || "-");
+  appendKeyValue(grid, "Executed", formatTimestamp(outcome.executed_at));
   card.append(grid);
   target.append(card);
 }
@@ -3587,6 +3708,21 @@ async function executeBoundExecutionRequest(scaffold) {
     clear(output);
     output.append(statusBox("Bound request executed", scaffold.endpoint, "ready"));
     output.append(jsonBlock(result));
+    if (selectedApproval?.source && selectedApproval?.approval?.id) {
+      try {
+        const review = await api(
+          `${selectedApproval.source.base}/${encodeURIComponent(selectedApproval.approval.id)}/review`,
+        );
+        selectedApproval = {
+          ...selectedApproval,
+          approval: { ...selectedApproval.approval, status: review.status || selectedApproval.approval.status },
+          review,
+        };
+        appendTaskChatApprovalOutcomeMessage(selectedApproval);
+      } catch (_error) {
+        appendTaskChatApprovalOutcomeMessage(selectedApproval);
+      }
+    }
     await Promise.all([loadApprovals(), loadTaskChatContext()]);
     showToast("Bound request executed.");
   } catch (error) {
@@ -3778,6 +3914,7 @@ async function decideApproval(decision, reason) {
     const review = await api(`${source.base}/${encodeURIComponent(result.id || approval.id)}/review`);
     selectedApproval = { source, approval: result, review };
     renderApprovalReview(selectedApproval);
+    appendTaskChatApprovalOutcomeMessage(selectedApproval);
     await Promise.all([loadApprovals(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);
@@ -3793,6 +3930,22 @@ async function executeCliApproval(approvalId) {
     });
     showToast("CLI approval executed.");
     target.append(jsonBlock(result));
+    const source = approvalSources.find((candidate) => candidate.key === "cli");
+    if (source) {
+      try {
+        const review = await api(`${source.base}/${encodeURIComponent(approvalId)}/review`);
+        appendTaskChatApprovalOutcomeMessage({
+          source,
+          approval: { id: approvalId, status: review.status },
+          review,
+        });
+      } catch (_error) {
+        appendTaskChatApprovalOutcomeMessage({
+          source,
+          approval: { id: approvalId, status: "executed" },
+        });
+      }
+    }
     await Promise.all([loadApprovals(), loadCliRuns(), loadTaskChatContext()]);
   } catch (error) {
     showToast(error.message);

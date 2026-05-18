@@ -562,7 +562,14 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "createTaskChatProviderApprovalRequest" in script_response.text
     assert "renderTaskChatProviderApproval" in script_response.text
     assert "compactTaskChatProviderApproval" in script_response.text
+    assert "renderTaskChatApprovalOutcome" in script_response.text
+    assert "compactTaskChatApprovalOutcome" in script_response.text
+    assert "appendTaskChatApprovalOutcomeMessage" in script_response.text
+    assert "approvalOutcomeContextLines" in script_response.text
+    assert "task-chat-approval-outcome-use-context" in script_response.text
+    assert "task-chat-approval-outcome-review" in script_response.text
     assert "Provider Approval Request" in script_response.text
+    assert "Approval Outcome" in script_response.text
     assert "task-chat-provider-approval-use-id" in script_response.text
     assert "task-chat-provider-approval-review" in script_response.text
     assert "delete body.approval_id" in script_response.text
@@ -611,6 +618,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "Plans, runs, orchestration runs, memory, approvals, and logs" in script_response.text
     assert "openTaskChatApprovalReview" in script_response.text
     assert "task-chat-approval-review" in script_response.text
+    assert "appendTaskChatApprovalOutcomeMessage(selectedApproval)" in script_response.text
     assert "approval: { ...item.approval, status: review.status || item.approval.status }" in (
         script_response.text
     )

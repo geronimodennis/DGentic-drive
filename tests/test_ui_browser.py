@@ -722,6 +722,52 @@ def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     assert review_body["decision_reason"] == "Browser approval smoke."
 
 
+def test_browser_task_chat_approval_context_opens_exact_review(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/cli/approvals?requested_by=task-chat-seed",
+        payload={"command": "python --version", "timeout_seconds": 10},
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextStream'))")
+    devtools_page.wait_for(
+        f"""
+        document.querySelector("#taskChatContextStream")
+          ?.textContent.includes("{create_body["id"]}")
+          && document.querySelector("#taskChatContextStream")
+            ?.textContent.includes("python --version")
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const button = [...document.querySelectorAll('[data-testid="task-chat-approval-review"]')]
+            .find((candidate) => candidate.dataset.approvalId === "{create_body["id"]}");
+          button.click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        f"""
+        window.location.hash === "#approvals"
+          && document.querySelector("#approvalSourceInput")?.value === "cli"
+          && document.querySelector('#approvalReview')
+            ?.textContent.includes("{create_body["id"]}")
+          && document.querySelector("#approvalReview")?.textContent.includes("CLI review")
+          && document.querySelector("#approvalReview")?.textContent.includes("python --version")
+          && document.querySelector("#approvalReview")?.textContent.includes("pending")
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approval(
     ui_live_server,
     devtools_page,

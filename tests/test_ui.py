@@ -533,6 +533,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatContextStream" in script_response.text
     assert "renderTaskChatContextCard" in script_response.text
     assert "insertTaskChatContext" in script_response.text
+    assert "openTaskChatApprovalReview" in script_response.text
+    assert "task-chat-approval-review" in script_response.text
+    assert "approval: { ...item.approval, status: review.status || item.approval.status }" in (
+        script_response.text
+    )
     assert "taskChatLatestActivity" in script_response.text
     assert "taskChatContextLines" in script_response.text
     assert "openTaskChatContextSection" in script_response.text

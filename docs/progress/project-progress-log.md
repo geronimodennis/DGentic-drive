@@ -6,6 +6,30 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bm Task-Chat Approval Handoff Cards
+
+Status: completed for the scoped task-chat to approval-review handoff slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected task-chat approval handoff cards as the next compact user-facing Sprint 16 slice because task-chat already surfaced pending approvals but could only insert text context or jump to the generic approvals panel.
+- Completed: Architect/Reviewer kept the slice client-side on existing approval list/review contracts; no backend approval authority, decision route, or execution route was added.
+- Completed: Developer added a `Review` action to pending-approval context cards, source/status filter synchronization, exact safe-review loading, and review-status refresh from the review response.
+- Completed: QA added static UI contract coverage and browser smoke coverage that seeds a CLI approval, opens it from the task-chat context stream, and verifies the exact CLI review loads with the source filter set.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: pending approval context cards now include a `Review` action alongside `Use Context` and `Open`.
+- Implemented in this slice: clicking `Review` switches to the unified inbox, sets the source/status filters for the card, refreshes the approval list, and opens the exact safe review contract.
+- Implemented in this slice: approval review rendering now uses the review response status for the selected item so handoff cards stay correct if the approval changed since the context stream loaded.
+- Still out of scope after this slice: model-backed chat, streaming assistant responses, durable backend conversation records, cross-surface chat sync, and approval decisions directly inside the chat transcript.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_approval_context_opens_exact_review` with 2 passed.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+
 ### Sprint 16 BL-010bl Local Network Policy Rule Editing
 
 Status: completed for the scoped editable network policy slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic execution, explicit orchestration creation, and reusable orchestration context, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.

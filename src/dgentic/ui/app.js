@@ -753,6 +753,21 @@ function openTaskChatContextSection(sectionId) {
   target.scrollIntoView({ block: "start" });
 }
 
+async function openTaskChatApprovalReview(item) {
+  const source = item.source;
+  const approval = item.approval || {};
+  if (!source || !approval.id) {
+    showToast("Approval context is incomplete.");
+    return;
+  }
+  setApprovalFilterState(source.key, approval.status || "pending");
+  openTaskChatContextSection("approvals");
+  await loadApprovals();
+  await reviewApproval(item);
+  qs("#approvalReview").scrollIntoView({ block: "start" });
+  showToast("Approval review loaded.");
+}
+
 function renderTaskChatContextCard(target, card) {
   const item = make("div", "task-chat-context-card");
   const copy = make("div");
@@ -766,6 +781,15 @@ function renderTaskChatContextCard(target, card) {
   useButton.type = "button";
   useButton.addEventListener("click", () => insertTaskChatContext(card.title, card.lines || []));
   actions.append(useButton);
+  if (card.approvalItem) {
+    const reviewButton = make("button", "link-button", "Review");
+    reviewButton.type = "button";
+    reviewButton.dataset.testid = "task-chat-approval-review";
+    reviewButton.dataset.approvalSource = card.approvalItem.source.key;
+    reviewButton.dataset.approvalId = card.approvalItem.approval.id;
+    reviewButton.addEventListener("click", () => openTaskChatApprovalReview(card.approvalItem));
+    actions.append(reviewButton);
+  }
   if (card.sectionId) {
     const openButton = make("button", "link-button", "Open");
     openButton.type = "button";
@@ -840,6 +864,7 @@ function renderTaskChatContextStream() {
       meta: approvalTitle(item),
       state: item.approval.status,
       sectionId: "approvals",
+      approvalItem: item,
       lines: [
         `Approval: ${item.source.label} ${item.approval.id}`,
         `Status: ${item.approval.status || "-"}`,
@@ -2681,7 +2706,11 @@ async function reviewApproval(item) {
   target.append(statusBox("Loading review", `${item.source.label} ${item.approval.id}`, "running"));
   try {
     const review = await api(`${item.source.base}/${encodeURIComponent(item.approval.id)}/review`);
-    selectedApproval = { ...item, review };
+    selectedApproval = {
+      ...item,
+      approval: { ...item.approval, status: review.status || item.approval.status },
+      review,
+    };
     renderApprovalReview(selectedApproval);
   } catch (error) {
     clear(target);

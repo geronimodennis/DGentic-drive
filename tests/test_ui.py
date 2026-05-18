@@ -1,3 +1,5 @@
+import re
+
 from fastapi.testclient import TestClient
 
 from dgentic.database import reset_database_state
@@ -942,6 +944,64 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-step-list" in style_response.text
     assert ".task-step-card" in style_response.text
     assert ".task-run-summary" in style_response.text
+
+
+def test_memory_lifecycle_threshold_controls_match_backend_request_contract() -> None:
+    client = TestClient(create_app())
+
+    html_response = client.get("/ui/")
+    script_response = client.get("/ui/app.js")
+
+    assert html_response.status_code == 200
+    assert script_response.status_code == 200
+    for control_id in [
+        "memoryLifecycleArchiveDaysInput",
+        "memoryLifecycleSoftPruneDaysInput",
+        "memoryLifecycleArchiveRelevanceInput",
+        "memoryLifecycleSoftPruneRelevanceInput",
+        "memoryLifecyclePromoteRelevanceInput",
+        "memoryLifecyclePromoteAccessInput",
+        "memoryLifecycleCompressDaysInput",
+        "memoryLifecycleCompressAccessInput",
+    ]:
+        assert f'id="{control_id}"' in html_response.text
+
+    integer_thresholds = [
+        ("archive_after_days", "memoryLifecycleArchiveDaysInput", "90", "1", "3650"),
+        ("soft_prune_after_days", "memoryLifecycleSoftPruneDaysInput", "365", "1", "3650"),
+        (
+            "promote_access_count_threshold",
+            "memoryLifecyclePromoteAccessInput",
+            "20",
+            "1",
+            "1000000",
+        ),
+        ("compress_after_days", "memoryLifecycleCompressDaysInput", "30", "1", "3650"),
+        (
+            "compress_access_count_threshold",
+            "memoryLifecycleCompressAccessInput",
+            "10",
+            "1",
+            "1000000",
+        ),
+    ]
+    for field, control_id, fallback, minimum, maximum in integer_thresholds:
+        assert re.search(
+            rf"{field}:\s*Math\.trunc\(\s*"
+            rf'boundedNumber\("#{control_id}", {fallback}, {minimum}, {maximum}\),?\s*\)',
+            script_response.text,
+        )
+
+    decimal_thresholds = [
+        ("archive_relevance_threshold", "memoryLifecycleArchiveRelevanceInput", "0.4"),
+        ("soft_prune_relevance_threshold", "memoryLifecycleSoftPruneRelevanceInput", "0.2"),
+        ("promote_relevance_threshold", "memoryLifecyclePromoteRelevanceInput", "0.9"),
+    ]
+    for field, control_id, fallback in decimal_thresholds:
+        assert re.search(
+            rf'{field}:\s*boundedNumber\("#{control_id}", {fallback}, 0, 1\)',
+            script_response.text,
+        )
 
 
 def test_web_ui_approval_sources_match_backend_contracts() -> None:

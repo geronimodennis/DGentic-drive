@@ -479,6 +479,21 @@ textarea {
   margin-top: 10px;
 }
 
+.threshold-panel {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.threshold-panel summary {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.threshold-panel[open] {
+  gap: 12px;
+}
+
 .direct-run-button {
   border-color: #f59e0b;
   color: #92400e;

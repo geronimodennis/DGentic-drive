@@ -620,6 +620,49 @@ review</textarea>
                     <input id="memoryLifecycleLimitInput" type="number" min="1" max="500" value="100">
                   </label>
                 </div>
+                <details class="threshold-panel">
+                  <summary>Policy Thresholds</summary>
+                  <div class="two-column">
+                    <label>
+                      Archive After Days
+                      <input id="memoryLifecycleArchiveDaysInput" type="number" min="1" max="3650" value="90">
+                    </label>
+                    <label>
+                      Soft Prune After Days
+                      <input id="memoryLifecycleSoftPruneDaysInput" type="number" min="1" max="3650" value="365">
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
+                      Archive Relevance
+                      <input id="memoryLifecycleArchiveRelevanceInput" type="number" min="0" max="1" step="0.05" value="0.4">
+                    </label>
+                    <label>
+                      Soft Prune Relevance
+                      <input id="memoryLifecycleSoftPruneRelevanceInput" type="number" min="0" max="1" step="0.05" value="0.2">
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
+                      Promote Relevance
+                      <input id="memoryLifecyclePromoteRelevanceInput" type="number" min="0" max="1" step="0.05" value="0.9">
+                    </label>
+                    <label>
+                      Promote Access Count
+                      <input id="memoryLifecyclePromoteAccessInput" type="number" min="1" max="1000000" value="20">
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
+                      Compression Candidate Days
+                      <input id="memoryLifecycleCompressDaysInput" type="number" min="1" max="3650" value="30">
+                    </label>
+                    <label>
+                      Compression Access Count
+                      <input id="memoryLifecycleCompressAccessInput" type="number" min="1" max="1000000" value="10">
+                    </label>
+                  </div>
+                </details>
                 <div class="form-footer">
                   <label class="checkbox-label">
                     <input id="memoryLifecycleInactiveInput" type="checkbox">

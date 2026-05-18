@@ -646,6 +646,112 @@ def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
     )
 
 
+def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/api/v1/memory/metadata",
+        payload={
+            "entity_type": "memory",
+            "entity_id": "browser-lifecycle-expired-memory",
+            "tags": ["ui-lifecycle-smoke"],
+            "category": "ui-lifecycle-smoke",
+            "description": "Browser lifecycle smoke candidate.",
+            "relevance_score": 0.1,
+            "expires_at": "2020-01-01T00:00:00+00:00",
+        },
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#reliability"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#memoryLifecyclePreviewForm'))")
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityList")?.textContent
+          .includes("browser-lifecycle-expired-memory")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#memoryLifecyclePreviewPanel").open = true;
+          const values = {
+            memoryLifecycleCategoryInput: "ui-lifecycle-smoke",
+            memoryLifecycleLimitInput: "5",
+            memoryLifecycleArchiveDaysInput: "3650",
+            memoryLifecycleSoftPruneDaysInput: "3650",
+            memoryLifecycleArchiveRelevanceInput: "0",
+            memoryLifecycleSoftPruneRelevanceInput: "0",
+            memoryLifecyclePromoteRelevanceInput: "1",
+            memoryLifecyclePromoteAccessInput: "1000000",
+            memoryLifecycleCompressDaysInput: "3650",
+            memoryLifecycleCompressAccessInput: "1000000",
+          };
+          for (const [id, value] of Object.entries(values)) {
+            const input = document.querySelector(`#${id}`);
+            input.value = value;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          document.querySelector("#memoryLifecyclePreviewForm").requestSubmit();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const output = document.querySelector("#memoryLifecyclePreviewOutput")?.textContent || "";
+          return output.includes("Lifecycle preview")
+            && output.includes("browser-lifecycle-expired-memory")
+            && output.includes("soft_prune");
+        })()
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          window.__memoryLifecycleConfirmCalls = 0;
+          window.__memoryLifecycleConfirmMessage = "";
+          window.confirm = (message) => {
+            window.__memoryLifecycleConfirmCalls += 1;
+            window.__memoryLifecycleConfirmMessage = message;
+            return true;
+          };
+          document.querySelector("#memoryLifecycleApplyButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const output = document.querySelector("#memoryLifecyclePreviewOutput")?.textContent || "";
+          return window.__memoryLifecycleConfirmCalls === 1
+            && window.__memoryLifecycleConfirmMessage
+              === "Apply memory lifecycle changes for the current filters?"
+            && output.includes("Lifecycle applied")
+            && output.includes("browser-lifecycle-expired-memory")
+            && output.includes("soft_prune")
+            && document.querySelector("#toast")?.textContent
+              .includes("Memory lifecycle apply complete");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    detail_status, detail_body = _http_json(
+        "GET",
+        f"{base_url}/api/v1/memory/metadata/{create_body['id']}",
+    )
+    assert detail_status == 200
+    assert detail_body["lifecycle_state"] == "soft_pruned"
+    assert detail_body["lifecycle_reason"] == "Memory is expired and eligible for soft pruning."
+
+
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,

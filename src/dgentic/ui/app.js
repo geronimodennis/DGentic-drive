@@ -4866,6 +4866,20 @@ function memoryLifecyclePreviewPayload() {
   const payload = {
     limit: Math.trunc(boundedNumber("#memoryLifecycleLimitInput", 100, 1, 500)),
     include_inactive: qs("#memoryLifecycleInactiveInput").checked,
+    archive_after_days: Math.trunc(boundedNumber("#memoryLifecycleArchiveDaysInput", 90, 1, 3650)),
+    soft_prune_after_days: Math.trunc(
+      boundedNumber("#memoryLifecycleSoftPruneDaysInput", 365, 1, 3650),
+    ),
+    archive_relevance_threshold: boundedNumber("#memoryLifecycleArchiveRelevanceInput", 0.4, 0, 1),
+    soft_prune_relevance_threshold: boundedNumber("#memoryLifecycleSoftPruneRelevanceInput", 0.2, 0, 1),
+    promote_relevance_threshold: boundedNumber("#memoryLifecyclePromoteRelevanceInput", 0.9, 0, 1),
+    promote_access_count_threshold: Math.trunc(
+      boundedNumber("#memoryLifecyclePromoteAccessInput", 20, 1, 1000000),
+    ),
+    compress_after_days: Math.trunc(boundedNumber("#memoryLifecycleCompressDaysInput", 30, 1, 3650)),
+    compress_access_count_threshold: Math.trunc(
+      boundedNumber("#memoryLifecycleCompressAccessInput", 10, 1, 1000000),
+    ),
   };
   const entityTypes = splitCsv(qs("#memoryLifecycleEntityTypesInput").value);
   const tags = splitCsv(qs("#memoryLifecycleTagsInput").value);

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bn Memory Lifecycle Policy Threshold Controls
+
+Status: completed for the scoped Reliability-panel lifecycle threshold slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact memory administration slice after BL-010bm because the backend lifecycle API already accepts policy thresholds but the dashboard only exposed filters and defaulted the lifecycle policy.
+- Completed: Architect/Reviewer kept the slice on existing `/api/v1/memory/lifecycle/preview` and `/api/v1/memory/lifecycle/apply` contracts; no scheduled jobs, new backend mutation authority, metadata editing, or compression apply semantics were added.
+- Completed: Developer added Reliability-panel threshold controls for archive age/relevance, soft-prune age/relevance, promote relevance/access count, and compression-candidate age/access count, plus bounded payload mapping to the existing lifecycle request fields.
+- Completed: QA added static UI contract coverage for the new controls and payload fields, plus a browser smoke that seeds expired memory, previews a soft-prune recommendation, confirms lifecycle apply, and verifies the metadata state changes to `soft_pruned`.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: operators can tune archive, soft-prune, promote, and compression-candidate thresholds before lifecycle preview or apply from the Reliability panel.
+- Implemented in this slice: lifecycle threshold inputs are bounded to the same ranges as the backend request schema before being sent.
+- Implemented in this slice: browser coverage now validates the lifecycle preview/apply UI against a seeded metadata record and the persisted lifecycle result.
+- Still out of scope after this slice: scheduled lifecycle/compression jobs, metadata editing, model-backed summarization, richer memory administration workflows, and cross-surface memory management.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 20 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bm Task-Chat Approval Handoff Cards
 
 Status: completed for the scoped task-chat to approval-review handoff slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.

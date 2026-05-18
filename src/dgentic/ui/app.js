@@ -4784,8 +4784,14 @@ function updateProviderModelOptions(providerSelector, modelSelector, modelOption
   if (models.length && (!modelInput.value || !models.includes(modelInput.value))) {
     modelInput.value = models[0];
   }
-  if (streamSelector && provider?.supports_streaming === false) {
-    qs(streamSelector).checked = false;
+  if (streamSelector) {
+    const streamInput = qs(streamSelector);
+    const unsupported = provider?.supports_streaming === false;
+    if (unsupported) {
+      streamInput.checked = false;
+    }
+    streamInput.disabled = unsupported;
+    streamInput.title = unsupported ? "Selected provider does not support streaming." : "";
   }
 }
 
@@ -4817,6 +4823,7 @@ function updateProviderGenerationModelOptions() {
     "#providerGenerationProviderInput",
     "#providerGenerationModelInput",
     "#providerGenerationModelOptions",
+    "#providerGenerationStreamInput",
   );
 }
 
@@ -5078,7 +5085,7 @@ function providerGenerationPayload() {
     provider_id: providerId,
     model,
     messages: [{ role: qs("#providerGenerationRoleInput").value, content }],
-    stream: false,
+    stream: qs("#providerGenerationStreamInput").checked,
     timeout_seconds: Math.trunc(boundedNumber("#providerGenerationTimeoutInput", 60, 1, 600)),
   };
   const temperature = optionalNumber("#providerGenerationTemperatureInput");
@@ -5106,18 +5113,30 @@ function providerGenerationContextLines(result) {
   return [
     `Provider: ${result.provider_id || "-"}`,
     `Model: ${result.model || "-"}`,
+    `Stream: ${result.streamed ? "Yes" : "No"}`,
     `Duration: ${result.duration_ms ?? "-"} ms`,
     `Estimated cost: ${result.estimated_cost_usd ?? "-"}`,
+    `Finish reasons: ${result.finish_reasons?.length ? result.finish_reasons.join(", ") : "-"}`,
     `Content: ${boundedString(result.content || "", 900) || "-"}`,
   ];
 }
 
 function renderProviderGenerationResult(target, result) {
-  target.append(statusBox("Provider generation completed", `${result.provider_id} / ${result.model}`, "ok"));
+  const state = result.error ? "failed" : "ok";
+  const title = result.error
+    ? "Provider stream interrupted"
+    : result.streamed
+      ? "Provider stream completed"
+      : "Provider generation completed";
+  target.append(statusBox(title, `${result.provider_id} / ${result.model}`, state));
+  if (result.error) {
+    target.append(statusBox("Stream error", result.error, "failed"));
+  }
   const actions = make("div", "task-run-actions");
   const contextButton = make("button", "link-button", "Use Response");
   contextButton.type = "button";
   contextButton.dataset.testid = "provider-generation-use-response";
+  contextButton.disabled = !result.content;
   contextButton.addEventListener("click", () =>
     insertTaskChatContext("Provider generation", providerGenerationContextLines(result)),
   );
@@ -5129,11 +5148,162 @@ function renderProviderGenerationResult(target, result) {
   appendKeyValue(grid, "Duration", `${result.duration_ms ?? "-"} ms`);
   appendKeyValue(grid, "Estimated cost", result.estimated_cost_usd ?? "-");
   appendKeyValue(grid, "Usage", compactCounts(result.usage_metadata || {}));
+  if (result.streamed) {
+    appendKeyValue(grid, "Stream events", result.stream_event_count ?? 0);
+    appendKeyValue(
+      grid,
+      "Finish reasons",
+      result.finish_reasons?.length ? result.finish_reasons.join(", ") : "-",
+    );
+  }
   target.append(grid);
   const content = make("pre", "provider-generation-content");
   content.textContent = boundedString(result.content || "", 6000) || "No content returned.";
   target.append(content);
   target.append(jsonBlock(result));
+}
+
+function apiErrorFromResponsePayload(payload, status) {
+  const detail = payload && typeof payload === "object" ? payload.detail : payload;
+  let message = detail || `Request failed with ${status}`;
+  if (Array.isArray(detail)) {
+    message = detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
+  } else if (detail && typeof detail === "object") {
+    message = detail.detail || `Request failed with ${status}`;
+  }
+  const error = new Error(message);
+  error.detail = detail;
+  return error;
+}
+
+function parseProviderStreamLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = JSON.parse(trimmed);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Provider stream returned a malformed event.");
+  }
+  return parsed;
+}
+
+function providerGenerationStreamResult(payload, events) {
+  const result = {
+    provider_id: payload.provider_id,
+    model: payload.model,
+    streamed: true,
+    content: "",
+    duration_ms: null,
+    estimated_cost_usd: null,
+    usage_metadata: {},
+    raw_response_metadata: {},
+    finish_reasons: [],
+    stream_event_count: events.length,
+  };
+  for (const event of events) {
+    result.provider_id = event.provider_id || result.provider_id;
+    result.model = event.model || result.model;
+    if (event.delta) {
+      result.content += event.delta;
+    }
+    if (event.duration_ms !== null && event.duration_ms !== undefined) {
+      result.duration_ms = event.duration_ms;
+    }
+    if (event.estimated_cost_usd !== null && event.estimated_cost_usd !== undefined) {
+      result.estimated_cost_usd = event.estimated_cost_usd;
+    }
+    if (event.usage_metadata && Object.keys(event.usage_metadata).length) {
+      result.usage_metadata = event.usage_metadata;
+    }
+    if (event.raw_response_metadata && Object.keys(event.raw_response_metadata).length) {
+      result.raw_response_metadata = event.raw_response_metadata;
+    }
+    if (event.finish_reason && !result.finish_reasons.includes(event.finish_reason)) {
+      result.finish_reasons.push(event.finish_reason);
+    }
+    if (event.error) {
+      result.error = event.error;
+    }
+  }
+  return result;
+}
+
+function appendProviderStreamEvent(events, event, preview) {
+  if (!event) {
+    return;
+  }
+  events.push(event);
+  if (event.delta) {
+    const current = preview.dataset.empty === "true" ? "" : preview.textContent;
+    preview.dataset.empty = "false";
+    preview.textContent = boundedString(`${current}${event.delta}`, 6000);
+  }
+  if (event.error) {
+    const current = preview.dataset.empty === "true" ? "" : preview.textContent;
+    preview.dataset.empty = "false";
+    preview.textContent = boundedString(
+      `${current}\n\nStream error: ${event.error}`,
+      6000,
+    );
+  }
+}
+
+async function readProviderGenerationStream(payload, preview) {
+  const headers = requestHeaders(true);
+  headers.Accept = "application/x-ndjson";
+  const response = await fetch("/providers/generate/stream", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let errorPayload = text;
+    try {
+      errorPayload = text ? JSON.parse(text) : null;
+    } catch (_error) {
+      errorPayload = text;
+    }
+    throw apiErrorFromResponsePayload(errorPayload, response.status);
+  }
+
+  const events = [];
+  const handleLine = (line) =>
+    appendProviderStreamEvent(events, parseProviderStreamLine(line), preview);
+  if (!response.body || !response.body.getReader) {
+    const text = await response.text();
+    text.split(/\r?\n/).forEach(handleLine);
+    return events;
+  }
+
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    lines.forEach(handleLine);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    handleLine(buffer);
+  }
+  return events;
+}
+
+async function runProviderGenerationStream(target, payload) {
+  const preview = make("pre", "provider-generation-content");
+  preview.dataset.empty = "true";
+  preview.textContent = "Waiting for provider stream...";
+  target.append(preview);
+  const events = await readProviderGenerationStream(payload, preview);
+  return providerGenerationStreamResult(payload, events);
 }
 
 async function runProviderGeneration(event) {
@@ -5150,7 +5320,9 @@ async function runProviderGeneration(event) {
   }
   target.append(statusBox("Running provider generation", `${payload.provider_id} / ${payload.model}`, "running"));
   try {
-    const result = await api("/providers/generate", { method: "POST", body: payload });
+    const result = payload.stream
+      ? await runProviderGenerationStream(target, payload)
+      : await api("/providers/generate", { method: "POST", body: payload });
     clear(target);
     renderProviderGenerationResult(target, result);
     await Promise.all([loadApprovals(), loadTaskChatContext(), loadLogs()]);

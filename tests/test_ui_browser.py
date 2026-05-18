@@ -2239,6 +2239,182 @@ def test_browser_provider_runtime_can_run_bound_provider_generation(
     assert network_review_body["status"] == "executed"
 
 
+def test_browser_provider_generation_streaming_accumulates_ndjson_and_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    message = "browser streamed provider prompt secret"
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#providers"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#providerGenerationForm'))")
+    devtools_page.wait_for("Boolean(document.querySelector('#providerGenerationStreamInput'))")
+    unsupported_state = devtools_page.eval(
+        """
+        (() => {
+          populateProviderApprovalControls({
+            ok: true,
+            data: [
+              {
+                id: "streaming-provider",
+                name: "Streaming Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["stream-model"],
+                supports_streaming: true,
+              },
+              {
+                id: "blocked-provider",
+                name: "Blocked Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["blocked-model"],
+                supports_streaming: false,
+              },
+            ],
+          });
+          const providerInput = document.querySelector("#providerGenerationProviderInput");
+          const streamInput = document.querySelector("#providerGenerationStreamInput");
+          providerInput.value = "blocked-provider";
+          streamInput.checked = true;
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          return { checked: streamInput.checked, disabled: streamInput.disabled };
+        })()
+        """
+    )
+    assert unsupported_state["disabled"] or not unsupported_state["checked"]
+
+    devtools_page.eval(
+        """
+        (() => {
+          const originalFetch = window.fetch.bind(window);
+          window.__providerGenerationStreamRequests = [];
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {
+              window.__providerGenerationStreamRequests.push(JSON.parse(init.body));
+              const encoder = new TextEncoder();
+              const lines = [
+                JSON.stringify({
+                  provider_id: "streaming-provider",
+                  model: "stream-model",
+                  event: "chunk",
+                  delta: "Streamed ",
+                  raw_response_metadata: { id: "chatcmpl-ui-stream" },
+                }) + "\\n",
+                JSON.stringify({
+                  provider_id: "streaming-provider",
+                  model: "stream-model",
+                  event: "chunk",
+                  delta: "provider response.",
+                  raw_response_metadata: { source: "safe-metadata" },
+                }) + "\\n",
+                JSON.stringify({
+                  provider_id: "streaming-provider",
+                  model: "stream-model",
+                  event: "chunk",
+                  delta: "",
+                  finish_reason: "stop",
+                  usage_metadata: {
+                    prompt_tokens: 7,
+                    completion_tokens: 3,
+                    total_tokens: 10,
+                  },
+                  estimated_cost_usd: 0.0002,
+                  duration_ms: 123,
+                  raw_response_metadata: { finish_reason: "stop", source: "safe-metadata" },
+                }) + "\\n",
+              ];
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    for (const line of lines) {
+                      controller.enqueue(encoder.encode(line));
+                    }
+                    controller.close();
+                  },
+                }),
+                { status: 200, headers: { "Content-Type": "application/x-ndjson" } },
+              );
+            }
+            return originalFetch(input, init);
+          };
+          return true;
+        })()
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          document.querySelector("#providerGenerationPanel").open = true;
+          document.querySelector("#providerGenerationProviderInput").value = "streaming-provider";
+          document.querySelector("#providerGenerationProviderInput")
+            .dispatchEvent(new Event("change", {{ bubbles: true }}));
+          document.querySelector("#providerGenerationModelInput").value = "stream-model";
+          document.querySelector("#providerGenerationStreamInput").checked = true;
+          document.querySelector("#providerGenerationRoleInput").value = "developer";
+          document.querySelector("#providerGenerationRequesterInput").value =
+            "dashboard-provider-stream";
+          document.querySelector("#providerGenerationMessageInput").value = {json.dumps(message)};
+          document.querySelector("#providerGenerationApprovalInput").value =
+            "provider-approval-stream";
+          document.querySelector("#providerGenerationNetworkApprovalInput").value =
+            "network-approval-stream";
+          document.querySelector("#providerGenerationTemperatureInput").value = "0.4";
+          document.querySelector("#providerGenerationMaxTokensInput").value = "64";
+          document.querySelector("#providerGenerationTimeoutInput").value = "45";
+          document.querySelector("#providerGenerationTaskInput").value =
+            "sprint-16-provider-stream";
+          document.querySelector("#providerGenerationAgentInput").value = "agent-stream";
+          document.querySelector("#providerGenerationAgentRoleInput").value = "qa";
+          document.querySelector("#providerGenerationOptionsInput").value =
+            JSON.stringify({{ top_p: 0.8, seed: 16 }}, null, 2);
+          document.querySelector("#providerGenerationForm").requestSubmit();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#providerGenerationOutput")
+          ?.textContent.includes("Streamed provider response.")
+          && document.querySelector("#providerGenerationOutput")
+            ?.textContent.includes("safe-metadata")
+          && document.querySelector("#providerGenerationOutput")
+            ?.textContent.includes("total_tokens")
+        """,
+        timeout_seconds=10.0,
+    )
+    payload = devtools_page.eval("window.__providerGenerationStreamRequests[0]")
+    assert payload["provider_id"] == "streaming-provider"
+    assert payload["model"] == "stream-model"
+    assert payload["messages"] == [{"role": "developer", "content": message}]
+    assert payload["stream"] is True
+    assert payload["requested_by"] == "dashboard-provider-stream"
+    assert payload["approval_id"] == "provider-approval-stream"
+    assert payload["network_approval_id"] == "network-approval-stream"
+    assert payload["options"] == {"top_p": 0.8, "seed": 16}
+    assert payload["timeout_seconds"] == 45
+    assert payload["task_id"] == "sprint-16-provider-stream"
+    assert payload["agent_id"] == "agent-stream"
+    assert payload["agent_role"] == "qa"
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="provider-generation-use-response"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#taskChatContextInput")
+          ?.value.includes("Streamed provider response.")
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
     ui_live_server,
     devtools_page,

@@ -58,6 +58,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "providerGenerationProviderInput" in response.text
     assert "providerGenerationModelInput" in response.text
     assert "providerGenerationMessageInput" in response.text
+    assert "providerGenerationStreamInput" in response.text
     assert "providerGenerationApprovalInput" in response.text
     assert "providerGenerationNetworkApprovalInput" in response.text
     assert "providerGenerationOutput" in response.text
@@ -415,6 +416,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "runProviderGeneration" in script_response.text
     assert "renderProviderGenerationResult" in script_response.text
     assert "providerGenerationContextLines" in script_response.text
+    assert "providerGenerationStreamInput" in script_response.text
+    assert "TextDecoder" in script_response.text
+    assert re.search(r"\.body\s*\.\s*getReader\(\)", script_response.text)
+    assert re.search(
+        r'["`]/providers/generate/stream["`][\s\S]{0,240}method:\s*"POST"',
+        script_response.text,
+    )
+    assert re.search(
+        r"updateProviderModelOptions\(\s*"
+        r'"#providerGenerationProviderInput",\s*'
+        r'"#providerGenerationModelInput",\s*'
+        r'"#providerGenerationModelOptions",\s*'
+        r'"#providerGenerationStreamInput"',
+        script_response.text,
+    )
     assert "provider-generation-use-response" in script_response.text
     assert 'api("/providers/generate", { method: "POST", body: payload })' in (script_response.text)
     assert "Provider generation completed" in script_response.text

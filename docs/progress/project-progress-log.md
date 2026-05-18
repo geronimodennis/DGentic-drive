@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bu Provider Streaming Generation Console
+
+Status: completed for the scoped Providers-panel streaming generation slice; Sprint 16 remains active for richer model-backed chat semantics, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact provider runtime follow-up after BL-010bt because the backend already exposed guarded `POST /providers/generate/stream` NDJSON events while the Providers panel only supported non-streaming generation.
+- Completed: Architect/Reviewer kept the slice on existing provider runtime, approval, and network-policy contracts; no provider transport, credential handling, approval bypass, network policy bypass, or backend Git expansion was added.
+- Completed: Developer added a Providers-panel Stream toggle for provider generation, tied it to the catalog `supports_streaming` flag, and preserved existing provider/model/message/options/context fields.
+- Completed: Developer added browser-side NDJSON streaming reads, chunk accumulation, safe metadata/usage rendering, stream error display for post-first-chunk failures, and a Use Response action that inserts bounded streamed output into task-chat context.
+- Completed: QA added static UI contract coverage and a browser smoke that stubs `/providers/generate/stream`, verifies request payload reuse, unsupported-provider stream gating, chunk accumulation, metadata rendering, and task-chat context insertion.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: the Providers runtime panel can run streaming provider generation through the existing guarded `/providers/generate/stream` route.
+- Implemented in this slice: streamed provider chunks are accumulated into a final response view with event count, finish reason, usage metadata, estimated cost, and safe raw event metadata.
+- Implemented in this slice: streamed provider responses can be copied into task-chat context as bounded follow-up evidence without creating a new backend conversation store.
+- Still out of scope after this slice: durable backend chat transcripts, model-backed autonomous chat orchestration, automatic provider/network approval pairing, provider adapter expansion beyond existing backend contracts, and broader Git hunk apply/revert authority.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_provider_generation_streaming_accumulates_ndjson_and_context` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 30 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bt Provider Generation Console
 
 Status: completed for the scoped Providers-panel generation slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

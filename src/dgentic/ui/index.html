@@ -681,16 +681,22 @@ review</textarea>
                     Timeout Seconds
                     <input id="providerGenerationTimeoutInput" type="number" min="1" max="600" step="1" value="60">
                   </label>
-                  <label>
-                    Task ID
-                    <input id="providerGenerationTaskInput" type="text" maxlength="256">
+                  <label class="checkbox-label">
+                    <input id="providerGenerationStreamInput" type="checkbox">
+                    Stream
                   </label>
                 </div>
                 <div class="two-column">
                   <label>
+                    Task ID
+                    <input id="providerGenerationTaskInput" type="text" maxlength="256">
+                  </label>
+                  <label>
                     Agent ID
                     <input id="providerGenerationAgentInput" type="text" maxlength="256">
                   </label>
+                </div>
+                <div class="two-column">
                   <label>
                     Agent Role
                     <input id="providerGenerationAgentRoleInput" type="text" maxlength="256">

@@ -397,7 +397,8 @@ textarea {
 }
 
 .policy-grid,
-.reliability-grid {
+.reliability-grid,
+.activity-layout {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
@@ -407,8 +408,13 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.activity-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
 .policy-grid section,
-.reliability-grid section {
+.reliability-grid section,
+.activity-column {
   display: grid;
   align-content: start;
   gap: 10px;
@@ -416,11 +422,49 @@ textarea {
 }
 
 .policy-grid h3,
-.reliability-grid h3 {
+.reliability-grid h3,
+.activity-column h3 {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
   text-transform: uppercase;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-summary-editor {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.session-summary-editor summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.session-summary-editor form {
+  margin-top: 12px;
+}
+
+.session-summary-card {
+  display: grid;
+  gap: 10px;
+}
+
+.session-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .recipe-action-panel {
@@ -1398,6 +1442,7 @@ textarea {
   .checkpoint-grid,
   .workspace-layout,
   .policy-grid,
+  .activity-layout,
   .decision-form {
     grid-template-columns: 1fr;
   }

@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cc Activity And Session Workbench
+
+Status: completed for the scoped Activity/session workbench slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session context insertion beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Activity/session workbench slice because the backend already exposed `/sessions/summary` and `/logs`, but the dashboard only showed a simple log list.
+- Completed: Architect/Reviewer kept the slice on existing session-summary and event-log contracts; no backend session, log, auth, provider, approval, or Git authority was added.
+- Completed: Developer expanded the Activity panel into a two-column session summary and event-log workbench.
+- Completed: Developer added session summary capture/list controls plus bounded Use Summary insertion into Task Chat.
+- Completed: Developer added session-summary cards to the Task Chat context stream and preserved existing log filtering, now including the `session` event type.
+- Completed: QA extended static UI assertions and added browser smoke coverage for session summary capture, backend payload shape, session log filtering, bounded context insertion, and Task Chat session context cards.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Activity can create session summaries using the existing `/sessions/summary` POST contract, splitting multiline fields into action, decision, learned-knowledge, created-tool, and next-step arrays.
+- Implemented in this slice: Activity lists recent session summaries with count previews and can insert bounded summary context into the Task Chat composer.
+- Implemented in this slice: Task Chat context stream includes recent session summaries and the Activity log filter can show `session` events from the existing `/logs?event_type=session` contract.
+- Still out of scope after this slice: durable backend chat transcript records, LLM-authored session summarization, session summary edit/delete workflows, broader analytics over event logs, and backend Git workflow expansion.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 34 passed.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010cb Task Chat Provider Route Preview Handoff
 
 Status: completed for the scoped Task Chat provider-route preview handoff slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory context insertion, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

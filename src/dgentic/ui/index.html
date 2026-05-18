@@ -1482,22 +1482,75 @@ review</textarea>
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Activity</p>
-                <h2>Logs</h2>
+                <h2>Session Workbench</h2>
               </div>
-              <select id="logFilter" aria-label="Event type">
-                <option value="">All</option>
-                <option value="task">Task</option>
-                <option value="approval">Approval</option>
-                <option value="cli">CLI</option>
-                <option value="project">Project</option>
-                <option value="provider">Provider</option>
-                <option value="filesystem">Filesystem</option>
-                <option value="web_retrieval">Web Retrieval</option>
-                <option value="tool">Tool</option>
-                <option value="auth">Auth</option>
-              </select>
+              <button id="refreshActivityButton" class="link-button" type="button">Refresh</button>
             </div>
-            <div id="logList" class="log-list"></div>
+            <div class="activity-layout">
+              <section class="activity-column">
+                <div class="section-header">
+                  <h3>Session Summaries</h3>
+                </div>
+                <details class="session-summary-editor">
+                  <summary>Capture Summary</summary>
+                  <form id="sessionSummaryForm" class="stacked-form">
+                    <label>
+                      Summary ID
+                      <input
+                        id="sessionSummaryIdInput"
+                        type="text"
+                        maxlength="120"
+                        placeholder="Optional"
+                      />
+                    </label>
+                    <label>
+                      Actions
+                      <textarea id="sessionSummaryActionsInput" rows="3"></textarea>
+                    </label>
+                    <label>
+                      Decisions
+                      <textarea id="sessionSummaryDecisionsInput" rows="3"></textarea>
+                    </label>
+                    <label>
+                      Learned Knowledge
+                      <textarea id="sessionSummaryKnowledgeInput" rows="3"></textarea>
+                    </label>
+                    <label>
+                      Created Tools
+                      <textarea id="sessionSummaryToolsInput" rows="2"></textarea>
+                    </label>
+                    <label>
+                      Next Steps
+                      <textarea id="sessionSummaryNextStepsInput" rows="3"></textarea>
+                    </label>
+                    <div class="button-row">
+                      <button class="primary-button" type="submit">Save Summary</button>
+                    </div>
+                  </form>
+                  <div id="sessionSummaryOutput" class="output-region" aria-live="polite"></div>
+                </details>
+                <div id="sessionSummaryList" class="compact-list"></div>
+              </section>
+              <section class="activity-column">
+                <div class="section-header">
+                  <h3>Event Logs</h3>
+                  <select id="logFilter" aria-label="Event type">
+                    <option value="">All</option>
+                    <option value="task">Task</option>
+                    <option value="approval">Approval</option>
+                    <option value="cli">CLI</option>
+                    <option value="project">Project</option>
+                    <option value="provider">Provider</option>
+                    <option value="filesystem">Filesystem</option>
+                    <option value="web_retrieval">Web Retrieval</option>
+                    <option value="tool">Tool</option>
+                    <option value="session">Session</option>
+                    <option value="auth">Auth</option>
+                  </select>
+                </div>
+                <div id="logList" class="log-list"></div>
+              </section>
+            </div>
           </article>
         </section>
       </main>

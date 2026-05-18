@@ -620,6 +620,139 @@ def test_browser_workspace_editor_can_apply_and_revert_file_change(
     assert target.read_text(encoding="utf-8") == "alpha\n"
 
 
+def test_browser_activity_session_workbench_captures_filters_and_reuses_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    plan_status, plan_body = _http_json(
+        "POST",
+        f"{base_url}/tasks/plan",
+        payload={"objective": "Seed an unrelated deterministic execution log."},
+    )
+    assert plan_status == 201
+    run_status, _run_body = _http_json(
+        "POST",
+        f"{base_url}/tasks/execute",
+        payload=plan_body,
+    )
+    assert run_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#activity"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#sessionSummaryForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#sessionSummaryIdInput").value = "browser-session-summary";
+          document.querySelector("#sessionSummaryActionsInput").value =
+            "Reviewed Sprint 16 Activity\\nCaptured session context\\nTAIL-MARKER-ACTION";
+          document.querySelector("#sessionSummaryDecisionsInput").value =
+            "Keep the backend session contract unchanged\\nReuse bounded Task Chat context";
+          document.querySelector("#sessionSummaryKnowledgeInput").value =
+            "Session summaries are safe read-first dashboard context";
+          document.querySelector("#sessionSummaryToolsInput").value =
+            "activity-workbench\\nsession-context-card";
+          document.querySelector("#sessionSummaryNextStepsInput").value =
+            [
+              "Run focused browser smoke",
+              "Update Sprint 16 docs",
+              "Commit tested checkpoint",
+              "Push stable milestone",
+              "Continue Sprint 16",
+              "Prepare Sprint 17 handoff",
+              "TAIL-MARKER-NEXT"
+            ].join("\\n");
+          document.querySelector("#sessionSummaryForm").requestSubmit();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const output = document.querySelector("#sessionSummaryOutput")?.textContent || "";
+          const list = document.querySelector("#sessionSummaryList")?.textContent || "";
+          return output.includes("Session summary saved")
+            && list.includes("browser-session-summary")
+            && list.includes("Keep the backend session contract unchanged")
+            && Boolean(document.querySelector('[data-testid="session-summary-use-context"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    summary_status, summary_body = _http_json("GET", f"{base_url}/sessions/summary")
+    assert summary_status == 200
+    saved = next(item for item in summary_body if item["id"] == "browser-session-summary")
+    assert saved["actions"] == [
+        "Reviewed Sprint 16 Activity",
+        "Captured session context",
+        "TAIL-MARKER-ACTION",
+    ]
+    assert saved["decisions"] == [
+        "Keep the backend session contract unchanged",
+        "Reuse bounded Task Chat context",
+    ]
+    assert saved["created_tools"] == ["activity-workbench", "session-context-card"]
+    assert saved["next_steps"][-1] == "TAIL-MARKER-NEXT"
+
+    devtools_page.eval(
+        "document.querySelector('[data-testid=\"session-summary-use-context\"]').click()"
+    )
+    context_value = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Session browser-session-summary")
+            && value.includes("Session ID: browser-session-summary")
+            && value.includes("Actions: Reviewed Sprint 16 Activity")
+            && value.includes("Decisions: Keep the backend session contract unchanged")
+            && value.includes("Next steps: Run focused browser smoke")
+            && !value.includes("TAIL-MARKER-NEXT")
+            ? value
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert "Session ID: browser-session-summary" in context_value
+    assert "TAIL-MARKER-NEXT" not in context_value
+
+    devtools_page.eval(
+        """
+        (() => {
+          const filter = document.querySelector("#logFilter");
+          filter.value = "session";
+          filter.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const logs = document.querySelector("#logList")?.textContent || "";
+          return logs.includes("Created session summary.")
+            && !logs.includes("Executed deterministic task plan.");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for(
+        """
+        (() => {
+          const stream = document.querySelector("#taskChatContextStream")?.textContent || "";
+          return stream.includes("Session browser-session-summary")
+            && Boolean(document.querySelector('[data-testid="task-chat-session-use-context"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+
 def test_browser_task_chat_can_plan_run_and_insert_execution_evidence(
     ui_live_server,
     devtools_page,

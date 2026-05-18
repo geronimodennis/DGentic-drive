@@ -49,6 +49,7 @@ let latestTaskChatContext = {
   plans: [],
   runs: [],
   orchestrations: [],
+  sessions: [],
   memory: [],
   approvals: [],
   logs: [],
@@ -333,6 +334,7 @@ async function refreshDashboard() {
     loadPolicySurfaces(),
     loadSettings(),
     loadTaskChatContext(),
+    loadSessionSummaries(),
     loadLogs(),
   ]);
 }
@@ -714,11 +716,12 @@ async function loadTaskChatContext() {
     const result = await safeLoad(`${source.label} pending approvals`, () => api(`${source.base}?status=pending`));
     return { source, ...result };
   });
-  const [plans, runs, orchestrations, active, memory, logs, ...approvalResults] = await Promise.all([
+  const [plans, runs, orchestrations, active, sessions, memory, logs, ...approvalResults] = await Promise.all([
     safeLoad("task chat plans", () => api("/tasks/plans")),
     safeLoad("task chat runs", () => api("/tasks/runs")),
     safeLoad("task chat orchestrations", () => api("/tasks/orchestrations")),
     safeLoad("task chat active project", () => api("/projects/active")),
+    safeLoad("task chat sessions", () => api("/sessions/summary")),
     safeLoad("task chat memory", () => api("/api/v1/memory/metadata?limit=6&lifecycle_state=active")),
     safeLoad("task chat logs", () => api("/logs")),
     ...approvalLoads,
@@ -731,11 +734,12 @@ async function loadTaskChatContext() {
       }
     }
   }
-  const loadResults = [plans, runs, orchestrations, active, memory, logs, ...approvalResults];
+  const loadResults = [plans, runs, orchestrations, active, sessions, memory, logs, ...approvalResults];
   latestTaskChatContext = {
     plans: plans.ok ? plans.data || [] : [],
     runs: runs.ok ? runs.data || [] : [],
     orchestrations: orchestrations.ok ? orchestrations.data || [] : [],
+    sessions: sessions.ok ? sessions.data || [] : [],
     memory: memory.ok ? memory.data?.items || [] : [],
     approvals,
     logs: logs.ok ? (logs.data || []).slice(-8).reverse() : [],
@@ -751,6 +755,7 @@ function taskChatLatestActivity(context) {
     ...context.logs.map((event) => event.created_at),
     ...context.runs.map((run) => run.completed_at || run.started_at),
     ...context.orchestrations.map((run) => run.updated_at || run.created_at),
+    ...context.sessions.map((summary) => summary.created_at),
     ...context.plans.map((plan) => plan.created_at),
     ...context.memory.map((item) => item.updated_at || item.created_at),
     ...context.approvals.map((item) => item.approval.created_at),
@@ -805,6 +810,26 @@ function orchestrationContextLines(run) {
     `Evidence: ${(run.required_dod_evidence || []).join(", ") || "-"}`,
     `Updated: ${formatTimestamp(run.updated_at || run.created_at)}`,
   ];
+}
+
+function sessionSummaryContextLines(summary) {
+  return [
+    `Session ID: ${summary.id || "-"}`,
+    `Created: ${formatTimestamp(summary.created_at)}`,
+    `Actions: ${boundedStringList(summary.actions || [], 6, 160).join("; ") || "-"}`,
+    `Decisions: ${boundedStringList(summary.decisions || [], 6, 160).join("; ") || "-"}`,
+    `Learned knowledge: ${boundedStringList(summary.learned_knowledge || [], 6, 160).join("; ") || "-"}`,
+    `Created tools: ${boundedStringList(summary.created_tools || [], 6, 120).join(", ") || "-"}`,
+    `Next steps: ${boundedStringList(summary.next_steps || [], 6, 160).join("; ") || "-"}`,
+  ];
+}
+
+function sessionSummaryMeta(summary) {
+  return [
+    `${(summary.actions || []).length} actions`,
+    `${(summary.decisions || []).length} decisions`,
+    `${(summary.next_steps || []).length} next steps`,
+  ].join(" - ");
 }
 
 function memoryContextLabel(item) {
@@ -910,6 +935,7 @@ function renderTaskChatContextStream() {
   appendKeyValue(summary, "Root", compactPath(activeRoot));
   appendKeyValue(summary, "Tasks", `${context.plans.length} plans / ${context.runs.length} runs`);
   appendKeyValue(summary, "Orchestrations", String(context.orchestrations.length));
+  appendKeyValue(summary, "Sessions", String(context.sessions.length));
   appendKeyValue(summary, "Memory", String(context.memory.length));
   appendKeyValue(summary, "Pending approvals", String(context.approvals.length), context.approvals.length ? "pending" : "ok");
   appendKeyValue(summary, "Latest activity", taskChatLatestActivity(context));
@@ -957,6 +983,16 @@ function renderTaskChatContextStream() {
       lines: orchestrationContextLines(run),
     });
   }
+  for (const summary of context.sessions.slice(-2).reverse()) {
+    renderTaskChatContextCard(cards, {
+      title: `Session ${summary.id || "summary"}`,
+      meta: `${sessionSummaryMeta(summary)} - ${formatTimestamp(summary.created_at)}`,
+      state: "session",
+      sectionId: "activity",
+      useTestId: "task-chat-session-use-context",
+      lines: sessionSummaryContextLines(summary),
+    });
+  }
   for (const item of context.memory.slice(0, 3)) {
     renderTaskChatContextCard(cards, {
       title: `Memory ${memoryContextLabel(item)}`,
@@ -997,7 +1033,7 @@ function renderTaskChatContextStream() {
     });
   }
   if (!cards.childElementCount) {
-    cards.append(statusBox("No context cards", "Plans, runs, orchestration runs, memory, approvals, and logs will appear here as work starts.", "pending"));
+    cards.append(statusBox("No context cards", "Plans, runs, orchestration runs, session summaries, memory, approvals, and logs will appear here as work starts.", "pending"));
   }
   target.append(cards);
 }
@@ -8388,6 +8424,104 @@ async function postCommandRecipeAction(recipeId, action) {
   }
 }
 
+function sessionSummaryPayload() {
+  const id = qs("#sessionSummaryIdInput").value.trim();
+  const payload = {
+    actions: splitLines(qs("#sessionSummaryActionsInput").value),
+    decisions: splitLines(qs("#sessionSummaryDecisionsInput").value),
+    learned_knowledge: splitLines(qs("#sessionSummaryKnowledgeInput").value),
+    created_tools: splitLines(qs("#sessionSummaryToolsInput").value),
+    next_steps: splitLines(qs("#sessionSummaryNextStepsInput").value),
+  };
+  if (id) {
+    payload.id = id;
+  }
+  return payload;
+}
+
+async function createSessionSummary(event) {
+  event.preventDefault();
+  const target = qs("#sessionSummaryOutput");
+  const payload = sessionSummaryPayload();
+  const hasContent = [
+    payload.actions,
+    payload.decisions,
+    payload.learned_knowledge,
+    payload.created_tools,
+    payload.next_steps,
+  ].some((items) => items.length);
+  clear(target);
+  if (!hasContent) {
+    target.append(statusBox("Summary needs content", "Add at least one action, decision, learned item, tool, or next step.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Saving session summary", payload.id || "new session", "running"));
+  try {
+    const summary = await api("/sessions/summary", { method: "POST", body: payload });
+    qs("#sessionSummaryForm").reset();
+    clear(target);
+    target.append(statusBox("Session summary saved", summary.id, "ok"));
+    await Promise.all([loadSessionSummaries(), loadLogs(), loadTaskChatContext()]);
+    showToast("Session summary saved.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Session summary failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+async function loadSessionSummaries() {
+  const result = await safeLoad("session summaries", () => api("/sessions/summary"));
+  renderSessionSummaryList(result);
+}
+
+function renderSessionSummaryList(result) {
+  const target = qs("#sessionSummaryList");
+  clear(target);
+  if (!result.ok) {
+    target.append(statusBox("Session summaries unavailable", result.error, "blocked"));
+    return;
+  }
+  const summaries = (result.data || []).slice(-8).reverse();
+  if (!summaries.length) {
+    target.append(statusBox("No session summaries", "Captured session summaries will appear here.", "pending"));
+    return;
+  }
+  for (const summary of summaries) {
+    const item = make("div", "list-item session-summary-card");
+    item.append(make("div", "item-title", summary.id || "session summary"));
+    item.append(make("div", "item-meta", `${sessionSummaryMeta(summary)} - ${formatTimestamp(summary.created_at)}`));
+
+    const grid = make("div", "context-grid");
+    appendKeyValue(grid, "Actions", String((summary.actions || []).length));
+    appendKeyValue(grid, "Decisions", String((summary.decisions || []).length));
+    appendKeyValue(grid, "Knowledge", String((summary.learned_knowledge || []).length));
+    appendKeyValue(grid, "Tools", String((summary.created_tools || []).length));
+    appendKeyValue(grid, "Next steps", String((summary.next_steps || []).length));
+    item.append(grid);
+
+    const decisions = boundedStringList(summary.decisions || [], 2, 140);
+    if (decisions.length) {
+      item.append(make("div", "item-meta", `Decisions: ${decisions.join("; ")}`));
+    }
+    const nextSteps = boundedStringList(summary.next_steps || [], 2, 140);
+    if (nextSteps.length) {
+      item.append(make("div", "item-meta", `Next: ${nextSteps.join("; ")}`));
+    }
+
+    const actions = make("div", "session-summary-actions");
+    const useButton = make("button", "link-button", "Use Summary");
+    useButton.type = "button";
+    useButton.dataset.testid = "session-summary-use-context";
+    useButton.addEventListener("click", () =>
+      insertTaskChatContext(`Session ${summary.id || "summary"}`, sessionSummaryContextLines(summary)),
+    );
+    actions.append(useButton);
+    item.append(actions);
+    target.append(item);
+  }
+}
+
 async function loadLogs() {
   const eventType = qs("#logFilter").value;
   const suffix = eventType ? `?event_type=${encodeURIComponent(eventType)}` : "";
@@ -8535,6 +8669,10 @@ function bindEvents() {
   qs("#gitForm").addEventListener("submit", createGitCheckpoint);
   qs("#gitApprovalForm").addEventListener("submit", createGitApproval);
   qs("#gitRunSubmitButton").addEventListener("click", runGitWorkflow);
+  qs("#sessionSummaryForm").addEventListener("submit", createSessionSummary);
+  qs("#refreshActivityButton").addEventListener("click", () =>
+    Promise.all([loadSessionSummaries(), loadLogs(), loadTaskChatContext()]),
+  );
   qs("#logFilter").addEventListener("change", loadLogs);
   qs("#approvalSourceInput").addEventListener("change", () => {
     approvalSource = qs("#approvalSourceInput").value;

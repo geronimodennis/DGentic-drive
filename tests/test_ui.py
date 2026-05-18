@@ -49,6 +49,17 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderApprovalRequestButton" in response.text
     assert "Preview Route" in response.text
     assert "Request Approval" in response.text
+    assert "refreshActivityButton" in response.text
+    assert "sessionSummaryForm" in response.text
+    assert "sessionSummaryIdInput" in response.text
+    assert "sessionSummaryActionsInput" in response.text
+    assert "sessionSummaryDecisionsInput" in response.text
+    assert "sessionSummaryKnowledgeInput" in response.text
+    assert "sessionSummaryToolsInput" in response.text
+    assert "sessionSummaryNextStepsInput" in response.text
+    assert "sessionSummaryList" in response.text
+    assert "sessionSummaryOutput" in response.text
+    assert 'value="session"' in response.text
     assert "orchestrationCreateForm" in response.text
     assert "orchestrationTaskBuilder" in response.text
     assert "orchestrationTaskIdInput" in response.text
@@ -620,7 +631,23 @@ def test_web_ui_static_assets_are_served() -> None:
         'api("/api/v1/memory/metadata?limit=6&lifecycle_state=active"))' in script_response.text
     )
     assert 'appendKeyValue(summary, "Memory"' in script_response.text
-    assert "Plans, runs, orchestration runs, memory, approvals, and logs" in script_response.text
+    assert 'appendKeyValue(summary, "Sessions"' in script_response.text
+    assert "sessionSummaryPayload" in script_response.text
+    assert "createSessionSummary" in script_response.text
+    assert "loadSessionSummaries" in script_response.text
+    assert "renderSessionSummaryList" in script_response.text
+    assert "sessionSummaryContextLines" in script_response.text
+    assert "task-chat-session-use-context" in script_response.text
+    assert "session-summary-use-context" in script_response.text
+    assert 'api("/sessions/summary", { method: "POST", body: payload })' in script_response.text
+    assert 'safeLoad("session summaries", () => api("/sessions/summary"))' in script_response.text
+    assert "Promise.all([loadSessionSummaries(), loadLogs(), loadTaskChatContext()])" in (
+        script_response.text
+    )
+    assert (
+        "Plans, runs, orchestration runs, session summaries, memory, approvals, and logs"
+        in script_response.text
+    )
     assert "openTaskChatApprovalReview" in script_response.text
     assert "task-chat-approval-review" in script_response.text
     assert "appendTaskChatApprovalOutcomeMessage(selectedApproval)" in script_response.text
@@ -633,7 +660,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "task chat orchestrations" in script_response.text
     assert 'api("/tasks/orchestrations")' in script_response.text
     assert 'appendKeyValue(summary, "Orchestrations"' in script_response.text
-    assert "Plans, runs, orchestration runs, memory, approvals, and logs" in script_response.text
+    assert 'safeLoad("task chat sessions", () => api("/sessions/summary"))' in script_response.text
     assert "isAuthorizationError" in script_response.text
     assert "unavailable_count" in script_response.text
     assert "Limited sources" in script_response.text
@@ -1113,6 +1140,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".checkpoint-grid" in style_response.text
     assert ".reliability-grid" in style_response.text
     assert ".policy-grid" in style_response.text
+    assert ".activity-layout" in style_response.text
+    assert ".session-summary-card" in style_response.text
+    assert ".session-summary-actions" in style_response.text
     assert ".recipe-action-panel" in style_response.text
     assert ".recipe-parameter-editor" in style_response.text
     assert ".recipe-parameter-builder" in style_response.text

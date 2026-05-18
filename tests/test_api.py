@@ -2261,6 +2261,56 @@ def test_hook_policy_routes_require_hooks_capability_in_production(tmp_path, mon
     get_settings.cache_clear()
 
 
+def test_network_policy_rule_api_requires_network_capability(tmp_path, monkeypatch) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DGENTIC_AUTH_TOKENS",
+        "network-token=network;approval-token=approvals;admin-token=admin",
+    )
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    payload = {
+        "domain": "api.network-auth.example.test",
+        "mode": "deny",
+        "reason": "Network capability owns policy.",
+    }
+
+    no_token_response = client.post("/network/policy/rules", json=payload)
+    approval_response = client.post(
+        "/network/policy/rules",
+        headers={"Authorization": "Bearer approval-token"},
+        json=payload,
+    )
+    network_response = client.post(
+        "/network/policy/rules",
+        headers={"Authorization": "Bearer network-token"},
+        json=payload,
+    )
+    rule_id = network_response.json()["id"]
+    list_response = client.get(
+        "/network/policy/rules",
+        headers={"Authorization": "Bearer network-token"},
+    )
+    admin_patch_response = client.patch(
+        f"/network/policy/rules/{rule_id}",
+        headers={"Authorization": "Bearer admin-token"},
+        json={"enabled": False},
+    )
+
+    assert no_token_response.status_code == 401
+    assert approval_response.status_code == 403
+    assert network_response.status_code == 201
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == rule_id
+    assert admin_patch_response.status_code == 200
+    assert admin_patch_response.json()["enabled"] is False
+    get_settings.cache_clear()
+
+
 def test_managed_policy_locks_block_mutable_policy_surfaces(
     tmp_path,
     monkeypatch,
@@ -2276,6 +2326,7 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
                         "cli_policy",
                         "command_recipes",
                         "hook_policy",
+                        "network_policy",
                         "plugin_trust",
                         "plugin_components",
                         "plugin_command_recipes",
@@ -2328,6 +2379,14 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
             "reason": "Managed deployment owns hook policy.",
         },
     )
+    network_policy_create = client.post(
+        "/network/policy/rules",
+        json={
+            "domain": "locked-policy.example.test",
+            "mode": "deny",
+            "reason": "Managed deployment owns network policy.",
+        },
+    )
     plugin_trust = client.patch(
         "/plugins/locked-plugin/trust",
         json={"status": "trusted", "reason": "Managed deployment owns plugin trust."},
@@ -2341,6 +2400,7 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
     plugin_hook_disable = client.post("/plugins/locked-plugin/hook-policies/disable")
     cli_policy_list = client.get("/cli/policy/rules")
     hook_list = client.get("/guardrails/hooks/rules")
+    network_policy_list = client.get("/network/policy/rules")
     recipe_list = client.get("/cli/recipes")
     plugin_list = client.get("/plugins")
 
@@ -2350,6 +2410,8 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
     assert "command_recipes" in recipe_create.text
     assert hook_create.status_code == 403
     assert "hook_policy" in hook_create.text
+    assert network_policy_create.status_code == 403
+    assert "network_policy" in network_policy_create.text
     assert plugin_trust.status_code == 403
     assert "plugin_trust" in plugin_trust.text
     assert plugin_component_preview.status_code == 403
@@ -2367,8 +2429,133 @@ def test_managed_policy_locks_block_mutable_policy_surfaces(
     assert "plugin_hook_policies" in plugin_hook_disable.text
     assert cli_policy_list.status_code == 200
     assert hook_list.status_code == 200
+    assert network_policy_list.status_code == 200
     assert recipe_list.status_code == 200
     assert plugin_list.status_code == 200
+    get_settings.cache_clear()
+
+
+def test_network_policy_rule_api_persists_and_controls_domain_decisions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/network/policy/rules",
+        json={
+            "domain": "api.network-rule.example.test",
+            "mode": "deny",
+            "reason": "Block API domain.",
+            "priority": 5,
+        },
+    )
+    rule_id = create_response.json()["id"]
+    decision_response = client.post(
+        "/guardrails/network",
+        json={"url": "https://api.network-rule.example.test/v1"},
+    )
+    list_response = client.get("/network/policy/rules")
+    update_response = client.patch(
+        f"/network/policy/rules/{rule_id}",
+        json={"enabled": False},
+    )
+    disabled_decision_response = client.post(
+        "/guardrails/network",
+        json={"url": "https://api.network-rule.example.test/v1"},
+    )
+
+    assert create_response.status_code == 201
+    assert create_response.json()["source"] == "local"
+    assert decision_response.status_code == 200
+    assert decision_response.json()["mode"] == "deny"
+    assert decision_response.json()["matched_rule_id"] == rule_id
+    assert decision_response.json()["matched_rule_source"] == "local"
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == rule_id
+    assert update_response.status_code == 200
+    assert update_response.json()["enabled"] is False
+    assert disabled_decision_response.status_code == 200
+    assert disabled_decision_response.json()["mode"] == "allow"
+    persisted_rules = json.loads(
+        (tmp_path / "state" / "network-domain-policy-rules.json").read_text(encoding="utf-8")
+    )
+    assert [rule["id"] for rule in persisted_rules] == [rule_id]
+    get_settings.cache_clear()
+
+
+def test_managed_network_policy_rules_api_are_read_only_and_precede_local_rules(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    managed_path = tmp_path / "managed-settings.json"
+    managed_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "managed_network_domain_policy_rules": [
+                        {
+                            "id": "managed.block-network-api",
+                            "domain": "api.managed-network.example.test",
+                            "mode": "deny",
+                            "reason": "Managed network policy blocks API.",
+                            "priority": 100,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DGENTIC_MANAGED_SETTINGS_FILE", str(managed_path))
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    create_response = client.post(
+        "/network/policy/rules",
+        json={
+            "domain": "api.managed-network.example.test",
+            "mode": "allow",
+            "reason": "Local policy cannot override managed policy.",
+            "priority": 0,
+        },
+    )
+    local_rule_id = create_response.json()["id"]
+    list_response = client.get("/network/policy/rules")
+    patch_response = client.patch(
+        "/network/policy/rules/managed.block-network-api",
+        json={"enabled": False},
+    )
+    decision_response = client.post(
+        "/guardrails/network",
+        json={"url": "https://api.managed-network.example.test/v1"},
+    )
+    persisted_rules = json.loads(
+        (tmp_path / "state" / "network-domain-policy-rules.json").read_text(encoding="utf-8")
+    )
+
+    assert create_response.status_code == 201
+    assert list_response.status_code == 200
+    assert [(rule["id"], rule["source"]) for rule in list_response.json()] == [
+        ("managed.block-network-api", "managed"),
+        (local_rule_id, "local"),
+    ]
+    assert patch_response.status_code == 403
+    assert "Managed network domain policy" in patch_response.text
+    assert decision_response.status_code == 200
+    assert decision_response.json()["mode"] == "deny"
+    assert decision_response.json()["matched_rule_id"] == "managed.block-network-api"
+    assert decision_response.json()["matched_rule_source"] == "managed"
+    assert [rule["id"] for rule in persisted_rules] == [local_rule_id]
     get_settings.cache_clear()
 
 

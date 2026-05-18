@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bl Local Network Policy Rule Editing
+
+Status: completed for the scoped editable network policy slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic execution, explicit orchestration creation, and reusable orchestration context, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected local network policy rule creation/edit/toggle controls as the next compact Sprint 16 editable-policy slice after CLI policy, hook policy, command recipes, plugin trust, and generated-tool governance were already surfaced.
+- Completed: Architect/Reviewer kept the slice aligned with existing network-policy semantics: managed rules evaluate before local rules, legacy environment JSON rules stay compatible, and managed `network_policy` locks block mutation while preserving read/evaluation access.
+- Completed: Developer added local JSON-backed network-domain policy rule persistence, create/list/update APIs, `network` capability mapping, managed-lock enforcement, and dashboard rule editor/list controls.
+- Completed: QA added persistence/sort/evaluation tests, API capability and managed-read-only tests, static dashboard contract coverage, and a browser smoke that creates a deny rule, verifies preflight denial, toggles the rule disabled, and verifies the preflight allows again.
+- Completed: Reviewer/Security confirmed the dashboard uses guarded backend policy APIs, keeps managed records read-only, and does not bypass network approval or provider/web-retrieval/generated-tool binding rules.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: local network-domain policy rules can be created through `POST /network/policy/rules`, listed through `GET /network/policy/rules`, and updated through `PATCH /network/policy/rules/{rule_id}`.
+- Implemented in this slice: managed network-domain policy rules remain read-only, are listed ahead of local records, and continue to evaluate before legacy environment JSON rules and local persisted rules.
+- Implemented in this slice: the dashboard Policy panel can create local rules, render managed/local source state, and edit or toggle local rules while respecting managed `network_policy` locks after settings refresh.
+- Still out of scope after this slice: provider/routing/filesystem policy editors, richer policy lifecycle workflows, OS-level egress isolation, and backend Git expansion beyond the existing safe checkpoint/approval/run contracts.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_network_policy.py::test_local_network_policy_rules_persist_sort_and_control_decisions tests\test_api.py::test_network_policy_rule_api_requires_network_capability tests\test_api.py::test_managed_policy_locks_block_mutable_policy_surfaces tests\test_api.py::test_network_policy_rule_api_persists_and_controls_domain_decisions tests\test_api.py::test_managed_network_policy_rules_api_are_read_only_and_precede_local_rules tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_policy_panel_can_create_and_toggle_network_rule` with 8 passed.
+- Broader UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 17 passed.
+- Focused network/API validation passed: `uv run pytest -q tests\test_network_policy.py tests\test_api.py -k "network_policy_rule or network_domain_policy or guardrails_network or managed_policy_locks or network_approval"` with 22 passed and 207 deselected.
+- Syntax/static checks passed: `node --check src\dgentic\ui\app.js`, `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full regression passed: `uv run pytest -q` with 1,376 passed and 2 skipped.
+
 ### Sprint 16 BL-010bk Task-Chat Orchestration Context Reuse
 
 Status: completed for the scoped orchestration context reuse slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic execution, explicit orchestration creation, and reusable orchestration context, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.

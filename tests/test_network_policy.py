@@ -11,11 +11,14 @@ from dgentic.network_policy import (
     approve_network_approval,
     claim_network_approval,
     create_network_approval,
+    create_network_policy_rule,
     deny_network_approval,
     evaluate_network_domain_policy,
     get_network_approval_review,
     list_network_approvals,
+    list_network_policy_rules,
     network_domain_policy,
+    update_network_policy_rule,
 )
 from dgentic.orchestration import OrchestrationService
 from dgentic.schemas import (
@@ -24,6 +27,8 @@ from dgentic.schemas import (
     HookPolicyRuleRequest,
     HookPolicyRuleUpdate,
     HookPolicySurface,
+    NetworkPolicyRuleRequest,
+    NetworkPolicyRuleUpdate,
     OrchestrationCreateRequest,
     OrchestrationTaskSpec,
 )
@@ -206,6 +211,50 @@ def test_managed_network_domain_policy_rules_precede_local_policy(
     assert local_only.matched_rule_source == "local"
     assert fallback.mode == "allow"
     assert fallback.matched_rule_source is None
+
+
+def test_local_network_policy_rules_persist_sort_and_control_decisions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_dir = tmp_path / "workspace"
+    root_dir.mkdir()
+    monkeypatch.setenv("DGENTIC_ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DGENTIC_DATA_DIR", str(tmp_path / "state"))
+    get_settings.cache_clear()
+
+    wildcard = create_network_policy_rule(
+        NetworkPolicyRuleRequest(
+            domain="*.editable.example.test",
+            mode="audit",
+            reason="Audit editable subdomains.",
+            priority=50,
+        )
+    )
+    exact = create_network_policy_rule(
+        NetworkPolicyRuleRequest(
+            domain="api.editable.example.test",
+            mode="deny",
+            reason="Block exact API.",
+            priority=10,
+        )
+    )
+    deny_decision = evaluate_network_domain_policy("https://api.editable.example.test/v1")
+    wildcard_decision = evaluate_network_domain_policy("https://docs.editable.example.test/v1")
+    update_network_policy_rule(exact.id, NetworkPolicyRuleUpdate(enabled=False))
+    disabled_decision = evaluate_network_domain_policy("https://api.editable.example.test/v1")
+
+    assert [rule.id for rule in list_network_policy_rules()] == [exact.id, wildcard.id]
+    assert deny_decision.mode == "deny"
+    assert deny_decision.matched_rule_id == exact.id
+    assert deny_decision.matched_rule_source == "local"
+    assert wildcard_decision.mode == "audit"
+    assert wildcard_decision.matched_rule_id == wildcard.id
+    assert disabled_decision.mode == "audit"
+    assert disabled_decision.matched_rule_id == wildcard.id
+    stored = (tmp_path / "state" / "network-domain-policy-rules.json").read_text(encoding="utf-8")
+    assert exact.id in stored
+    get_settings.cache_clear()
 
 
 def test_bound_network_approval_rejects_managed_policy_drift(

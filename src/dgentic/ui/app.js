@@ -36,6 +36,7 @@ let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let latestGitChangeReviewArtifacts = [];
 let editingCliPolicyRuleId = "";
+let editingNetworkDomainPolicyRuleId = "";
 let editingCommandRecipeId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
@@ -4307,6 +4308,9 @@ async function loadSettings() {
   if (latestPolicyReviewResults?.cliRules) {
     renderCliPolicyList(latestPolicyReviewResults.cliRules);
   }
+  if (latestPolicyReviewResults?.networkRules) {
+    renderNetworkDomainPolicyList(latestPolicyReviewResults.networkRules);
+  }
   if (latestPolicyReviewResults?.recipes) {
     renderRecipeList(latestPolicyReviewResults.recipes);
   }
@@ -5322,14 +5326,16 @@ async function loadCliRunOutput(runId) {
 }
 
 async function loadPolicySurfaces() {
-  const [cliRules, recipes, hooks, plugins] = await Promise.all([
+  const [cliRules, networkRules, recipes, hooks, plugins] = await Promise.all([
     safeLoad("CLI rules", () => api("/cli/policy/rules")),
+    safeLoad("network rules", () => api("/network/policy/rules")),
     safeLoad("recipes", () => api("/cli/recipes")),
     safeLoad("hooks", () => api("/guardrails/hooks/rules")),
     safeLoad("plugins", () => api("/plugins")),
   ]);
-  renderPolicyReviewSummary(cliRules, recipes, hooks, plugins);
+  renderPolicyReviewSummary(cliRules, networkRules, recipes, hooks, plugins);
   renderCliPolicyList(cliRules);
+  renderNetworkDomainPolicyList(networkRules);
   renderRecipeList(recipes);
   renderHookPolicyList(hooks);
   renderPluginList(plugins);
@@ -5372,11 +5378,11 @@ function splitCsv(value) {
     .filter(Boolean);
 }
 
-function renderPolicyReviewSummary(cliRules, recipes, hooks, plugins) {
+function renderPolicyReviewSummary(cliRules, networkRules, recipes, hooks, plugins) {
   if (arguments.length) {
-    latestPolicyReviewResults = { cliRules, recipes, hooks, plugins };
+    latestPolicyReviewResults = { cliRules, networkRules, recipes, hooks, plugins };
   } else if (latestPolicyReviewResults) {
-    ({ cliRules, recipes, hooks, plugins } = latestPolicyReviewResults);
+    ({ cliRules, networkRules, recipes, hooks, plugins } = latestPolicyReviewResults);
   }
   const target = qs("#policyReviewSummary");
   if (!target) {
@@ -5389,11 +5395,13 @@ function renderPolicyReviewSummary(cliRules, recipes, hooks, plugins) {
   }
 
   const cliRecords = resultList(cliRules);
+  const networkRecords = resultList(networkRules);
   const recipeRecords = resultList(recipes);
   const hookRecords = resultList(hooks);
   const pluginRecords = resultList(plugins, "plugins");
   const locks = parseSettingList(settingByName(latestSettingsView, "managed_policy_locks"));
   appendPolicyReviewCard(target, "CLI rules", cliRules, cliRecords, "source");
+  appendPolicyReviewCard(target, "Network rules", networkRules, networkRecords, "source");
   appendPolicyReviewCard(target, "Recipes", recipes, recipeRecords, "source");
   appendPolicyReviewCard(target, "Hook policies", hooks, hookRecords, "source");
   appendPolicyReviewCard(target, "Plugins", plugins, pluginRecords, "trust_source");
@@ -5401,7 +5409,12 @@ function renderPolicyReviewSummary(cliRules, recipes, hooks, plugins) {
   appendKeyValue(
     target,
     "Disabled records",
-    String(disabledCount(cliRecords) + disabledCount(recipeRecords) + disabledCount(hookRecords)),
+    String(
+      disabledCount(cliRecords) +
+        disabledCount(networkRecords) +
+        disabledCount(recipeRecords) +
+        disabledCount(hookRecords),
+    ),
   );
   renderChipList(target, "Locked surfaces", locks, "locked");
 }
@@ -5721,6 +5734,161 @@ async function requestNetworkPolicyApproval() {
     clear(target);
     target.append(statusBox("Network approval failed", error.message, "failed"));
     showToast(error.message);
+  }
+}
+
+function networkDomainPolicyLocked() {
+  return managedPolicyLocks().includes("network_policy");
+}
+
+function networkDomainPolicyRulePayload() {
+  const priority = Number(qs("#networkDomainPolicyPriorityInput").value || 100);
+  return {
+    domain: qs("#networkDomainPolicyDomainInput").value.trim(),
+    mode: qs("#networkDomainPolicyModeInput").value,
+    reason: qs("#networkDomainPolicyReasonInput").value.trim(),
+    enabled: qs("#networkDomainPolicyEnabledInput").checked,
+    priority: Number.isFinite(priority) ? priority : 100,
+  };
+}
+
+async function createNetworkDomainPolicyRule(event) {
+  event.preventDefault();
+  const target = qs("#networkDomainPolicyEditorOutput");
+  clear(target);
+  if (networkDomainPolicyLocked()) {
+    target.append(statusBox("Network policy locked", "Managed settings make network policy read-only.", "blocked"));
+    return;
+  }
+  const payload = networkDomainPolicyRulePayload();
+  const isEditing = Boolean(editingNetworkDomainPolicyRuleId);
+  target.append(
+    statusBox(
+      isEditing ? "Updating network rule" : "Creating network rule",
+      payload.domain || "network policy",
+      "running",
+    ),
+  );
+  try {
+    const rule = isEditing
+      ? await api(`/network/policy/rules/${encodeURIComponent(editingNetworkDomainPolicyRuleId)}`, {
+          method: "PATCH",
+          body: payload,
+        })
+      : await api("/network/policy/rules", { method: "POST", body: payload });
+    resetNetworkDomainPolicyForm();
+    clear(target);
+    target.append(
+      statusBox(
+        isEditing ? "Network rule updated" : "Network rule created",
+        rule.domain || rule.id,
+        rule.enabled === false ? "blocked" : "ok",
+      ),
+    );
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast(isEditing ? "Network policy rule updated." : "Network policy rule created.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox(isEditing ? "Network rule update failed" : "Network rule create failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function resetNetworkDomainPolicyForm() {
+  editingNetworkDomainPolicyRuleId = "";
+  qs("#networkDomainPolicyForm").reset();
+  qs("#networkDomainPolicyModeInput").value = "approval_required";
+  qs("#networkDomainPolicyPriorityInput").value = "100";
+  qs("#networkDomainPolicyEnabledInput").checked = true;
+  qs("#networkDomainPolicyEditorSummary").textContent = "New Network Rule";
+  qs("#networkDomainPolicySubmitLabel").textContent = "Add Rule";
+  qs("#networkDomainPolicyCancelEditButton").hidden = true;
+}
+
+function editNetworkDomainPolicyRule(rule) {
+  editingNetworkDomainPolicyRuleId = rule.id || "";
+  qs("#networkDomainPolicyEditor").open = true;
+  qs("#networkDomainPolicyEditorSummary").textContent = `Edit Network Rule: ${rule.domain || rule.id}`;
+  qs("#networkDomainPolicyDomainInput").value = rule.domain || "";
+  qs("#networkDomainPolicyModeInput").value = rule.mode || "approval_required";
+  qs("#networkDomainPolicyReasonInput").value = rule.reason || "";
+  qs("#networkDomainPolicyPriorityInput").value = String(rule.priority ?? 100);
+  qs("#networkDomainPolicyEnabledInput").checked = rule.enabled !== false;
+  qs("#networkDomainPolicySubmitLabel").textContent = "Update Rule";
+  qs("#networkDomainPolicyCancelEditButton").hidden = false;
+  clear(qs("#networkDomainPolicyEditorOutput"));
+  qs("#networkDomainPolicyEditorOutput").append(statusBox("Editing network rule", rule.id || rule.domain, "pending"));
+}
+
+async function patchNetworkDomainPolicyRule(ruleId, update) {
+  const target = qs("#networkDomainPolicyEditorOutput");
+  clear(target);
+  if (networkDomainPolicyLocked()) {
+    target.append(statusBox("Network policy locked", "Managed settings make network policy read-only.", "blocked"));
+    return;
+  }
+  target.append(statusBox("Updating network rule", ruleId, "running"));
+  try {
+    const rule = await api(`/network/policy/rules/${encodeURIComponent(ruleId)}`, {
+      method: "PATCH",
+      body: update,
+    });
+    clear(target);
+    target.append(statusBox("Network rule updated", rule.domain || rule.id, rule.enabled === false ? "blocked" : "ok"));
+    target.append(jsonBlock(rule));
+    await loadPolicySurfaces();
+    showToast("Network policy rule updated.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Network rule update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function renderNetworkDomainPolicyList(result) {
+  const target = qs("#networkDomainPolicyList");
+  clear(target);
+  const locked = networkDomainPolicyLocked();
+  qs("#networkDomainPolicySubmitButton").disabled = locked;
+  if (!result.ok) {
+    target.append(statusBox("Unavailable", result.error, "blocked"));
+    return;
+  }
+  if (locked) {
+    target.append(statusBox("Network policy locked", "Managed settings make network policy read-only.", "blocked"));
+  }
+  if (!result.data.length) {
+    target.append(statusBox("No records", "No editable network domain rules are configured.", "pending"));
+    return;
+  }
+  for (const rule of result.data.slice(0, 8)) {
+    const item = make("div", "list-item builder-row");
+    const detail = make("div");
+    detail.append(make("div", "item-title", rule.domain || rule.id));
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `${rule.source || "local"} - ${rule.mode || "policy"} - priority ${rule.priority ?? 100}`,
+      ),
+    );
+    const actions = make("div", "recipe-action-buttons");
+    const editButton = make("button", "link-button", "Edit");
+    editButton.type = "button";
+    editButton.dataset.testid = "network-domain-policy-edit";
+    editButton.dataset.ruleId = rule.id || "";
+    editButton.disabled = rule.source === "managed" || locked;
+    editButton.addEventListener("click", () => editNetworkDomainPolicyRule(rule));
+    const toggleButton = make("button", rule.enabled === false ? "success-button" : "danger-button", rule.enabled === false ? "Enable" : "Disable");
+    toggleButton.type = "button";
+    toggleButton.dataset.testid = "network-domain-policy-toggle";
+    toggleButton.dataset.ruleId = rule.id || "";
+    toggleButton.disabled = rule.source === "managed" || locked;
+    toggleButton.addEventListener("click", () => patchNetworkDomainPolicyRule(rule.id, { enabled: rule.enabled === false }));
+    actions.append(statusChip(rule.enabled === false ? "blocked" : "ok"), editButton, toggleButton);
+    item.append(detail, actions);
+    target.append(item);
   }
 }
 
@@ -6587,6 +6755,11 @@ function bindEvents() {
     updateFilesystemPolicyFieldVisibility,
   );
   updateFilesystemPolicyFieldVisibility();
+  qs("#networkDomainPolicyForm").addEventListener("submit", createNetworkDomainPolicyRule);
+  qs("#networkDomainPolicyCancelEditButton").addEventListener("click", () => {
+    resetNetworkDomainPolicyForm();
+    clear(qs("#networkDomainPolicyEditorOutput"));
+  });
   qs("#cliPolicyForm").addEventListener("submit", createCliPolicyRule);
   qs("#cliPolicyCancelEditButton").addEventListener("click", () => {
     resetCliPolicyForm();

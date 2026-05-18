@@ -115,6 +115,17 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "networkPolicySurfaceInput" in response.text
     assert "networkPolicyApprovalButton" in response.text
     assert "networkPolicyCheckOutput" in response.text
+    assert "networkDomainPolicyEditor" in response.text
+    assert "networkDomainPolicyForm" in response.text
+    assert "networkDomainPolicyDomainInput" in response.text
+    assert "networkDomainPolicyModeInput" in response.text
+    assert "networkDomainPolicyReasonInput" in response.text
+    assert "networkDomainPolicyPriorityInput" in response.text
+    assert "networkDomainPolicyEnabledInput" in response.text
+    assert "networkDomainPolicyCancelEditButton" in response.text
+    assert "networkDomainPolicySubmitLabel" in response.text
+    assert "networkDomainPolicyEditorOutput" in response.text
+    assert "networkDomainPolicyList" in response.text
     assert "filesystemPolicyCheckPanel" in response.text
     assert "filesystemPolicyCheckForm" in response.text
     assert "filesystemPolicyActionInput" in response.text
@@ -206,6 +217,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderNetworkPolicyDecision" in script_response.text
     assert "checkNetworkPolicy" in script_response.text
     assert "requestNetworkPolicyApproval" in script_response.text
+    assert "editingNetworkDomainPolicyRuleId" in script_response.text
+    assert "networkDomainPolicyLocked" in script_response.text
+    assert "networkDomainPolicyRulePayload" in script_response.text
+    assert "createNetworkDomainPolicyRule" in script_response.text
+    assert "resetNetworkDomainPolicyForm" in script_response.text
+    assert "editNetworkDomainPolicyRule" in script_response.text
+    assert "patchNetworkDomainPolicyRule" in script_response.text
+    assert "renderNetworkDomainPolicyList" in script_response.text
+    assert "latestPolicyReviewResults?.networkRules" in script_response.text
     assert "latestFilesystemPolicyPreflight" in script_response.text
     assert "filesystemPolicyAccessPayload" in script_response.text
     assert "filesystemPolicyPayload" in script_response.text
@@ -218,6 +238,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "requestFilesystemPolicyApproval" in script_response.text
     assert "resetFilesystemPolicyApprovalState" in script_response.text
     assert '"/guardrails/network"' in script_response.text
+    assert 'api("/network/policy/rules")' in script_response.text
+    assert 'api("/network/policy/rules", { method: "POST", body: payload })' in (
+        script_response.text
+    )
+    assert "/network/policy/rules/${encodeURIComponent(editingNetworkDomainPolicyRuleId)}" in (
+        script_response.text
+    )
+    assert "/network/policy/rules/${encodeURIComponent(ruleId)}" in script_response.text
+    assert 'managedPolicyLocks().includes("network_policy")' in script_response.text
+    assert "network-domain-policy-edit" in script_response.text
+    assert "network-domain-policy-toggle" in script_response.text
+    assert "Network rules" in script_response.text
+    assert "Network policy locked" in script_response.text
+    assert "Network rule created" in script_response.text
+    assert "Network rule updated" in script_response.text
     assert 'api("/guardrails/filesystem", {' in script_response.text
     assert "body: accessPayload" in script_response.text
     assert '"/web-retrieval/network/check"' in script_response.text
@@ -253,6 +288,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert (
         'qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval)'
         in script_response.text
+    )
+    assert (
+        'qs("#networkDomainPolicyForm").addEventListener("submit", createNetworkDomainPolicyRule)'
+        in script_response.text
+    )
+    assert 'qs("#networkDomainPolicyCancelEditButton").addEventListener("click"' in (
+        script_response.text
     )
     assert "Network policy decision" in script_response.text
     assert "Network policy checked" in script_response.text

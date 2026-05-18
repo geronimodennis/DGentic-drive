@@ -838,6 +838,104 @@ def test_browser_policy_panel_can_preflight_filesystem_guardrail(
     )
 
 
+def test_browser_policy_panel_can_create_and_toggle_network_rule(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#policy"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#networkDomainPolicyForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#networkDomainPolicyEditor").open = true;
+          document.querySelector("#networkDomainPolicyDomainInput").value = "sprint16.example.test";
+          document.querySelector("#networkDomainPolicyModeInput").value = "deny";
+          document.querySelector("#networkDomainPolicyReasonInput").value =
+            "Browser network rule smoke.";
+          document.querySelector("#networkDomainPolicyPriorityInput").value = "5";
+          document.querySelector("#networkDomainPolicyForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#networkDomainPolicyEditorOutput")
+          ?.textContent.includes("Network rule created")
+          && document.querySelector("#networkDomainPolicyList")
+            ?.textContent.includes("sprint16.example.test")
+          && document.querySelector("#networkDomainPolicyList")
+            ?.textContent.includes("deny")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#networkPolicyCheckPanel").open = true;
+          document.querySelector("#networkPolicyUrlInput").value = "https://sprint16.example.test/v1";
+          document.querySelector("#networkPolicySurfaceInput").value = "generic";
+          document.querySelector("#networkPolicyCheckForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#networkPolicyCheckOutput")
+          ?.textContent.includes("Network policy decision")
+          && document.querySelector("#networkPolicyCheckOutput")
+            ?.textContent.includes("deny")
+          && document.querySelector("#networkPolicyCheckOutput")
+            ?.textContent.includes("sprint16.example.test")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#networkDomainPolicyList .list-item")]
+            .find((candidate) => candidate.textContent.includes("sprint16.example.test"));
+          row.querySelector('[data-testid="network-domain-policy-toggle"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#networkDomainPolicyEditorOutput")
+          ?.textContent.includes("Network rule updated")
+          && document.querySelector("#networkDomainPolicyList")
+            ?.textContent.includes("sprint16.example.test")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#networkPolicyCheckForm")
+            .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#networkPolicyCheckOutput")
+          ?.textContent.includes("Network policy decision")
+          && document.querySelector("#networkPolicyCheckOutput")
+            ?.textContent.includes("allow")
+        """
+    )
+
+    rules_status, rules_body = _http_json("GET", f"{base_url}/network/policy/rules")
+    assert rules_status == 200
+    assert rules_body[0]["domain"] == "sprint16.example.test"
+    assert rules_body[0]["enabled"] is False
+
+
 def test_browser_policy_panel_can_request_filesystem_approval_after_preflight(
     ui_live_server,
     devtools_page,

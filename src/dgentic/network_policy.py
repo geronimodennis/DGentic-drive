@@ -20,7 +20,15 @@ from dgentic.orchestration import (
     authorize_network_action,
 )
 from dgentic.redaction import redact_sensitive_values
-from dgentic.schemas import HookPolicyDecision, HookPolicySurface, LogEventType, PermissionMode
+from dgentic.schemas import (
+    HookPolicyDecision,
+    HookPolicySurface,
+    LogEventType,
+    NetworkPolicyRule,
+    NetworkPolicyRuleRequest,
+    NetworkPolicyRuleUpdate,
+    PermissionMode,
+)
 from dgentic.settings import get_settings, managed_network_domain_policy_rules
 from dgentic.storage import JsonCollection
 
@@ -37,6 +45,7 @@ _NETWORK_APPROVAL_DIGEST_KEY_FILE = "network-approval-digest.key"
 _NETWORK_APPROVAL_DIGEST_LOCK = Lock()
 _network_approval_lock = Lock()
 _NETWORK_LABEL_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
+_network_policy_rules = JsonCollection("network-domain-policy-rules", NetworkPolicyRule)
 
 
 class NetworkDomainPolicyError(ValueError):
@@ -179,6 +188,58 @@ class NetworkApprovalReview(BaseModel):
 _network_approvals = JsonCollection("network-approvals", NetworkApproval)
 
 
+def create_network_policy_rule(
+    request: NetworkPolicyRuleRequest,
+    *,
+    actor: str | None = None,
+) -> NetworkPolicyRule:
+    payload = _normalized_network_policy_rule_payload(request)
+    rule = NetworkPolicyRule(
+        id=f"netpolicy-{uuid4()}",
+        **payload,
+    )
+    _network_policy_rules.upsert(rule)
+    _record_network_policy_rule_event("Created network domain policy rule.", rule, actor=actor)
+    return rule
+
+
+def list_network_policy_rules() -> list[NetworkPolicyRule]:
+    return _combined_network_policy_rules()
+
+
+def update_network_policy_rule(
+    rule_id: str,
+    update: NetworkPolicyRuleUpdate,
+    *,
+    actor: str | None = None,
+) -> NetworkPolicyRule | None:
+    if _managed_network_policy_rule(rule_id) is not None:
+        raise PermissionError(
+            "Managed network domain policy rules cannot be modified through the API."
+        )
+    rule = _network_policy_rules.get(rule_id)
+    if rule is None:
+        return None
+
+    updates = update.model_dump(exclude_unset=True)
+    preview = rule.model_copy(update=updates)
+    payload = _normalized_network_policy_rule_payload(
+        NetworkPolicyRuleRequest(
+            domain=preview.domain,
+            mode=preview.mode,
+            reason=preview.reason,
+            enabled=preview.enabled,
+            priority=preview.priority,
+        )
+    )
+    for field, value in payload.items():
+        setattr(rule, field, value)
+    rule.updated_at = datetime.now(UTC)
+    _network_policy_rules.upsert(rule)
+    _record_network_policy_rule_event("Updated network domain policy rule.", rule, actor=actor)
+    return rule
+
+
 def evaluate_network_domain_policy(
     url: str,
     *,
@@ -296,9 +357,22 @@ def network_domain_policy(settings: Any | None = None) -> NetworkDomainPolicy:
         for record in managed_network_domain_policy_rules(active_settings)
         if record.enabled
     )
+    persisted_rules = tuple(
+        NetworkDomainRule(
+            id=record.id,
+            domain=record.domain,
+            mode=record.mode,
+            reason=record.reason,
+            enabled=record.enabled,
+            priority=record.priority,
+            source=record.source,
+        )
+        for record in _local_network_policy_rules()
+        if record.enabled
+    )
     raw_config = active_settings.network_domain_policy.strip()
     if not raw_config:
-        return NetworkDomainPolicy(rules=managed_rules)
+        return NetworkDomainPolicy(rules=(*managed_rules, *persisted_rules))
     try:
         payload = json.loads(raw_config)
     except json.JSONDecodeError as exc:
@@ -312,7 +386,10 @@ def network_domain_policy(settings: Any | None = None) -> NetworkDomainPolicy:
         raise NetworkDomainPolicyError("Network domain policy rules must be a list.")
 
     rules = tuple(_parse_rule(rule) for rule in raw_rules)
-    return NetworkDomainPolicy(default_mode=default_mode, rules=(*managed_rules, *rules))
+    return NetworkDomainPolicy(
+        default_mode=default_mode,
+        rules=(*managed_rules, *rules, *persisted_rules),
+    )
 
 
 def create_network_approval(
@@ -724,6 +801,92 @@ def network_approval_digest(
         "permission_mode": permission_mode,
     }
     return _network_hmac_digest(_canonical_json(payload))
+
+
+def _normalized_network_policy_rule_payload(request: NetworkPolicyRuleRequest) -> dict[str, Any]:
+    return {
+        "domain": _normalize_domain(request.domain),
+        "mode": _normalize_mode(request.mode),
+        "reason": redact_sensitive_values(request.reason.strip()),
+        "enabled": request.enabled,
+        "priority": request.priority,
+    }
+
+
+def _local_network_policy_rules() -> list[NetworkPolicyRule]:
+    return _sort_network_policy_rule_records(_network_policy_rules.list())
+
+
+def _combined_network_policy_rules() -> list[NetworkPolicyRule]:
+    managed_rules = [
+        NetworkPolicyRule(
+            id=record.id,
+            domain=record.domain,
+            mode=record.mode,
+            reason=record.reason,
+            enabled=record.enabled,
+            priority=record.priority,
+            source="managed",
+            created_at=datetime(1970, 1, 1, tzinfo=UTC),
+            updated_at=datetime(1970, 1, 1, tzinfo=UTC),
+        )
+        for record in managed_network_domain_policy_rules()
+    ]
+    managed_ids = {rule.id for rule in managed_rules}
+    local_rules = [rule for rule in _network_policy_rules.list() if rule.id not in managed_ids]
+    return [
+        *managed_rules,
+        *_sort_network_policy_rule_records(local_rules),
+    ]
+
+
+def _managed_network_policy_rule(rule_id: str) -> NetworkPolicyRule | None:
+    for record in managed_network_domain_policy_rules():
+        if record.id == rule_id:
+            return NetworkPolicyRule(
+                id=record.id,
+                domain=record.domain,
+                mode=record.mode,
+                reason=record.reason,
+                enabled=record.enabled,
+                priority=record.priority,
+                source="managed",
+                created_at=datetime(1970, 1, 1, tzinfo=UTC),
+                updated_at=datetime(1970, 1, 1, tzinfo=UTC),
+            )
+    return None
+
+
+def _sort_network_policy_rule_records(
+    rules: list[NetworkPolicyRule],
+) -> list[NetworkPolicyRule]:
+    return sorted(rules, key=_network_policy_rule_sort_key)
+
+
+def _network_policy_rule_sort_key(rule: NetworkPolicyRule) -> tuple[int, bool, int, datetime, str]:
+    specificity_domain = rule.domain[2:] if rule.domain.startswith("*.") else rule.domain
+    return (
+        rule.priority,
+        rule.domain.startswith("*."),
+        -len(specificity_domain),
+        rule.created_at,
+        rule.id,
+    )
+
+
+def _record_network_policy_rule_event(
+    message: str,
+    rule: NetworkPolicyRule,
+    *,
+    actor: str | None,
+) -> None:
+    event_log.record(
+        LogEventType.network,
+        message,
+        actor=actor or "system",
+        subject_id=rule.id,
+        metadata=rule.model_dump(mode="json"),
+    )
 
 
 def _parse_rule(raw_rule: Any) -> NetworkDomainRule:

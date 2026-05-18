@@ -75,6 +75,7 @@ class LogEventType(StrEnum):
     tool = "tool"
     cli = "cli"
     filesystem = "filesystem"
+    network = "network"
     approval = "approval"
     memory = "memory"
     session = "session"
@@ -726,6 +727,44 @@ class FileAccessDecision(BaseModel):
 
 class NetworkPolicyRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class NetworkPolicyRuleRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=253)
+    mode: Literal["allow", "deny", "approval_required", "audit"]
+    reason: str = Field(default="", max_length=500)
+    enabled: bool = True
+    priority: int = Field(default=100, ge=0, le=10_000)
+
+    @field_validator("domain", "reason")
+    @classmethod
+    def network_policy_text_must_be_trimmed(cls, value: str) -> str:
+        return value.strip()
+
+
+class NetworkPolicyRule(NetworkPolicyRuleRequest):
+    id: str = Field(default="", max_length=120)
+    source: Literal["local", "managed"] = "local"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class NetworkPolicyRuleUpdate(BaseModel):
+    domain: str | None = Field(default=None, min_length=1, max_length=253)
+    mode: Literal["allow", "deny", "approval_required", "audit"] | None = None
+    reason: str | None = Field(default=None, max_length=500)
+    enabled: bool | None = None
+    priority: int | None = Field(default=None, ge=0, le=10_000)
+
+    @field_validator("domain", "reason")
+    @classmethod
+    def optional_network_policy_text_must_be_trimmed(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return value
+        return value.strip()
 
 
 class NetworkApprovalRequest(AgentActionContext):

@@ -7,9 +7,9 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010bk task-chat orchestration context reuse is implemented and validation-clean.
-- Latest completed slice: BL-010bk, task-chat now loads recent orchestration runs into the context stream, shows an orchestration count, and lets operators insert bounded orchestration context from recent run cards or created-run transcript cards without starting orchestration execution.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution, orchestration creation, and reusable orchestration context, deeper AI-change apply/revert semantics beyond guarded workspace editor mutations and metadata-only Git review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010bl local network policy rule editing is implemented and validation-clean.
+- Latest completed slice: BL-010bl, the dashboard can create, list, edit, and toggle local network-domain policy rules through guarded backend APIs while managed network rules and locked policy surfaces remain read-only.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution, orchestration creation, and reusable orchestration context, deeper AI-change apply/revert semantics beyond guarded workspace editor mutations and metadata-only Git review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -59,7 +59,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bk implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bl implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

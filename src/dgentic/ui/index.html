@@ -768,6 +768,52 @@ review</textarea>
                 </details>
               </section>
               <section>
+                <h3>Network Rules</h3>
+                <details id="networkDomainPolicyEditor" class="policy-editor">
+                  <summary id="networkDomainPolicyEditorSummary">New Network Rule</summary>
+                  <form id="networkDomainPolicyForm" class="stacked-form">
+                    <label>
+                      Domain
+                      <input id="networkDomainPolicyDomainInput" type="text" maxlength="253" placeholder="api.example.test or *.example.test" required>
+                    </label>
+                    <div class="two-column">
+                      <label>
+                        Mode
+                        <select id="networkDomainPolicyModeInput">
+                          <option value="approval_required">Approval Required</option>
+                          <option value="deny">Deny</option>
+                          <option value="allow">Allow</option>
+                          <option value="audit">Audit</option>
+                        </select>
+                      </label>
+                      <label>
+                        Priority
+                        <input id="networkDomainPolicyPriorityInput" type="number" min="0" max="10000" value="100">
+                      </label>
+                    </div>
+                    <label>
+                      Reason
+                      <textarea id="networkDomainPolicyReasonInput" rows="3" maxlength="500"></textarea>
+                    </label>
+                    <div class="form-footer">
+                      <label class="checkbox-label">
+                        <input id="networkDomainPolicyEnabledInput" type="checkbox" checked>
+                        Enabled
+                      </label>
+                      <div class="button-row">
+                        <button id="networkDomainPolicyCancelEditButton" type="button" class="link-button" hidden>Cancel Edit</button>
+                        <button id="networkDomainPolicySubmitButton" type="submit" class="primary-button">
+                          <span class="button-icon" aria-hidden="true">+</span>
+                          <span id="networkDomainPolicySubmitLabel">Add Rule</span>
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                  <div id="networkDomainPolicyEditorOutput" class="output-region" aria-live="polite"></div>
+                </details>
+                <div id="networkDomainPolicyList" class="compact-list"></div>
+              </section>
+              <section>
                 <h3>Filesystem Check</h3>
                 <details id="filesystemPolicyCheckPanel" class="policy-editor">
                   <summary>Guardrail Preflight</summary>

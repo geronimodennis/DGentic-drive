@@ -147,11 +147,14 @@ from dgentic.network_policy import (
     NetworkDomainPolicyError,
     approve_network_approval,
     create_network_approval,
+    create_network_policy_rule,
     deny_network_approval,
     evaluate_network_domain_policy,
     get_network_approval_review,
     list_network_approvals,
+    list_network_policy_rules,
     safe_network_url_for_review,
+    update_network_policy_rule,
 )
 from dgentic.orchestration import (
     OrchestrationContextAuthorizationError,
@@ -275,6 +278,9 @@ from dgentic.schemas import (
     NetworkApprovalRequest,
     NetworkPolicyDecision,
     NetworkPolicyRequest,
+    NetworkPolicyRule,
+    NetworkPolicyRuleRequest,
+    NetworkPolicyRuleUpdate,
     OrchestrationBlockerResolutionRequest,
     OrchestrationCloseRequest,
     OrchestrationCreateRequest,
@@ -1229,6 +1235,43 @@ def check_network_policy(
         reason=redact_sensitive_values(decision.reason),
         hook_policy=decision.hook_policy,
     )
+
+
+@router.post("/network/policy/rules", response_model=NetworkPolicyRule, status_code=201)
+def create_network_domain_policy_rule(
+    payload: NetworkPolicyRuleRequest,
+    request: Request,
+) -> NetworkPolicyRule:
+    try:
+        require_managed_policy_surface_mutable("network_policy")
+        return create_network_policy_rule(payload, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (NetworkDomainPolicyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/network/policy/rules", response_model=list[NetworkPolicyRule])
+def get_network_domain_policy_rules() -> list[NetworkPolicyRule]:
+    return list_network_policy_rules()
+
+
+@router.patch("/network/policy/rules/{rule_id}", response_model=NetworkPolicyRule)
+def patch_network_domain_policy_rule(
+    rule_id: str,
+    update: NetworkPolicyRuleUpdate,
+    request: Request,
+) -> NetworkPolicyRule:
+    try:
+        require_managed_policy_surface_mutable("network_policy")
+        rule = update_network_policy_rule(rule_id, update, actor=_principal_actor(request))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (NetworkDomainPolicyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Network domain policy rule not found.")
+    return rule
 
 
 @router.post("/network/approvals", response_model=NetworkApproval, status_code=201)

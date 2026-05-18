@@ -879,6 +879,20 @@ textarea {
   text-align: left;
 }
 
+.log-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .approval-item button {
   justify-self: end;
 }
@@ -1484,6 +1498,10 @@ textarea {
   }
 
   .settings-routing-card {
+    grid-template-columns: 1fr;
+  }
+
+  .log-item {
     grid-template-columns: 1fr;
   }
 

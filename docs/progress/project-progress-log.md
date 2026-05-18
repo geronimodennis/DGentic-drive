@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010ce Activity Log Context Handoff
+
+Status: completed for the scoped Activity log context/evidence slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session/log context beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Activity-log slice because `/logs` already exposed safe event rows and the Activity panel could filter them, but rows were passive.
+- Completed: Architect kept the slice frontend-only on the existing `/logs` contract; no backend log mutation, approval authority, provider execution, or Git backend expansion was added.
+- Completed: Developer added bounded log event context lines, Activity row Use Context controls, and Copy Evidence controls.
+- Completed: QA added static assertions and browser coverage proving a filtered session log can insert event context into Task Chat and copy bounded log evidence.
+- Completed: PM updated README, project status, backlog, Agile plan, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Activity log rows render as reusable evidence cards with existing event type, actor, subject, message, timestamp, and bounded metadata.
+- Implemented in this slice: Use Context appends bounded log context into the Task Chat context composer.
+- Implemented in this slice: Copy Evidence copies bounded JSON evidence for the selected log row.
+- Still out of scope after this slice: backend log mutation, long-term log search/indexing, cross-session analytics, Git telemetry expansion, and richer observability dashboards.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Formatting validation passed: `uv run ruff format --check .`.
+- Lint validation passed: `uv run ruff check .`.
+- Whitespace validation passed: `git diff --check`.
+- Full UI validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 35 passed.
+
 ### Sprint 16 BL-010cd Provider Routing Settings Review
 
 Status: completed for the scoped provider-routing settings review slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session context insertion beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

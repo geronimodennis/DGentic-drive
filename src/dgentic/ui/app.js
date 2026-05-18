@@ -1025,11 +1025,7 @@ function renderTaskChatContextStream() {
       meta: formatTimestamp(event.created_at),
       state: "event",
       sectionId: "logs",
-      lines: [
-        `Event: ${event.event_type || "-"}`,
-        `Actor: ${event.actor || "-"}`,
-        `Message: ${event.message || "-"}`,
-      ],
+      lines: logEventContextLines(event),
     });
   }
   if (!cards.childElementCount) {
@@ -8632,11 +8628,54 @@ async function loadLogs() {
     return;
   }
   for (const event of events) {
-    const item = make("div", "log-item");
-    item.append(make("div", "log-message", event.message || event.event_type));
-    item.append(make("div", "log-meta", `${event.event_type} - ${event.actor} - ${event.created_at}`));
-    target.append(item);
+    renderLogEvent(target, event);
   }
+}
+
+function logEventContextLines(event) {
+  const lines = [
+    `Event: ${event.event_type || "-"}`,
+    `Actor: ${event.actor || "-"}`,
+    `Subject: ${event.subject_id || "-"}`,
+    `Message: ${event.message || "-"}`,
+    `Created: ${formatTimestamp(event.created_at)}`,
+  ];
+  const metadata = event.metadata && Object.keys(event.metadata).length
+    ? boundedString(JSON.stringify(event.metadata), 600)
+    : "";
+  if (metadata) {
+    lines.push(`Metadata: ${metadata}`);
+  }
+  return lines;
+}
+
+function renderLogEvent(target, event) {
+  const item = make("div", "log-item");
+  const copy = make("div");
+  copy.append(make("div", "log-message", event.message || event.event_type));
+  copy.append(make("div", "log-meta", `${event.event_type} - ${event.actor} - ${event.created_at}`));
+  if (event.subject_id) {
+    copy.append(statusBox("Subject", event.subject_id, "event"));
+  }
+  const actions = make("div", "log-actions");
+  const useButton = make("button", "link-button", "Use Context");
+  useButton.type = "button";
+  useButton.dataset.testid = "log-event-use-context";
+  useButton.addEventListener("click", () =>
+    insertTaskChatContext(`Event ${event.event_type || "log"}`, logEventContextLines(event)),
+  );
+  const copyButton = make("button", "link-button", "Copy Evidence");
+  copyButton.type = "button";
+  copyButton.dataset.testid = "log-event-copy-evidence";
+  copyButton.addEventListener("click", () =>
+    copyTextToClipboard(
+      boundedString(JSON.stringify(event, null, 2), 2000),
+      "Log evidence copied.",
+    ),
+  );
+  actions.append(useButton, copyButton);
+  item.append(copy, actions);
+  target.append(item);
 }
 
 function bindEvents() {

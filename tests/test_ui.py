@@ -637,8 +637,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "loadSessionSummaries" in script_response.text
     assert "renderSessionSummaryList" in script_response.text
     assert "sessionSummaryContextLines" in script_response.text
+    assert "logEventContextLines" in script_response.text
+    assert "renderLogEvent" in script_response.text
     assert "task-chat-session-use-context" in script_response.text
     assert "session-summary-use-context" in script_response.text
+    assert "log-event-use-context" in script_response.text
+    assert "log-event-copy-evidence" in script_response.text
     assert 'api("/sessions/summary", { method: "POST", body: payload })' in script_response.text
     assert 'safeLoad("session summaries", () => api("/sessions/summary"))' in script_response.text
     assert "Promise.all([loadSessionSummaries(), loadLogs(), loadTaskChatContext()])" in (
@@ -1150,6 +1154,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".activity-layout" in style_response.text
     assert ".session-summary-card" in style_response.text
     assert ".session-summary-actions" in style_response.text
+    assert ".log-actions" in style_response.text
     assert ".recipe-action-panel" in style_response.text
     assert ".recipe-parameter-editor" in style_response.text
     assert ".recipe-parameter-builder" in style_response.text

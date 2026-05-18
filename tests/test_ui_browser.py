@@ -734,7 +734,65 @@ def test_browser_activity_session_workbench_captures_filters_and_reuses_context(
         (() => {
           const logs = document.querySelector("#logList")?.textContent || "";
           return logs.includes("Created session summary.")
-            && !logs.includes("Executed deterministic task plan.");
+            && !logs.includes("Executed deterministic task plan.")
+            && Boolean(document.querySelector('[data-testid="log-event-use-context"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          window.__copiedLogEvidence = null;
+          const clipboard = {
+            writeText: async (text) => {
+              window.__copiedLogEvidence = text;
+            },
+          };
+          try {
+            Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+          } catch (_error) {
+            Object.defineProperty(Navigator.prototype, "clipboard", {
+              configurable: true,
+              get: () => clipboard,
+            });
+          }
+          document.querySelector('[data-testid="log-event-copy-evidence"]').click();
+          return true;
+        })()
+        """
+    )
+    copied_length = devtools_page.wait_for(
+        """
+        (() => {
+          const copied = window.__copiedLogEvidence || "";
+          if (!copied || copied.length > 2000) {
+            return null;
+          }
+          const payload = JSON.parse(copied);
+          return payload.event_type === "session"
+            && payload.subject_id === "browser-session-summary"
+            && payload.message === "Created session summary."
+            && document.querySelector("#toast")?.textContent.includes("Log evidence copied.")
+            ? copied.length
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert copied_length <= 2000
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="log-event-use-context"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Event session")
+            && value.includes("Message: Created session summary.")
+            && value.includes("Subject: browser-session-summary");
         })()
         """,
         timeout_seconds=10.0,

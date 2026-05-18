@@ -7,8 +7,8 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010cd Provider Routing Settings Review is implemented and validation-clean.
-- Latest completed slice: BL-010cd, the Settings panel parses configured `provider_role_routing` from `/settings/effective`, renders role/provider/model cards, and can apply a route to Task Chat provider controls or seed the Providers routing preview role while opening the target panels, without backend routing expansion.
+- Latest stable implementation checkpoint: BL-010ce Activity Log Context Handoff is implemented and validation-clean.
+- Latest completed slice: BL-010ce, the Activity panel renders filtered log rows with Use Context and Copy Evidence controls so operators can carry safe event context into Task Chat without backend log mutation.
 - Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution, provider replies with selectable message roles, route preview/apply/context handoff, active memory and session context insertion, orchestration creation, reusable orchestration context, bounded approval-review/request/outcome handoff, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory lifecycle/compression administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
@@ -60,7 +60,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, approval outcome handoff, run history, provider generation, provider routing handoff/settings review, provider message roles, memory/session context, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010cd implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, approval outcome handoff, run history, provider generation, provider routing handoff/settings review, provider message roles, memory/session/log context, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010ce implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

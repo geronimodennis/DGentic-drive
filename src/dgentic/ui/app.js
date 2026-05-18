@@ -667,7 +667,7 @@ function taskChatProviderPayload() {
   const payload = {
     provider_id: providerId,
     model,
-    messages: [{ role: "user", content: taskChatProviderPrompt(chatPayload) }],
+    messages: [{ role: qs("#taskChatProviderRoleInput").value, content: taskChatProviderPrompt(chatPayload) }],
     stream: qs("#taskChatProviderStreamInput").checked,
     requested_by: "dashboard-task-chat",
     timeout_seconds: 60,

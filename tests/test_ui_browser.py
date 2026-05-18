@@ -907,6 +907,7 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
           providerInput.value = "chat-provider";
           providerInput.dispatchEvent(new Event("change", { bubbles: true }));
           document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
           document.querySelector("#taskChatProviderApprovalInput").value = "provider-approval-chat";
           document.querySelector("#taskChatProviderNetworkApprovalInput").value =
             "network-approval-chat";
@@ -940,7 +941,7 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert payload["approval_id"] == "provider-approval-chat"
     assert payload["network_approval_id"] == "network-approval-chat"
     prompt = payload["messages"][0]["content"]
-    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][0]["role"] == "developer"
     assert "Message: Explain the task chat provider UI." in prompt
     assert "Context line one" in prompt
     assert "Context line two" in prompt
@@ -971,6 +972,7 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
           document.querySelector("#taskChatInput").value = "Stream a provider answer.";
           document.querySelector("#taskChatContextInput").value = "Streaming context line";
           document.querySelector("#taskChatAcceptanceInput").value = "Stream card appears";
+          document.querySelector("#taskChatProviderRoleInput").value = "system";
           document.querySelector("#taskChatProviderStreamInput").checked = true;
           document.querySelector("#taskChatProviderButton").click();
           return true;
@@ -989,6 +991,7 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert stream_payload["provider_id"] == "chat-provider"
     assert stream_payload["model"] == "chat-model"
     assert stream_payload["stream"] is True
+    assert stream_payload["messages"][0]["role"] == "system"
     assert stream_payload["messages"][0]["content"].startswith("Message: Stream a provider answer.")
     assert "Streaming context line" in stream_payload["messages"][0]["content"]
     assert "Stream card appears" in stream_payload["messages"][0]["content"]
@@ -1032,7 +1035,7 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
             stream: true,
             requested_by: "dashboard-task-chat",
             message_count: 1,
-            review_messages: [{{ role: "user", content_length: 169 }}],
+            review_messages: [{{ role: "developer", content_length: 169 }}],
             option_keys: [],
             created_at: "2026-05-19T00:00:00+00:00",
             expires_at: "2026-05-19T01:00:00+00:00",
@@ -1124,6 +1127,7 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
           providerInput.value = "chat-provider";
           providerInput.dispatchEvent(new Event("change", { bubbles: true }));
           document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
           document.querySelector("#taskChatProviderApprovalInput").value =
             "generation-only-provider-approval";
           document.querySelector("#taskChatProviderNetworkApprovalInput").value =
@@ -1165,7 +1169,7 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
     assert payload["timeout_seconds"] == 60
     assert "approval_id" not in payload
     assert "network_approval_id" not in payload
-    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][0]["role"] == "developer"
     prompt = payload["messages"][0]["content"]
     assert "Message: Draft an approval gated response." in prompt
     assert "Provider approval context" in prompt

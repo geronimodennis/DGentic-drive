@@ -37,6 +37,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderPanel" in response.text
     assert "taskChatProviderInput" in response.text
     assert "taskChatProviderModelInput" in response.text
+    assert "taskChatProviderRoleInput" in response.text
     assert "taskChatProviderStreamInput" in response.text
     assert "taskChatProviderApprovalInput" in response.text
     assert "taskChatProviderNetworkApprovalInput" in response.text
@@ -639,6 +640,8 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatOrchestration" in script_response.text
     assert "taskChatProviderPrompt" in script_response.text
     assert "taskChatProviderPayload" in script_response.text
+    assert "taskChatProviderRoleInput" in script_response.text
+    assert 'role: qs("#taskChatProviderRoleInput").value' in script_response.text
     assert "askTaskChatProvider" in script_response.text
     assert "renderTaskChatProviderGeneration" in script_response.text
     assert "compactTaskChatProviderGeneration" in script_response.text

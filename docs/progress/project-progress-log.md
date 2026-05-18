@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bz Task Chat Provider Message-Role Selector
+
+Status: completed for the scoped Task Chat provider message-role slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies with selectable message roles, active memory context insertion, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Task Chat provider semantics slice because provider replies and provider approval requests already used the guarded provider contracts, but the Task Chat surface still hardcoded all generated provider messages as `user`.
+- Completed: Architect/Reviewer kept the slice frontend-only on the existing supported provider message-role contract; no backend provider transport, approval bypass, network approval pairing, credential handling, or Git backend expansion was added.
+- Completed: Developer added a Task Chat provider Message Role selector for `user`, `system`, `developer`, `assistant`, and `tool`.
+- Completed: Developer routed the selected role into the shared Task Chat provider payload builder so both Ask Provider and Request Approval use the same selected role.
+- Completed: QA added static UI assertions and browser coverage for non-streaming provider replies, streaming provider replies, and provider approval request payloads with selected roles.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat provider replies can send the composed chat prompt as a selected supported provider message role instead of always `user`.
+- Implemented in this slice: Task Chat provider approval requests preserve the selected role in the approval-bound provider message metadata.
+- Still out of scope after this slice: multi-message chat prompt editing, durable backend conversation records, automatic provider/network approval pairing, provider adapter expansion beyond existing backend contracts, and broader Git hunk apply/revert authority.
+
+Validation:
+- Focused static validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Focused browser validation passed: `uv run pytest -q tests\test_ui_browser.py::test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context tests\test_ui_browser.py::test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions` with 2 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 33 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010by Task Chat Memory Context Controls
 
 Status: completed for the scoped Task Chat memory-context slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, active memory context insertion, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

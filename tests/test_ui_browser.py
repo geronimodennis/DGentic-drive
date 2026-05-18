@@ -237,6 +237,26 @@ class _WebRetrievalSmokeHandler(BaseHTTPRequestHandler):
         return
 
 
+def _write_browser_plugin_manifest(root_dir: Path, plugin_id: str, manifest: dict) -> None:
+    plugin_dir = root_dir / "plugins" / plugin_id
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "dgentic-plugin.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_browser_plugin_component(
+    root_dir: Path,
+    plugin_id: str,
+    relative_path: str,
+    payload: dict,
+) -> None:
+    component_path = root_dir / "plugins" / plugin_id / relative_path
+    component_path.parent.mkdir(parents=True, exist_ok=True)
+    component_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 @pytest.fixture()
 def ui_live_server(tmp_path, monkeypatch):
     root_dir = tmp_path / "workspace"
@@ -838,6 +858,88 @@ def test_browser_memory_metadata_detail_can_patch_editable_fields(
     assert detail_body["retention_policy"] == "manual"
 
 
+def test_browser_memory_metadata_detail_keeps_orchestration_context_read_only(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/tasks/orchestrations",
+        payload={
+            "objective": "Publish browser shared-memory context.",
+            "shared_memory_tags": ["browser-readonly"],
+            "tasks": [
+                {
+                    "id": "browser-memory-producer",
+                    "title": "Browser memory producer",
+                    "description": "Produce shared memory for read-only UI coverage.",
+                    "role": "QA",
+                    "declared_write_paths": ["tests/test_ui_browser.py"],
+                    "validation": "Shared memory is published.",
+                }
+            ],
+        },
+    )
+    assert create_status == 201
+    complete_status, _complete_body = _http_json(
+        "PATCH",
+        f"{base_url}/tasks/orchestrations/{create_body['id']}/tasks/browser-memory-producer",
+        payload={"status": "completed", "output": {"summary": "Browser read-only context."}},
+    )
+    assert complete_status == 200
+    list_status, list_body = _http_json(
+        "GET",
+        f"{base_url}/api/v1/memory/metadata?category=orchestration_context&tags=browser-readonly",
+    )
+    assert list_status == 200
+    assert list_body["total"] == 1
+    metadata_id = list_body["items"][0]["id"]
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#reliability"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityList")?.textContent
+          .includes("orchestration_context")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#memoryReliabilityList .list-item")]
+            .find((candidate) => candidate.textContent.includes("orchestration_context"));
+          row.querySelector('[data-testid="memory-reliability-detail"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const detail = document.querySelector("#memoryReliabilityDetail");
+          const text = detail?.textContent || "";
+          return text.includes("Memory detail")
+            && text.includes("orchestration_context")
+            && text.includes("Memory metadata read-only")
+            && text.includes("Orchestration shared-memory metadata is service-authored.")
+            && !detail.querySelector("#memoryMetadataTagsInput")
+            && !detail.querySelector("#memoryMetadataCategoryInput")
+            && !detail.querySelector('[data-testid="memory-metadata-save"]');
+        })()
+        """
+    )
+
+    detail_status, detail_body = _http_json(
+        "GET",
+        f"{base_url}/api/v1/memory/metadata/{metadata_id}",
+    )
+    assert detail_status == 200
+    assert detail_body["category"] == "orchestration_context"
+    assert "browser-memory-producer" in detail_body["description"]
+    assert "[REDACTED]" in detail_body["description"]
+
+
 def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
     ui_live_server,
     devtools_page,
@@ -1277,6 +1379,112 @@ def test_browser_policy_panel_can_create_and_toggle_network_rule(
     assert rules_status == 200
     assert rules_body[0]["domain"] == "sprint16.example.test"
     assert rules_body[0]["enabled"] is False
+
+
+def test_browser_policy_panel_can_activate_plugin_components(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    plugin_id = "browser-component-plugin"
+    _write_browser_plugin_component(
+        root_dir,
+        plugin_id,
+        "docs/runbook.json",
+        {"name": "Browser runbook", "body": "Approve browser component activation."},
+    )
+    _write_browser_plugin_manifest(
+        root_dir,
+        plugin_id,
+        {
+            "plugin_id": plugin_id,
+            "name": "Browser component plugin",
+            "version": "1.0.0",
+            "components": {"docs": ["Browser runbook"]},
+            "docs": [{"path": "docs/runbook.json", "name": "Browser runbook"}],
+        },
+    )
+    trust_status, _trust_body = _http_json(
+        "PATCH",
+        f"{base_url}/plugins/{plugin_id}/trust",
+        payload={"status": "trusted", "reason": "Browser component smoke."},
+    )
+    assert trust_status == 200
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#policy"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        document.querySelector("#pluginList")?.textContent.includes("browser-component-plugin")
+          && document.querySelector("#pluginList")?.textContent.includes("components 1")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#pluginList .list-item")]
+            .find((candidate) => candidate.textContent.includes("browser-component-plugin"));
+          row.querySelector('[data-testid="plugin-components-preview"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#pluginActivationOutput")
+          ?.textContent.includes("Plugin components preview")
+          && document.querySelector("#pluginActivationOutput")
+            ?.textContent.includes("Browser runbook")
+          && document.querySelector("#pluginActivationOutput")
+            ?.textContent.includes("ready")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#pluginList .list-item")]
+            .find((candidate) => candidate.textContent.includes("browser-component-plugin"));
+          row.querySelector('[data-testid="plugin-components-install"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#pluginActivationOutput")
+          ?.textContent.includes("Plugin components install")
+          && document.querySelector("#pluginActivationOutput")
+            ?.textContent.includes("installed")
+        """
+    )
+    list_status, list_body = _http_json("GET", f"{base_url}/plugins/{plugin_id}/components")
+    assert list_status == 200
+    assert list_body["components"][0]["status"] == "installed"
+
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#pluginList .list-item")]
+            .find((candidate) => candidate.textContent.includes("browser-component-plugin"));
+          row.querySelector('[data-testid="plugin-components-disable"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#pluginActivationOutput")
+          ?.textContent.includes("Plugin components disable")
+          && document.querySelector("#pluginActivationOutput")
+            ?.textContent.includes("disabled")
+        """
+    )
+    disabled_status, disabled_body = _http_json(
+        "GET",
+        f"{base_url}/plugins/{plugin_id}/components",
+    )
+    assert disabled_status == 200
+    assert disabled_body["components"][0]["status"] == "disabled"
 
 
 def test_browser_policy_panel_can_request_filesystem_approval_after_preflight(

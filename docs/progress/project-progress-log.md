@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bq Plugin Activation Console
+
+Status: completed for the scoped Policy-panel plugin activation slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact plugin activation console slice after BL-010bp because the backend already exposes guarded plugin reference component, command recipe, and hook-policy activation contracts, while the dashboard only exposed trust/block controls.
+- Completed: Architect/Reviewer kept the slice on existing plugin routes; no plugin code import, loading, indexing, execution, Git workflow expansion, or new backend authority was added.
+- Completed: Developer added Policy-panel activation controls for trusted plugin inert reference components and declarative command recipe/hook-policy components, including managed lock read-only states for `plugin_components`, `plugin_command_recipes`, and `plugin_hook_policies`.
+- Completed: QA added static UI contract coverage plus browser coverage that seeds a trusted plugin, previews, installs, lists, and disables inert reference components through the dashboard, and verifies persisted activation state through the API.
+- Completed: Reviewer found no blocking issues and confirmed the UI uses existing activation endpoints, respects managed locks, and renders plugin metadata without loading or executing plugin code.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: trusted plugin cards can preview, list, install, and disable inert reference component metadata from the Policy panel.
+- Implemented in this slice: trusted plugin cards can preview, install, and disable declarative plugin command recipe and hook-policy components through existing guarded activation routes.
+- Implemented in this slice: managed plugin component, command recipe, and hook-policy activation locks render read-only in the dashboard while preserving read/preview access.
+- Still out of scope after this slice: plugin hook-code/tool/agent/skill loading, parsing or indexing referenced inert component content, backend Git expansion, provider/routing/filesystem policy editors, and deeper plugin lifecycle workflows beyond existing trust and activation contracts.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_memory_metadata_detail_keeps_orchestration_context_read_only tests\test_ui_browser.py::test_browser_policy_panel_can_activate_plugin_components` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 24 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bp Memory Metadata Quick-Edit Controls
 
 Status: completed for the scoped Reliability-panel metadata edit slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

@@ -196,9 +196,11 @@ def test_web_ui_entrypoint_is_served() -> None:
 def test_web_ui_static_assets_are_served() -> None:
     client = TestClient(create_app())
 
+    html_response = client.get("/ui/")
     script_response = client.get("/ui/app.js")
     style_response = client.get("/ui/app.css")
 
+    assert html_response.status_code == 200
     assert script_response.status_code == 200
     assert "const TOKEN_KEY" in script_response.text
     assert "approvalSources" in script_response.text
@@ -647,6 +649,29 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "plugin-trust-block" in script_response.text
     assert "Plugin trust locked" in script_response.text
     assert "Plugin trust updated" in script_response.text
+    assert "pluginActivationLocked" in script_response.text
+    assert "pluginReferenceComponentCount" in script_response.text
+    assert "pluginActivationEndpoint" in script_response.text
+    assert "renderPluginActivationResult" in script_response.text
+    assert "runPluginActivation" in script_response.text
+    assert "appendPluginActivationControls" in script_response.text
+    assert "pluginActivationOutput" in html_response.text
+    assert "/plugins/${encoded}/components" in script_response.text
+    assert "/plugins/${encoded}/components/${action}" in script_response.text
+    assert "/plugins/${encoded}/${route}/${action}" in script_response.text
+    assert 'locks.includes("plugin_components")' in script_response.text
+    assert 'locks.includes("plugin_command_recipes")' in script_response.text
+    assert 'locks.includes("plugin_hook_policies")' in script_response.text
+    assert "button.dataset.testid = `plugin-${family}-${action}`" in script_response.text
+    assert '"Preview Components"' in script_response.text
+    assert '"Install Components"' in script_response.text
+    assert '"Disable Components"' in script_response.text
+    assert '"Preview Recipes"' in script_response.text
+    assert '"Install Recipes"' in script_response.text
+    assert '"Preview Hooks"' in script_response.text
+    assert '"Install Hooks"' in script_response.text
+    assert "Plugin activation locked" in script_response.text
+    assert "Plugin activation failed" in script_response.text
     assert 'api("/settings/effective")' in script_response.text
     assert "renderProjectContext" in script_response.text
     assert "activeRootDir" in script_response.text

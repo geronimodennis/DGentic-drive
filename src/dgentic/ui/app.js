@@ -6461,6 +6461,161 @@ function pluginTrustLocked() {
   return managedPolicyLocks().includes("plugin_trust");
 }
 
+function pluginActivationLocked(family) {
+  const locks = managedPolicyLocks();
+  if (family === "components") {
+    return locks.includes("plugin_components");
+  }
+  if (family === "recipes") {
+    return locks.includes("plugin_command_recipes");
+  }
+  if (family === "hooks") {
+    return locks.includes("plugin_hook_policies");
+  }
+  return false;
+}
+
+function pluginReferenceComponentCount(plugin) {
+  return ["agent_blueprints", "skills", "tools", "docs"].reduce(
+    (count, key) => count + (plugin[key] || []).length,
+    0,
+  );
+}
+
+function pluginCanPreviewActivation(plugin) {
+  return plugin.trust_status === "trusted";
+}
+
+function pluginActivationRecords(result, family) {
+  if (family === "components") {
+    return result.components || [];
+  }
+  if (family === "recipes") {
+    return result.command_recipes || [];
+  }
+  if (family === "hooks") {
+    return result.hook_policies || [];
+  }
+  return [];
+}
+
+function pluginActivationRecordId(record, family) {
+  if (family === "components") {
+    return record.component_id || record.name || record.component_path || "component";
+  }
+  if (family === "recipes") {
+    return record.recipe_id || record.name || record.component_path || "recipe";
+  }
+  return record.rule_id || record.name || record.component_path || "hook-policy";
+}
+
+function shortDigest(value) {
+  return value ? String(value).slice(0, 16) : "-";
+}
+
+function pluginActivationEndpoint(pluginId, family, action) {
+  const encoded = encodeURIComponent(pluginId);
+  if (family === "components") {
+    if (action === "list") {
+      return { path: `/plugins/${encoded}/components`, method: "GET" };
+    }
+    return { path: `/plugins/${encoded}/components/${action}`, method: "POST" };
+  }
+  const route = family === "recipes" ? "command-recipes" : "hook-policies";
+  return { path: `/plugins/${encoded}/${route}/${action}`, method: "POST" };
+}
+
+function renderPluginActivationResult(target, result, family, action) {
+  const records = pluginActivationRecords(result, family);
+  target.append(statusBox(`Plugin ${family} ${action}`, result.plugin_id || "-", records.length ? "ok" : "pending"));
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Plugin", result.plugin_id || "-");
+  appendKeyValue(grid, "Manifest digest", shortDigest(result.manifest_digest));
+  appendKeyValue(grid, "Records", String(records.length));
+  target.append(grid);
+  if (!records.length) {
+    target.append(statusBox("No activation records", "The plugin did not return records for this action.", "pending"));
+  }
+  for (const record of records.slice(0, 12)) {
+    const item = make("div", "list-item");
+    item.append(make("div", "item-title", record.name || pluginActivationRecordId(record, family)));
+    item.append(
+      make(
+        "div",
+        "item-meta",
+        `${pluginActivationRecordId(record, family)} - ${record.status || "ready"} - ${
+          record.component_path || "-"
+        } - ${shortDigest(record.component_digest)}`,
+      ),
+    );
+    item.append(statusChip(record.status || "ready"));
+    target.append(item);
+  }
+  target.append(jsonBlock(result));
+}
+
+async function runPluginActivation(pluginId, family, action) {
+  const target = qs("#pluginActivationOutput");
+  clear(target);
+  if (!pluginId) {
+    target.append(statusBox("Plugin action unavailable", "Missing plugin id.", "blocked"));
+    return;
+  }
+  if ((action === "install" || action === "disable") && pluginActivationLocked(family)) {
+    target.append(statusBox("Plugin activation locked", `Managed settings make plugin ${family} read-only.`, "blocked"));
+    return;
+  }
+  const endpoint = pluginActivationEndpoint(pluginId, family, action);
+  target.append(statusBox("Running plugin activation", `${family} ${action} for ${pluginId}`, "running"));
+  try {
+    const result = await api(endpoint.path, { method: endpoint.method });
+    clear(target);
+    renderPluginActivationResult(target, result, family, action);
+    if (action === "install" || action === "disable") {
+      await loadPolicySurfaces();
+    }
+    showToast(`Plugin ${family} ${action} complete.`);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Plugin activation failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function appendPluginActivationButton(actions, plugin, family, action, label, enabled) {
+  const button = make("button", action === "install" ? "success-button" : action === "disable" ? "danger-button" : "link-button", label);
+  button.type = "button";
+  button.dataset.testid = `plugin-${family}-${action}`;
+  button.dataset.pluginId = plugin.plugin_id || "";
+  button.disabled = !enabled;
+  button.addEventListener("click", () => runPluginActivation(plugin.plugin_id, family, action));
+  actions.append(button);
+}
+
+function appendPluginActivationControls(actions, plugin) {
+  const trusted = pluginCanPreviewActivation(plugin);
+  const referenceCount = pluginReferenceComponentCount(plugin);
+  const recipeCount = (plugin.command_recipes || []).length;
+  const hookCount = (plugin.hook_policies || []).length;
+  appendPluginActivationButton(actions, plugin, "components", "preview", "Preview Components", trusted && referenceCount > 0);
+  appendPluginActivationButton(actions, plugin, "components", "list", "List Components", true);
+  appendPluginActivationButton(
+    actions,
+    plugin,
+    "components",
+    "install",
+    "Install Components",
+    trusted && referenceCount > 0 && !pluginActivationLocked("components"),
+  );
+  appendPluginActivationButton(actions, plugin, "components", "disable", "Disable Components", !pluginActivationLocked("components"));
+  appendPluginActivationButton(actions, plugin, "recipes", "preview", "Preview Recipes", trusted && recipeCount > 0);
+  appendPluginActivationButton(actions, plugin, "recipes", "install", "Install Recipes", trusted && recipeCount > 0 && !pluginActivationLocked("recipes"));
+  appendPluginActivationButton(actions, plugin, "recipes", "disable", "Disable Recipes", !pluginActivationLocked("recipes"));
+  appendPluginActivationButton(actions, plugin, "hooks", "preview", "Preview Hooks", trusted && hookCount > 0);
+  appendPluginActivationButton(actions, plugin, "hooks", "install", "Install Hooks", trusted && hookCount > 0 && !pluginActivationLocked("hooks"));
+  appendPluginActivationButton(actions, plugin, "hooks", "disable", "Disable Hooks", !pluginActivationLocked("hooks"));
+}
+
 async function patchPluginTrust(pluginId, status) {
   const target = qs("#pluginTrustOutput");
   const locked = pluginTrustLocked();
@@ -6491,6 +6646,7 @@ async function patchPluginTrust(pluginId, status) {
 function renderPluginList(result) {
   const target = qs("#pluginList");
   const output = qs("#pluginTrustOutput");
+  const activationOutput = qs("#pluginActivationOutput");
   clear(target);
   if (!result.ok) {
     target.append(statusBox("Unavailable", result.error, "blocked"));
@@ -6501,6 +6657,11 @@ function renderPluginList(result) {
   const errors = result.data?.errors || [];
   if (locked) {
     target.append(statusBox("Plugin trust locked", "Managed settings make plugin trust read-only.", "blocked"));
+  }
+  for (const family of ["components", "recipes", "hooks"]) {
+    if (pluginActivationLocked(family)) {
+      target.append(statusBox("Plugin activation locked", `Managed settings make plugin ${family} read-only.`, "blocked"));
+    }
   }
   if (!plugins.length && !errors.length) {
     target.append(statusBox("No plugins", "Nothing configured for this surface.", "pending"));
@@ -6519,6 +6680,15 @@ function renderPluginList(result) {
         } - ${plugin.version || "-"}`,
       ),
     );
+    detail.append(
+      make(
+        "div",
+        "item-meta",
+        `components ${pluginReferenceComponentCount(plugin)} - recipes ${(plugin.command_recipes || []).length} - hooks ${
+          (plugin.hook_policies || []).length
+        }`,
+      ),
+    );
     const actions = make("div", "recipe-action-buttons");
     const trustButton = make("button", "success-button", "Trust");
     trustButton.type = "button";
@@ -6533,6 +6703,7 @@ function renderPluginList(result) {
     blockButton.disabled = locked || plugin.trust_source === "managed" || plugin.trust_status === "blocked";
     blockButton.addEventListener("click", () => patchPluginTrust(plugin.plugin_id, "blocked"));
     actions.append(statusChip(plugin.trust_status === "trusted" ? "ok" : plugin.trust_status || "pending"), trustButton, blockButton);
+    appendPluginActivationControls(actions, plugin);
     item.append(detail, actions);
     target.append(item);
   }
@@ -6541,6 +6712,9 @@ function renderPluginList(result) {
   }
   if (!output.childNodes.length && locked) {
     output.append(statusBox("Plugin trust locked", "Managed settings make plugin trust read-only.", "blocked"));
+  }
+  if (!activationOutput.childNodes.length && plugins.some((plugin) => plugin.trust_status !== "trusted")) {
+    activationOutput.append(statusBox("Plugin activation", "Trust a current plugin before previewing or installing its components.", "pending"));
   }
 }
 

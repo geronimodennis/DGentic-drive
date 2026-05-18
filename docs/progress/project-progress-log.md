@@ -4,6 +4,34 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 For the current sprint, priority order, safe stopping rules, and source-of-truth links, start with [docs/project-status.md](../project-status.md). Keep this file as the historical append-only progress ledger.
 
+## 2026-05-18
+
+### Sprint 16 BL-010bj Task-Chat Orchestration Creation Browser Coverage And Closeout
+
+Status: completed for the scoped fresh task-chat plan to orchestration creation slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic execution and explicit orchestration creation, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM continued Sprint 16 under the autonomous workflow and confirmed the implementation checkpoint already pushed in `5e88d01` should be closed with QA browser coverage and PM documentation.
+- Completed: QA added browser coverage that creates a fresh task-chat plan with auto-run disabled, clicks `Create Orchestration`, verifies the orchestration transcript/detail surfaces, confirms one created orchestration run with five tasks and required DoD evidence, and confirms no detached orchestration execution records were started.
+- Completed: Reviewer/Security confirmed the chat action creates through `POST /tasks/orchestrations`, performs only read-only refresh/detail loads afterward, does not trigger cycle/loop/background execution endpoints, and continues to render task-chat/orchestration UI through text-safe DOM construction.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log so BL-010bj is recorded as validation-clean and remaining Sprint 16 chat work is narrowed to richer unified semantics rather than the basic orchestration-creation handoff.
+
+Feature tracking:
+- Implemented in this slice: fresh task-chat plan cards can create backend-managed orchestration runs using the existing orchestration create contract.
+- Implemented in this slice: created orchestration runs are shown in the task-chat transcript and selected in the orchestration detail console for operator review.
+- Implemented in this slice: task-chat orchestration creation leaves execution explicit; it does not start orchestration cycle, loop, or detached execution records from chat.
+- Still out of scope after this slice: model-backed/streaming chat, richer unified chat semantics across deterministic runs and orchestration runs, and starting orchestration execution from chat.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_can_create_orchestration_from_fresh_plan` with 2 passed.
+- Touched-test formatting and lint passed: `uv run ruff format --check tests\test_ui.py tests\test_ui_browser.py` and `uv run ruff check tests\test_ui.py tests\test_ui_browser.py`.
+- Broader UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 16 passed.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Full regression passed: `uv run pytest -q` with 1,371 passed and 2 skipped.
+
 ## 2026-05-16
 
 ### Sprint 16 BL-010bi Task-Chat Execution Transcript Status Cards

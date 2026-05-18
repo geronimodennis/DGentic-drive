@@ -552,6 +552,72 @@ def test_browser_task_chat_can_plan_run_and_insert_execution_evidence(
     )
 
 
+def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatForm'))")
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatInput").value =
+            "Create a browser task-chat orchestration handoff.";
+          document.querySelector("#taskChatContextInput").value =
+            "Keep orchestration execution explicit.";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Chat creates an orchestration run.";
+          document.querySelector("#taskChatRunInput").checked = false;
+          document.querySelector("#taskChatSubmitButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return transcript.includes("Plan created")
+            && Boolean(document.querySelector('[data-testid="task-plan-create-orchestration"]'));
+        })()
+        """
+    )
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"task-plan-create-orchestration\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          const orchestration =
+            document.querySelector(".task-chat-orchestration-card")?.textContent || "";
+          const detail = document.querySelector("#orchestrationDetail")?.textContent || "";
+          return transcript.includes("Orchestration created")
+            && orchestration.includes("Orchestration Run")
+            && orchestration.includes("5 tasks")
+            && detail.includes("Task Graph");
+        })()
+        """
+    )
+
+    runs_status, runs_body = _http_json("GET", f"{base_url}/tasks/orchestrations")
+    assert runs_status == 200
+    assert len(runs_body) == 1
+    assert runs_body[0]["objective"] == "Create a browser task-chat orchestration handoff."
+    assert len(runs_body[0]["tasks"]) == 5
+    assert runs_body[0]["required_dod_evidence"] == ["tests", "docs", "review"]
+
+    executions_status, executions_body = _http_json(
+        "GET",
+        f"{base_url}/tasks/orchestrations/{runs_body[0]['id']}/executions",
+    )
+    assert executions_status == 200
+    assert executions_body == []
+
+
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,

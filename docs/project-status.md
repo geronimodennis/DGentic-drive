@@ -1,15 +1,15 @@
 # DGentic Project Status
 
-Last updated: 2026-05-16.
+Last updated: 2026-05-18.
 
 Use this page as the current PM control panel. It does not replace the backlog or progress log; it points to the right source of truth so work can move faster without losing planned features.
 
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010bi task-chat execution transcript/status cards are implemented and validation-clean.
-- Latest completed slice: BL-010bi, task-chat plan runs now update a single execution transcript card from running to completed/failed, render deterministic step-result status summaries, refresh dashboard task context, and let operators insert run evidence back into follow-up chat context.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with task-chat to orchestration-run handoff and richer unified chat semantics, deeper AI-change apply/revert semantics beyond guarded workspace editor mutations and metadata-only Git review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010bj task-chat orchestration creation from fresh chat plans is implemented and browser-validation clean.
+- Latest completed slice: BL-010bj, fresh task-chat plan cards can create backend-managed orchestration runs through the existing `/tasks/orchestrations` create contract, render an orchestration transcript card and detail selection, and keep background orchestration execution explicit rather than starting `/cycle`, `/loop`, or detached `/executions` from chat.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution and orchestration creation, deeper AI-change apply/revert semantics beyond guarded workspace editor mutations and metadata-only Git review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -59,7 +59,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bi implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bj implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

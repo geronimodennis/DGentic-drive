@@ -1201,6 +1201,168 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
     assert "/providers/approvals?status=pending" in refreshes
 
 
+def test_browser_task_chat_can_insert_memory_context_from_stream_detail_and_retrieval(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/api/v1/memory/metadata",
+        payload={
+            "entity_type": "memory",
+            "entity_id": "browser-task-chat-memory-context",
+            "tags": ["chat-memory-context", "browser"],
+            "category": "ui-memory-context",
+            "description": "Task Chat can reuse browser seeded memory context.",
+            "relevance_score": 0.82,
+            "retention_policy": "manual",
+        },
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        (() => {
+          const stream = document.querySelector("#taskChatContextStream")?.textContent || "";
+          return stream.includes("Memory")
+            && stream.includes("browser-task-chat-memory-context")
+            && Boolean(document.querySelector('[data-testid="task-chat-memory-use-context"]'));
+        })()
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const buttons = [
+            ...document.querySelectorAll('[data-testid="task-chat-memory-use-context"]'),
+          ];
+          const button = buttons.find((candidate) => candidate.closest(".task-chat-context-card")
+              ?.textContent.includes("browser-task-chat-memory-context"));
+          button.click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Memory ID: browser-task-chat-memory-context")
+            && value.includes("Category: ui-memory-context")
+            && value.includes("Tags: chat-memory-context, browser")
+            && value.includes("Task Chat can reuse browser seeded memory context.");
+        })()
+        """
+    )
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#reliability"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityList")?.textContent
+          .includes("browser-task-chat-memory-context")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#memoryReliabilityList .list-item")]
+            .find((candidate) =>
+              candidate.textContent.includes("browser-task-chat-memory-context")
+            );
+          row.querySelector('[data-testid="memory-reliability-detail"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityDetail")?.textContent.includes("Memory detail")
+          && Boolean(document.querySelector('[data-testid="memory-detail-use-context"]'))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatContextInput").value = "";
+          document.querySelector('[data-testid="memory-detail-use-context"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Memory ID: browser-task-chat-memory-context")
+            && value.includes("Task Chat can reuse browser seeded memory context.");
+        })()
+        """
+    )
+
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#memoryRetrievalPanel").open = true;
+          document.querySelector("#memoryRetrievalQueryInput").value =
+            "browser seeded memory context";
+          document.querySelector("#memoryRetrievalTagsInput").value = "chat-memory-context";
+          document.querySelector("#memoryRetrievalCategoryInput").value = "ui-memory-context";
+          document.querySelector("#memoryRetrievalThresholdInput").value = "0.1";
+          document.querySelector("#memoryRetrievalForm").requestSubmit();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const output = document.querySelector("#memoryRetrievalOutput")?.textContent || "";
+          return output.includes("Memory retrieval")
+            && output.includes("browser-task-chat-memory-context")
+            && Boolean(document.querySelector('[data-testid="memory-retrieval-use-context"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatContextInput").value = "";
+          const buttons = [
+            ...document.querySelectorAll('[data-testid="memory-retrieval-use-context"]'),
+          ];
+          const button = buttons.find((candidate) => candidate.closest(".list-item")
+              ?.textContent.includes("browser-task-chat-memory-context"));
+          button.click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Memory ID: browser-task-chat-memory-context")
+            && value.includes("Combined score:")
+            && value.includes("Similarity score:")
+            && value.includes("Matched fields:");
+        })()
+        """
+    )
+
+    detail_status, detail_body = _http_json(
+        "GET",
+        f"{base_url}/api/v1/memory/metadata/{create_body['id']}",
+    )
+    assert detail_status == 200
+    assert detail_body["category"] == "ui-memory-context"
+    assert detail_body["lifecycle_state"] == "active"
+
+
 def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
     ui_live_server,
     devtools_page,

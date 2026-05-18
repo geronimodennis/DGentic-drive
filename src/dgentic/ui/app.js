@@ -49,10 +49,12 @@ let latestTaskChatContext = {
   plans: [],
   runs: [],
   orchestrations: [],
+  memory: [],
   approvals: [],
   logs: [],
   active: null,
   errors: [],
+  unavailable_count: 0,
 };
 let gitDiffReviewDecisions = {};
 
@@ -696,11 +698,12 @@ async function loadTaskChatContext() {
     const result = await safeLoad(`${source.label} pending approvals`, () => api(`${source.base}?status=pending`));
     return { source, ...result };
   });
-  const [plans, runs, orchestrations, active, logs, ...approvalResults] = await Promise.all([
+  const [plans, runs, orchestrations, active, memory, logs, ...approvalResults] = await Promise.all([
     safeLoad("task chat plans", () => api("/tasks/plans")),
     safeLoad("task chat runs", () => api("/tasks/runs")),
     safeLoad("task chat orchestrations", () => api("/tasks/orchestrations")),
     safeLoad("task chat active project", () => api("/projects/active")),
+    safeLoad("task chat memory", () => api("/api/v1/memory/metadata?limit=6&lifecycle_state=active")),
     safeLoad("task chat logs", () => api("/logs")),
     ...approvalLoads,
   ]);
@@ -712,11 +715,12 @@ async function loadTaskChatContext() {
       }
     }
   }
-  const loadResults = [plans, runs, active, logs, ...approvalResults];
+  const loadResults = [plans, runs, orchestrations, active, memory, logs, ...approvalResults];
   latestTaskChatContext = {
     plans: plans.ok ? plans.data || [] : [],
     runs: runs.ok ? runs.data || [] : [],
     orchestrations: orchestrations.ok ? orchestrations.data || [] : [],
+    memory: memory.ok ? memory.data?.items || [] : [],
     approvals,
     logs: logs.ok ? (logs.data || []).slice(-8).reverse() : [],
     active: active.ok ? active.data : null,
@@ -732,6 +736,7 @@ function taskChatLatestActivity(context) {
     ...context.runs.map((run) => run.completed_at || run.started_at),
     ...context.orchestrations.map((run) => run.updated_at || run.created_at),
     ...context.plans.map((plan) => plan.created_at),
+    ...context.memory.map((item) => item.updated_at || item.created_at),
     ...context.approvals.map((item) => item.approval.created_at),
   ]
     .filter(Boolean)
@@ -786,6 +791,30 @@ function orchestrationContextLines(run) {
   ];
 }
 
+function memoryContextLabel(item) {
+  return `${item.entity_type || "memory"}: ${item.entity_id || item.metadata_id || item.id || "-"}`;
+}
+
+function memoryMetadataContextLines(item) {
+  return [
+    `Memory ID: ${item.entity_id || item.metadata_id || item.id || "-"}`,
+    `Type: ${item.entity_type || "memory"}`,
+    `Category: ${item.category || "-"}`,
+    `Lifecycle: ${item.lifecycle_state || "active"}`,
+    `Tags: ${(item.tags || []).slice(0, 8).join(", ") || "-"}`,
+    `Description: ${item.description || "-"}`,
+  ];
+}
+
+function memoryRetrievalContextLines(item) {
+  return [
+    ...memoryMetadataContextLines(item),
+    `Combined score: ${retrievalScore(item.combined_score)}`,
+    `Similarity score: ${retrievalScore(item.similarity_score)}`,
+    `Matched fields: ${(item.matched_fields || []).slice(0, 8).join(", ") || "-"}`,
+  ];
+}
+
 function insertTaskChatContext(title, lines) {
   const input = qs("#taskChatContextInput");
   const block = taskChatContextLines(title, lines).join("\n");
@@ -829,6 +858,9 @@ function renderTaskChatContextCard(target, card) {
   const actions = make("div", "task-chat-context-actions");
   const useButton = make("button", "link-button", "Use Context");
   useButton.type = "button";
+  if (card.useTestId) {
+    useButton.dataset.testid = card.useTestId;
+  }
   useButton.addEventListener("click", () => insertTaskChatContext(card.title, card.lines || []));
   actions.append(useButton);
   if (card.approvalItem) {
@@ -862,6 +894,7 @@ function renderTaskChatContextStream() {
   appendKeyValue(summary, "Root", compactPath(activeRoot));
   appendKeyValue(summary, "Tasks", `${context.plans.length} plans / ${context.runs.length} runs`);
   appendKeyValue(summary, "Orchestrations", String(context.orchestrations.length));
+  appendKeyValue(summary, "Memory", String(context.memory.length));
   appendKeyValue(summary, "Pending approvals", String(context.approvals.length), context.approvals.length ? "pending" : "ok");
   appendKeyValue(summary, "Latest activity", taskChatLatestActivity(context));
   if (context.unavailable_count) {
@@ -908,6 +941,18 @@ function renderTaskChatContextStream() {
       lines: orchestrationContextLines(run),
     });
   }
+  for (const item of context.memory.slice(0, 3)) {
+    renderTaskChatContextCard(cards, {
+      title: `Memory ${memoryContextLabel(item)}`,
+      meta: `${item.category || "uncategorized"} - ${item.lifecycle_state || "active"} - ${formatTimestamp(
+        item.updated_at || item.created_at,
+      )}`,
+      state: memoryStatusChip(item),
+      sectionId: "reliability",
+      useTestId: "task-chat-memory-use-context",
+      lines: memoryMetadataContextLines(item),
+    });
+  }
   for (const item of context.approvals.slice(0, 3)) {
     renderTaskChatContextCard(cards, {
       title: `${item.source.label} approval ${item.approval.id}`,
@@ -936,7 +981,7 @@ function renderTaskChatContextStream() {
     });
   }
   if (!cards.childElementCount) {
-    cards.append(statusBox("No context cards", "Plans, runs, orchestration runs, approvals, and logs will appear here as work starts.", "pending"));
+    cards.append(statusBox("No context cards", "Plans, runs, orchestration runs, memory, approvals, and logs will appear here as work starts.", "pending"));
   }
   target.append(cards);
 }
@@ -5897,6 +5942,15 @@ function renderMemoryRetrievalResults(target, result) {
     }
     renderChipList(row, "Matched fields", item.matched_fields || [], "ok");
     renderChipList(row, "Score reasons", item.score_reasons || [], "pending");
+    const actions = make("div", "form-footer");
+    const useButton = make("button", "link-button", "Use In Task Chat");
+    useButton.type = "button";
+    useButton.dataset.testid = "memory-retrieval-use-context";
+    useButton.addEventListener("click", () =>
+      insertTaskChatContext(`Memory ${memoryContextLabel(item)}`, memoryRetrievalContextLines(item)),
+    );
+    actions.append(useButton);
+    row.append(actions);
     list.append(row);
   }
   target.append(list);
@@ -6261,6 +6315,15 @@ function renderMemoryReliabilityDetail(target, item) {
   if (item.description) {
     target.append(statusBox("Description", item.description, "ok"));
   }
+  const actions = make("div", "form-footer");
+  const useButton = make("button", "link-button", "Use In Task Chat");
+  useButton.type = "button";
+  useButton.dataset.testid = "memory-detail-use-context";
+  useButton.addEventListener("click", () =>
+    insertTaskChatContext(`Memory ${memoryContextLabel(item)}`, memoryMetadataContextLines(item)),
+  );
+  actions.append(useButton);
+  target.append(actions);
   renderMemoryMetadataEditor(target, item);
   target.append(jsonBlock(item));
 }

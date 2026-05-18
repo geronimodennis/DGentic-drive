@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010by Task Chat Memory Context Controls
+
+Status: completed for the scoped Task Chat memory-context slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, active memory context insertion, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Task Chat memory-context slice because the dashboard already exposed memory metadata detail and hybrid retrieval, but memory could not yet flow back into follow-up chat context without manual copying.
+- Completed: Architect/Reviewer kept the slice on existing `/api/v1/memory/metadata` and `/api/v1/memory/retrieve/hybrid` contracts; no backend memory write, retrieval authority, summarization job, provider call, or Git backend mutation authority was added.
+- Completed: Developer added active-memory cards to the Task Chat context stream with bounded memory context insertion.
+- Completed: Developer added Use In Task Chat controls to memory detail rows and hybrid retrieval rows, reusing the existing composer insertion path.
+- Completed: QA added static UI assertions for the memory context contract and a browser smoke covering stream, detail, and retrieval insertion into Task Chat.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat now includes active SQL memory metadata in its context stream.
+- Implemented in this slice: Reliability-panel memory detail rows can insert bounded memory ID/type/category/lifecycle/tags/description context into the composer.
+- Implemented in this slice: Hybrid retrieval result rows can insert bounded memory context plus retrieval score and matched-field evidence into the composer.
+- Still out of scope after this slice: durable backend conversation records, automatic memory writeback from chat, scheduled memory lifecycle/compression jobs, LLM-backed memory summarization, broader memory policy editors, and deeper unified chat autonomy.
+
+Validation:
+- Focused static validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served` with 2 passed.
+- Focused browser validation passed: `uv run pytest -q tests\test_ui_browser.py::test_browser_task_chat_can_insert_memory_context_from_stream_detail_and_retrieval` with 1 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 33 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bx Git Change-Review Rationale Notes
 
 Status: completed for the scoped metadata-only Git review-rationale slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

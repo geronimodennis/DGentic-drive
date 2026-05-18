@@ -596,6 +596,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatContextStream" in script_response.text
     assert "renderTaskChatContextCard" in script_response.text
     assert "insertTaskChatContext" in script_response.text
+    assert "memoryContextLabel" in script_response.text
+    assert "memoryMetadataContextLines" in script_response.text
+    assert "memoryRetrievalContextLines" in script_response.text
+    assert "task-chat-memory-use-context" in script_response.text
+    assert "memory-retrieval-use-context" in script_response.text
+    assert "memory-detail-use-context" in script_response.text
+    assert (
+        'safeLoad("task chat memory", () => '
+        'api("/api/v1/memory/metadata?limit=6&lifecycle_state=active"))' in script_response.text
+    )
+    assert 'appendKeyValue(summary, "Memory"' in script_response.text
+    assert "Plans, runs, orchestration runs, memory, approvals, and logs" in script_response.text
     assert "openTaskChatApprovalReview" in script_response.text
     assert "task-chat-approval-review" in script_response.text
     assert "approval: { ...item.approval, status: review.status || item.approval.status }" in (
@@ -607,7 +619,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "task chat orchestrations" in script_response.text
     assert 'api("/tasks/orchestrations")' in script_response.text
     assert 'appendKeyValue(summary, "Orchestrations"' in script_response.text
-    assert "Plans, runs, orchestration runs, approvals, and logs" in script_response.text
+    assert "Plans, runs, orchestration runs, memory, approvals, and logs" in script_response.text
     assert "isAuthorizationError" in script_response.text
     assert "unavailable_count" in script_response.text
     assert "Limited sources" in script_response.text

@@ -461,12 +461,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "TASK_CHAT_HISTORY_MAX_BYTES" in script_response.text
     assert "taskPlanContextLines" in script_response.text
     assert "taskRunContextLines" in script_response.text
+    assert "orchestrationContextLines" in script_response.text
     assert "task-plan-use-context" in script_response.text
     assert "task-run-use-evidence" in script_response.text
+    assert "task-chat-orchestration-use-context" in script_response.text
     assert "Use Context" in script_response.text
     assert "Use Evidence" in script_response.text
     assert "insertTaskChatContext(`Plan ${plan.id}`" in script_response.text
     assert "insertTaskChatContext(`Run ${run.id}`" in script_response.text
+    assert "insertTaskChatContext(`Orchestration ${run.id}`" in script_response.text
     assert "loadTaskChatHistory" in script_response.text
     assert "saveTaskChatHistory" in script_response.text
     assert "clearTaskChatHistory" in script_response.text
@@ -491,6 +494,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "taskChatLatestActivity" in script_response.text
     assert "taskChatContextLines" in script_response.text
     assert "openTaskChatContextSection" in script_response.text
+    assert "task chat orchestrations" in script_response.text
+    assert 'api("/tasks/orchestrations")' in script_response.text
+    assert 'appendKeyValue(summary, "Orchestrations"' in script_response.text
+    assert "Plans, runs, orchestration runs, approvals, and logs" in script_response.text
     assert "isAuthorizationError" in script_response.text
     assert "unavailable_count" in script_response.text
     assert "Limited sources" in script_response.text

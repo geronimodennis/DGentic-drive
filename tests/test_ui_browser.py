@@ -595,10 +595,22 @@ def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
           const orchestration =
             document.querySelector(".task-chat-orchestration-card")?.textContent || "";
           const detail = document.querySelector("#orchestrationDetail")?.textContent || "";
+          const useContext = Boolean(
+            document.querySelector('[data-testid="task-chat-orchestration-use-context"]')
+          );
           return transcript.includes("Orchestration created")
             && orchestration.includes("Orchestration Run")
             && orchestration.includes("5 tasks")
-            && detail.includes("Task Graph");
+            && detail.includes("Task Graph")
+            && useContext;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const context = document.querySelector("#taskChatContextStream")?.textContent || "";
+          return context.includes("Orchestrations") && context.includes("1");
         })()
         """
     )
@@ -616,6 +628,22 @@ def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
     )
     assert executions_status == 200
     assert executions_body == []
+
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"task-chat-orchestration-use-context\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Orchestration ID:")
+            && value.includes("Objective: Create a browser task-chat orchestration handoff.")
+            && value.includes("Status: running")
+            && value.includes("Tasks: 5 tasks")
+            && value.includes("Evidence: tests, docs, review");
+        })()
+        """
+    )
 
 
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(

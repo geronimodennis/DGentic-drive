@@ -4,6 +4,36 @@ This log records meaningful project progress, decisions, blockers, and next step
 
 For the current sprint, priority order, safe stopping rules, and source-of-truth links, start with [docs/project-status.md](../project-status.md). Keep this file as the historical append-only progress ledger.
 
+## 2026-05-19
+
+### Sprint 16 BL-010bk Task-Chat Orchestration Context Reuse
+
+Status: completed for the scoped orchestration context reuse slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic execution, explicit orchestration creation, and reusable orchestration context, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, command recipes, plugin trust, generated-tool governance, broader memory lifecycle/compression management beyond apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a narrow follow-up after BL-010bj so task-chat, deterministic runs, and orchestration review can share bounded context without giving chat new execution authority.
+- Completed: Architect/Reviewer kept the slice on existing read contracts: task-chat context now reads `/tasks/orchestrations`, but orchestration cycle, loop, start, and cancel remain explicit orchestration-detail controls.
+- Completed: Developer added orchestration counts and recent orchestration context cards to the task-chat context stream, plus a `Use Context` action on created-run transcript cards.
+- Completed: QA expanded static UI coverage for orchestration context helpers, endpoint wiring, summary counters, and the transcript action.
+- Completed: QA expanded browser coverage so fresh task-chat orchestration creation verifies the context-stream orchestration count, inserts bounded orchestration context into the composer, and still confirms no detached execution records were started.
+- Completed: Reviewer/Security confirmed the slice uses text-safe DOM construction and does not add execution-triggering calls from task-chat context reuse.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: recent orchestration runs are summarized in the task-chat context stream with bounded reusable context lines.
+- Implemented in this slice: created orchestration transcript cards can insert run id, objective, status, task summary, evidence keys, and updated timestamp into the task-chat context composer.
+- Still out of scope after this slice: model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, and starting orchestration execution from chat.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_can_create_orchestration_from_fresh_plan` with 2 passed.
+- Touched-test formatting and lint passed: `uv run ruff format --check tests\test_ui.py tests\test_ui_browser.py` and `uv run ruff check tests\test_ui.py tests\test_ui_browser.py`.
+- Broader UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 16 passed.
+- Syntax validation passed: `node --check src\dgentic\ui\app.js`.
+- Full regression passed: `uv run pytest -q` with 1,371 passed and 2 skipped.
+
 ## 2026-05-18
 
 ### Sprint 16 BL-010bj Task-Chat Orchestration Creation Browser Coverage And Closeout

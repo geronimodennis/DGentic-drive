@@ -43,6 +43,7 @@ let taskChatMessageSequence = 0;
 let latestTaskChatContext = {
   plans: [],
   runs: [],
+  orchestrations: [],
   approvals: [],
   logs: [],
   active: null,
@@ -644,9 +645,10 @@ async function loadTaskChatContext() {
     const result = await safeLoad(`${source.label} pending approvals`, () => api(`${source.base}?status=pending`));
     return { source, ...result };
   });
-  const [plans, runs, active, logs, ...approvalResults] = await Promise.all([
+  const [plans, runs, orchestrations, active, logs, ...approvalResults] = await Promise.all([
     safeLoad("task chat plans", () => api("/tasks/plans")),
     safeLoad("task chat runs", () => api("/tasks/runs")),
+    safeLoad("task chat orchestrations", () => api("/tasks/orchestrations")),
     safeLoad("task chat active project", () => api("/projects/active")),
     safeLoad("task chat logs", () => api("/logs")),
     ...approvalLoads,
@@ -663,6 +665,7 @@ async function loadTaskChatContext() {
   latestTaskChatContext = {
     plans: plans.ok ? plans.data || [] : [],
     runs: runs.ok ? runs.data || [] : [],
+    orchestrations: orchestrations.ok ? orchestrations.data || [] : [],
     approvals,
     logs: logs.ok ? (logs.data || []).slice(-8).reverse() : [],
     active: active.ok ? active.data : null,
@@ -676,6 +679,7 @@ function taskChatLatestActivity(context) {
   const timestamps = [
     ...context.logs.map((event) => event.created_at),
     ...context.runs.map((run) => run.completed_at || run.started_at),
+    ...context.orchestrations.map((run) => run.updated_at || run.created_at),
     ...context.plans.map((plan) => plan.created_at),
     ...context.approvals.map((item) => item.approval.created_at),
   ]
@@ -713,6 +717,21 @@ function taskRunContextLines(run) {
     `Plan ID: ${run.plan_id || "-"}`,
     `Status: ${run.status || "-"}`,
     `Results: ${results || "-"}`,
+  ];
+}
+
+function orchestrationContextLines(run) {
+  const tasks = (run.tasks || [])
+    .map((task) => task.title || task.id)
+    .slice(0, 8)
+    .join("; ");
+  return [
+    `Orchestration ID: ${run.id}`,
+    `Objective: ${run.objective || "-"}`,
+    `Status: ${run.status || "-"}`,
+    `Tasks: ${tasks || `${run.task_count || 0} tasks`}`,
+    `Evidence: ${(run.required_dod_evidence || []).join(", ") || "-"}`,
+    `Updated: ${formatTimestamp(run.updated_at || run.created_at)}`,
   ];
 }
 
@@ -767,6 +786,7 @@ function renderTaskChatContextStream() {
   const summary = make("div", "task-chat-context-summary");
   appendKeyValue(summary, "Root", compactPath(activeRoot));
   appendKeyValue(summary, "Tasks", `${context.plans.length} plans / ${context.runs.length} runs`);
+  appendKeyValue(summary, "Orchestrations", String(context.orchestrations.length));
   appendKeyValue(summary, "Pending approvals", String(context.approvals.length), context.approvals.length ? "pending" : "ok");
   appendKeyValue(summary, "Latest activity", taskChatLatestActivity(context));
   if (context.unavailable_count) {
@@ -804,6 +824,15 @@ function renderTaskChatContextStream() {
       lines: taskRunContextLines(run),
     });
   }
+  for (const run of context.orchestrations.slice(-2).reverse()) {
+    renderTaskChatContextCard(cards, {
+      title: `Orchestration ${run.id}`,
+      meta: `${run.tasks?.length || run.task_count || 0} tasks - ${formatTimestamp(run.updated_at || run.created_at)}`,
+      state: run.status,
+      sectionId: "orchestrationDetail",
+      lines: orchestrationContextLines(run),
+    });
+  }
   for (const item of context.approvals.slice(0, 3)) {
     renderTaskChatContextCard(cards, {
       title: `${item.source.label} approval ${item.approval.id}`,
@@ -831,7 +860,7 @@ function renderTaskChatContextStream() {
     });
   }
   if (!cards.childElementCount) {
-    cards.append(statusBox("No context cards", "Plans, runs, approvals, and logs will appear here as work starts.", "pending"));
+    cards.append(statusBox("No context cards", "Plans, runs, orchestration runs, approvals, and logs will appear here as work starts.", "pending"));
   }
   target.append(cards);
 }
@@ -1235,10 +1264,16 @@ function renderTaskChatOrchestration(target, run) {
   copy.append(make("div", "item-title", "Orchestration Run"));
   copy.append(make("div", "item-meta", `${run.id || "run"} - ${run.task_count || 0} tasks`));
   const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Context");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-chat-orchestration-use-context";
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext(`Orchestration ${run.id}`, orchestrationContextLines(run)),
+  );
   const openButton = make("button", "link-button", "Open Orchestration");
   openButton.type = "button";
   openButton.addEventListener("click", () => openTaskChatContextSection("orchestrationDetail"));
-  actions.append(statusChip(run.status), openButton);
+  actions.append(statusChip(run.status), contextButton, openButton);
   header.append(copy, actions);
   card.append(header);
 

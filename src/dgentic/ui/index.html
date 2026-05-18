@@ -120,6 +120,35 @@
                     <textarea id="taskChatAcceptanceInput" rows="3"></textarea>
                   </label>
                 </div>
+                <details id="taskChatProviderPanel" class="task-chat-provider-panel">
+                  <summary>Provider Reply</summary>
+                  <div class="two-column">
+                    <label>
+                      Provider ID
+                      <input id="taskChatProviderInput" type="text" maxlength="128" list="taskChatProviderOptions">
+                      <datalist id="taskChatProviderOptions"></datalist>
+                    </label>
+                    <label>
+                      Model
+                      <input id="taskChatProviderModelInput" type="text" maxlength="256" list="taskChatProviderModelOptions">
+                      <datalist id="taskChatProviderModelOptions"></datalist>
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
+                      Provider Approval ID
+                      <input id="taskChatProviderApprovalInput" type="text" maxlength="256" placeholder="provider-approval-...">
+                    </label>
+                    <label>
+                      Network Approval ID
+                      <input id="taskChatProviderNetworkApprovalInput" type="text" maxlength="256" placeholder="network-approval-...">
+                    </label>
+                  </div>
+                  <label class="checkbox-label">
+                    <input id="taskChatProviderStreamInput" type="checkbox">
+                    Stream
+                  </label>
+                </details>
                 <div class="task-chat-actions">
                   <label class="inline-option">
                     <input id="taskChatRunInput" type="checkbox">
@@ -136,6 +165,10 @@
                   <button id="taskChatSubmitButton" type="submit" class="primary-button">
                     <span class="button-icon" aria-hidden="true">+</span>
                     Send
+                  </button>
+                  <button id="taskChatProviderButton" type="button" class="link-button">
+                    <span class="button-icon" aria-hidden="true">P</span>
+                    Ask Provider
                   </button>
                 </div>
               </form>

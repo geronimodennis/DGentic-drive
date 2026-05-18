@@ -786,6 +786,214 @@ def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
     )
 
 
+def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    long_reply = "Task chat provider reply " + ("x" * 950) + " tail-marker"
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatProviderButton'))")
+    unsupported_state = devtools_page.eval(
+        """
+        (() => {
+          populateProviderApprovalControls({
+            ok: true,
+            data: [
+              {
+                id: "chat-provider",
+                name: "Task Chat Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["chat-model"],
+                supports_streaming: true,
+              },
+              {
+                id: "offline-provider",
+                name: "Offline Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["offline-model"],
+                supports_streaming: false,
+              },
+            ],
+          });
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          const streamInput = document.querySelector("#taskChatProviderStreamInput");
+          providerInput.value = "offline-provider";
+          streamInput.checked = true;
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          return {
+            checked: streamInput.checked,
+            disabled: streamInput.disabled,
+            model: document.querySelector("#taskChatProviderModelInput").value,
+          };
+        })()
+        """
+    )
+    assert unsupported_state == {
+        "checked": False,
+        "disabled": True,
+        "model": "offline-model",
+    }
+
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderRequests = [];
+          window.__taskChatProviderStreamRequests = [];
+          window.fetch = async (input, init = {{}}) => {{
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {{
+              window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
+              const encoder = new TextEncoder();
+              const lines = [
+                JSON.stringify({{
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  event: "chunk",
+                  delta: "Streamed task ",
+                }}) + "\\n",
+                JSON.stringify({{
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  event: "chunk",
+                  delta: "chat reply.",
+                  finish_reason: "stop",
+                  duration_ms: 77,
+                }}) + "\\n",
+              ];
+              return new Response(
+                new ReadableStream({{
+                  start(controller) {{
+                    for (const line of lines) {{
+                      controller.enqueue(encoder.encode(line));
+                    }}
+                    controller.close();
+                  }},
+                }}),
+                {{ status: 200, headers: {{ "Content-Type": "application/x-ndjson" }} }},
+              );
+            }}
+            if (url.endsWith("/providers/generate")) {{
+              window.__taskChatProviderRequests.push(JSON.parse(init.body));
+              return new Response(
+                JSON.stringify({{
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  content: {json.dumps(long_reply)},
+                  duration_ms: 42,
+                  usage_metadata: {{ total_tokens: 12 }},
+                  finish_reasons: ["stop"],
+                }}),
+                {{ status: 200, headers: {{ "Content-Type": "application/json" }} }},
+              );
+            }}
+            return originalFetch(input, init);
+          }};
+          return true;
+        }})()
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderApprovalInput").value = "provider-approval-chat";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value =
+            "network-approval-chat";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value = "Explain the task chat provider UI.";
+          document.querySelector("#taskChatContextInput").value =
+            "Context line one\\nContext line two";
+          document.querySelector("#taskChatAcceptanceInput").value = "Reply can be reused";
+          document.querySelector("#taskChatProviderButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const card = document.querySelector(".task-chat-execution-card")?.textContent || "";
+          return card.includes("Provider Reply")
+            && card.includes("Task chat provider reply")
+            && Boolean(document.querySelector('[data-testid="task-chat-provider-use-response"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    payload = devtools_page.eval("window.__taskChatProviderRequests[0]")
+    assert payload["provider_id"] == "chat-provider"
+    assert payload["model"] == "chat-model"
+    assert payload["stream"] is False
+    assert payload["requested_by"] == "dashboard-task-chat"
+    assert payload["timeout_seconds"] == 60
+    assert payload["approval_id"] == "provider-approval-chat"
+    assert payload["network_approval_id"] == "network-approval-chat"
+    prompt = payload["messages"][0]["content"]
+    assert payload["messages"][0]["role"] == "user"
+    assert "Message: Explain the task chat provider UI." in prompt
+    assert "Context line one" in prompt
+    assert "Context line two" in prompt
+    assert "Acceptance:" in prompt
+    assert "Reply can be reused" in prompt
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="task-chat-provider-use-response"]').click()
+        """
+    )
+    context_value = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Provider reply")
+            && value.includes("Content: Task chat provider reply")
+            && !value.includes("tail-marker")
+            && value;
+        })()
+        """
+    )
+    assert len(context_value) < len(long_reply) + 300
+
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatInput").value = "Stream a provider answer.";
+          document.querySelector("#taskChatContextInput").value = "Streaming context line";
+          document.querySelector("#taskChatAcceptanceInput").value = "Stream card appears";
+          document.querySelector("#taskChatProviderStreamInput").checked = true;
+          document.querySelector("#taskChatProviderButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll(".task-chat-execution-card")]
+          .some((card) => card.textContent.includes("Provider Stream")
+            && card.textContent.includes("Streamed task chat reply."))
+        """,
+        timeout_seconds=10.0,
+    )
+    stream_payload = devtools_page.eval("window.__taskChatProviderStreamRequests[0]")
+    assert stream_payload["provider_id"] == "chat-provider"
+    assert stream_payload["model"] == "chat-model"
+    assert stream_payload["stream"] is True
+    assert stream_payload["messages"][0]["content"].startswith("Message: Stream a provider answer.")
+    assert "Streaming context line" in stream_payload["messages"][0]["content"]
+    assert "Stream card appears" in stream_payload["messages"][0]["content"]
+
+
 def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
     ui_live_server,
     devtools_page,

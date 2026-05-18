@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bv Task-Chat Provider Replies
+
+Status: completed for the scoped Task Chat provider-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, explicit provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact chat semantics slice after BL-010bu because provider generation and streaming were exposed in the Providers panel, but Task Chat still had to leave the chat surface to get a provider reply.
+- Completed: Architect/Reviewer kept the slice on existing provider generation, streaming, approval, and network-policy contracts; no backend conversation store, provider transport change, approval bypass, or backend Git expansion was added.
+- Completed: Developer added Task Chat provider reply controls for provider/model selection, optional provider/network approval IDs, and Stream mode using the shared provider catalog.
+- Completed: Developer added an Ask Provider action that builds a prompt from message, context, and acceptance text, calls the existing `/providers/generate` or `/providers/generate/stream` route, renders a provider reply/stream card in the chat transcript, and lets users insert bounded provider output back into Task Chat context.
+- Completed: QA added static UI contract coverage and a browser smoke that verifies catalog population, unsupported-provider stream gating, non-streaming and streaming request payloads, transcript rendering, and Use Response context insertion.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat can ask a selected provider for a non-streaming or streaming reply through existing guarded provider routes.
+- Implemented in this slice: provider replies are rendered as chat transcript cards and can be reused as bounded follow-up context.
+- Implemented in this slice: Task Chat provider controls reuse catalog model population and disable Stream for providers that declare no streaming support.
+- Still out of scope after this slice: durable backend chat transcripts, automatic provider/network approval pairing, autonomous model-backed orchestration loops from chat, provider adapter expansion beyond existing backend contracts, and broader Git hunk apply/revert authority.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 31 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- QA lint passed: `uv run ruff check tests\test_ui.py tests\test_ui_browser.py`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bu Provider Streaming Generation Console
 
 Status: completed for the scoped Providers-panel streaming generation slice; Sprint 16 remains active for richer model-backed chat semantics, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

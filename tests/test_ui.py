@@ -34,6 +34,13 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatHistoryStatus" in response.text
     assert "taskChatSubmitButton" in response.text
     assert "taskChatRunInput" in response.text
+    assert "taskChatProviderPanel" in response.text
+    assert "taskChatProviderInput" in response.text
+    assert "taskChatProviderModelInput" in response.text
+    assert "taskChatProviderStreamInput" in response.text
+    assert "taskChatProviderApprovalInput" in response.text
+    assert "taskChatProviderNetworkApprovalInput" in response.text
+    assert "taskChatProviderButton" in response.text
     assert "orchestrationCreateForm" in response.text
     assert "orchestrationTaskBuilder" in response.text
     assert "orchestrationTaskIdInput" in response.text
@@ -606,6 +613,27 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatPlan" in script_response.text
     assert "renderTaskChatExecution" in script_response.text
     assert "renderTaskChatOrchestration" in script_response.text
+    assert "taskChatProviderPrompt" in script_response.text
+    assert "taskChatProviderPayload" in script_response.text
+    assert "askTaskChatProvider" in script_response.text
+    assert "renderTaskChatProviderGeneration" in script_response.text
+    assert "compactTaskChatProviderGeneration" in script_response.text
+    assert "task-chat-provider-use-response" in script_response.text
+    assert "Provider Reply" in script_response.text
+    assert "Provider Stream" in script_response.text
+    assert 'requested_by: "dashboard-task-chat"' in script_response.text
+    assert 'api("/providers/generate", { method: "POST", body: providerPayload })' in (
+        script_response.text
+    )
+    assert "await readProviderGenerationStream(providerPayload)" in script_response.text
+    assert re.search(
+        r"updateProviderModelOptions\(\s*"
+        r'"#taskChatProviderInput",\s*'
+        r'"#taskChatProviderModelInput",\s*'
+        r'"#taskChatProviderModelOptions",\s*'
+        r'"#taskChatProviderStreamInput"',
+        script_response.text,
+    )
     assert "taskChatExecutionRecord" in script_response.text
     assert "taskPlanOrchestrationPayload" in script_response.text
     assert "taskRunSummaryLine" in script_response.text
@@ -624,6 +652,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "runTaskPlan" in script_response.text
     assert 'qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage)' in (
         script_response.text
+    )
+    assert 'qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider)' in (
+        script_response.text
+    )
+    assert (
+        'qs("#taskChatProviderInput").addEventListener("change", '
+        "updateTaskChatProviderModelOptions)" in script_response.text
     )
     assert 'api("/tasks/plan", { method: "POST", body: payload })' in script_response.text
     assert 'api("/filesystem/list"' in script_response.text

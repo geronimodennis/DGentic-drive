@@ -641,6 +641,40 @@ function taskChatPayload() {
   };
 }
 
+function taskChatProviderPrompt(payload) {
+  const lines = [`Message: ${payload.objective}`];
+  if (payload.constraints.length) {
+    lines.push("", "Context:", ...payload.constraints);
+  }
+  if (payload.acceptance_criteria.length) {
+    lines.push("", "Acceptance:", ...payload.acceptance_criteria);
+  }
+  return lines.join("\n").trim();
+}
+
+function taskChatProviderPayload() {
+  const chatPayload = taskChatPayload();
+  const providerId = qs("#taskChatProviderInput").value.trim();
+  const model = qs("#taskChatProviderModelInput").value.trim();
+  if (!chatPayload.objective) {
+    throw new Error("Message is required.");
+  }
+  if (!providerId || !model) {
+    throw new Error("Provider ID and model are required.");
+  }
+  const payload = {
+    provider_id: providerId,
+    model,
+    messages: [{ role: "user", content: taskChatProviderPrompt(chatPayload) }],
+    stream: qs("#taskChatProviderStreamInput").checked,
+    requested_by: "dashboard-task-chat",
+    timeout_seconds: 60,
+  };
+  appendOptionalText(payload, "approval_id", "#taskChatProviderApprovalInput");
+  appendOptionalText(payload, "network_approval_id", "#taskChatProviderNetworkApprovalInput");
+  return { chatPayload, providerPayload: payload };
+}
+
 function isAuthorizationError(result) {
   return /^(401|403)\b/.test(String(result?.error || ""));
 }
@@ -912,6 +946,28 @@ function boundedStringList(values, limit = 8, itemLimit = 280) {
     .filter(Boolean);
 }
 
+function finiteNumberOrNull(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function compactNumericMetadata(metadata, limit = 12) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return {};
+  }
+  const compact = {};
+  for (const [key, value] of Object.entries(metadata).slice(0, limit)) {
+    const numberValue = Number(value);
+    if (Number.isFinite(numberValue)) {
+      compact[boundedString(key, 120)] = numberValue;
+    }
+  }
+  return compact;
+}
+
 function compactTaskChatStepResult(result) {
   const safeResult = result && typeof result === "object" ? result : {};
   const safeOutput = safeResult.output && typeof safeResult.output === "object" ? safeResult.output : {};
@@ -1005,6 +1061,26 @@ function compactTaskChatOrchestrationRun(run) {
   };
 }
 
+function compactTaskChatProviderGeneration(result) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  return {
+    provider_id: boundedString(result.provider_id, 128),
+    model: boundedString(result.model, 256),
+    streamed: Boolean(result.streamed),
+    content: boundedString(result.content, 6000),
+    duration_ms: finiteNumberOrNull(result.duration_ms),
+    estimated_cost_usd: finiteNumberOrNull(result.estimated_cost_usd),
+    usage_metadata: compactNumericMetadata(result.usage_metadata),
+    finish_reasons: boundedStringList(result.finish_reasons, 8, 120),
+    stream_event_count: Number.isFinite(Number(result.stream_event_count))
+      ? Number(result.stream_event_count)
+      : 0,
+    error: boundedString(result.error, 800),
+  };
+}
+
 function compactTaskChatMessage(message, { restored = false } = {}) {
   if (!message || typeof message !== "object") {
     return null;
@@ -1027,6 +1103,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.orchestration) {
     compact.orchestration = compactTaskChatOrchestrationRun(message.orchestration);
+  }
+  if (message.providerGeneration) {
+    compact.providerGeneration = compactTaskChatProviderGeneration(message.providerGeneration);
   }
   if (restored) {
     compact.restored = true;
@@ -1171,6 +1250,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.orchestration) {
     renderTaskChatOrchestration(item, message.orchestration);
+  }
+  if (message.providerGeneration) {
+    renderTaskChatProviderGeneration(item, message.providerGeneration);
   }
   if (message.run) {
     renderTaskRunResult(item, message.run);
@@ -1318,6 +1400,39 @@ function renderTaskChatOrchestration(target, run) {
   target.append(card);
 }
 
+function renderTaskChatProviderGeneration(target, result) {
+  const card = make("div", "task-chat-execution-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", result.streamed ? "Provider Stream" : "Provider Reply"));
+  copy.append(make("div", "item-meta", `${result.provider_id || "-"} / ${result.model || "-"}`));
+  const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Response");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-chat-provider-use-response";
+  contextButton.disabled = !result.content;
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext("Provider reply", providerGenerationContextLines(result)),
+  );
+  actions.append(statusChip(result.error ? "failed" : "ok"), contextButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Stream", result.streamed ? "Yes" : "No");
+  appendKeyValue(grid, "Duration", `${result.duration_ms ?? "-"} ms`);
+  appendKeyValue(grid, "Usage", compactCounts(result.usage_metadata || {}));
+  appendKeyValue(grid, "Finish", result.finish_reasons?.length ? result.finish_reasons.join(", ") : "-");
+  card.append(grid);
+  if (result.error) {
+    card.append(statusBox("Provider error", result.error, "failed"));
+  }
+  const content = make("pre", "provider-generation-content");
+  content.textContent = boundedString(result.content || "", 2400) || "No content returned.";
+  card.append(content);
+  target.append(card);
+}
+
 function renderTaskChatExecution(target, execution) {
   const card = make("div", "task-chat-execution-card");
   const plan = execution.plan || {};
@@ -1426,6 +1541,55 @@ async function createTaskChatOrchestration(plan) {
     updateTaskChatMessage(creatingMessage.clientId, {
       role: "agent",
       title: "Orchestration create failed",
+      detail: error.message,
+      state: "failed",
+    });
+    showToast(error.message);
+  }
+}
+
+async function askTaskChatProvider() {
+  let request;
+  try {
+    request = taskChatProviderPayload();
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  const { chatPayload, providerPayload } = request;
+  appendTaskChatMessage({
+    role: "user",
+    title: "You",
+    detail: chatPayload.objective,
+    state: providerPayload.stream ? "stream" : "generate",
+  });
+  const runningMessage = appendTaskChatMessage({
+    role: "agent",
+    title: providerPayload.stream ? "Streaming provider reply" : "Asking provider",
+    detail: `${providerPayload.provider_id} / ${providerPayload.model}`,
+    state: "running",
+  });
+  try {
+    const result = providerPayload.stream
+      ? providerGenerationStreamResult(
+          providerPayload,
+          await readProviderGenerationStream(providerPayload),
+        )
+      : await api("/providers/generate", { method: "POST", body: providerPayload });
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: providerPayload.stream ? "Provider stream completed" : "Provider reply",
+      detail: `${result.provider_id || providerPayload.provider_id} / ${result.model || providerPayload.model}`,
+      state: result.error ? "failed" : "ready",
+      providerGeneration: compactTaskChatProviderGeneration(result),
+    });
+    qs("#taskChatInput").value = "";
+    await Promise.all([loadApprovals(), loadTaskChatContext(), loadLogs()]);
+    showToast(providerPayload.stream ? "Provider stream completed." : "Provider reply received.");
+  } catch (error) {
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: "Provider reply failed",
       detail: error.message,
       state: "failed",
     });
@@ -4798,6 +4962,11 @@ function updateProviderModelOptions(providerSelector, modelSelector, modelOption
 function populateProviderApprovalControls(result) {
   latestProviderCatalog = result.ok ? result.data || [] : [];
   populateProviderControlPair(
+    "#taskChatProviderInput",
+    "#taskChatProviderOptions",
+    updateTaskChatProviderModelOptions,
+  );
+  populateProviderControlPair(
     "#providerApprovalProviderInput",
     "#providerApprovalProviderOptions",
     updateProviderApprovalModelOptions,
@@ -4806,6 +4975,15 @@ function populateProviderApprovalControls(result) {
     "#providerGenerationProviderInput",
     "#providerGenerationProviderOptions",
     updateProviderGenerationModelOptions,
+  );
+}
+
+function updateTaskChatProviderModelOptions() {
+  updateProviderModelOptions(
+    "#taskChatProviderInput",
+    "#taskChatProviderModelInput",
+    "#taskChatProviderModelOptions",
+    "#taskChatProviderStreamInput",
   );
 }
 
@@ -5229,17 +5407,17 @@ function providerGenerationStreamResult(payload, events) {
   return result;
 }
 
-function appendProviderStreamEvent(events, event, preview) {
+function appendProviderStreamEvent(events, event, preview = null) {
   if (!event) {
     return;
   }
   events.push(event);
-  if (event.delta) {
+  if (event.delta && preview) {
     const current = preview.dataset.empty === "true" ? "" : preview.textContent;
     preview.dataset.empty = "false";
     preview.textContent = boundedString(`${current}${event.delta}`, 6000);
   }
-  if (event.error) {
+  if (event.error && preview) {
     const current = preview.dataset.empty === "true" ? "" : preview.textContent;
     preview.dataset.empty = "false";
     preview.textContent = boundedString(
@@ -5249,7 +5427,7 @@ function appendProviderStreamEvent(events, event, preview) {
   }
 }
 
-async function readProviderGenerationStream(payload, preview) {
+async function readProviderGenerationStream(payload, preview = null) {
   const headers = requestHeaders(true);
   headers.Accept = "application/x-ndjson";
   const response = await fetch("/providers/generate/stream", {
@@ -7710,6 +7888,8 @@ function bindEvents() {
   qs("#refreshButton").addEventListener("click", refreshDashboard);
   qs("#loadTasksButton").addEventListener("click", () => Promise.all([loadTasks(), loadTaskChatContext()]));
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
+  qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider);
+  qs("#taskChatProviderInput").addEventListener("change", updateTaskChatProviderModelOptions);
   qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
   loadTaskChatHistory();
   renderTaskChatContextStream();

@@ -655,6 +655,24 @@ textarea {
   min-width: 160px;
 }
 
+.task-chat-provider-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.task-chat-provider-panel[open] {
+  gap: 12px;
+}
+
+.task-chat-provider-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .inline-option {
   display: inline-flex;
   align-items: center;

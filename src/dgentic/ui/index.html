@@ -621,6 +621,92 @@ review</textarea>
               </form>
               <div id="providerApprovalRequestOutput" class="output-region" aria-live="polite"></div>
             </details>
+            <details id="providerGenerationPanel" class="policy-editor">
+              <summary>Provider Generation</summary>
+              <form id="providerGenerationForm" class="stacked-form">
+                <div class="two-column">
+                  <label>
+                    Provider ID
+                    <input id="providerGenerationProviderInput" type="text" maxlength="128" list="providerGenerationProviderOptions" required>
+                    <datalist id="providerGenerationProviderOptions"></datalist>
+                  </label>
+                  <label>
+                    Model
+                    <input id="providerGenerationModelInput" type="text" maxlength="256" list="providerGenerationModelOptions" placeholder="gpt-browser" required>
+                    <datalist id="providerGenerationModelOptions"></datalist>
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Message Role
+                    <select id="providerGenerationRoleInput">
+                      <option value="user">User</option>
+                      <option value="system">System</option>
+                      <option value="developer">Developer</option>
+                      <option value="assistant">Assistant</option>
+                      <option value="tool">Tool</option>
+                    </select>
+                  </label>
+                  <label>
+                    Requested By
+                    <input id="providerGenerationRequesterInput" type="text" maxlength="256" value="dashboard-provider-generation">
+                  </label>
+                </div>
+                <label>
+                  Message
+                  <textarea id="providerGenerationMessageInput" rows="4" maxlength="100000" required></textarea>
+                </label>
+                <div class="two-column">
+                  <label>
+                    Approval ID
+                    <input id="providerGenerationApprovalInput" type="text" maxlength="256" placeholder="provider-approval-...">
+                  </label>
+                  <label>
+                    Network Approval ID
+                    <input id="providerGenerationNetworkApprovalInput" type="text" maxlength="256" placeholder="network-approval-...">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Temperature
+                    <input id="providerGenerationTemperatureInput" type="number" min="0" max="2" step="0.1">
+                  </label>
+                  <label>
+                    Max Tokens
+                    <input id="providerGenerationMaxTokensInput" type="number" min="1" max="200000">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Timeout Seconds
+                    <input id="providerGenerationTimeoutInput" type="number" min="1" max="600" step="1" value="60">
+                  </label>
+                  <label>
+                    Task ID
+                    <input id="providerGenerationTaskInput" type="text" maxlength="256">
+                  </label>
+                </div>
+                <div class="two-column">
+                  <label>
+                    Agent ID
+                    <input id="providerGenerationAgentInput" type="text" maxlength="256">
+                  </label>
+                  <label>
+                    Agent Role
+                    <input id="providerGenerationAgentRoleInput" type="text" maxlength="256">
+                  </label>
+                </div>
+                <label>
+                  Options JSON
+                  <textarea id="providerGenerationOptionsInput" rows="4" spellcheck="false" placeholder='{"top_p": 0.9}'></textarea>
+                </label>
+                <button id="providerGenerationSubmitButton" type="submit" class="primary-button">
+                  <span class="button-icon" aria-hidden="true">G</span>
+                  <span>Run Provider Generation</span>
+                </button>
+              </form>
+              <div id="providerGenerationOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div id="providerList" class="compact-list"></div>
             <div id="providerHealthOutput" class="output-region" aria-live="polite"></div>
             <details id="toolGovernancePanel" class="policy-editor">

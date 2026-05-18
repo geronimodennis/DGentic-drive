@@ -4751,37 +4751,73 @@ function populateDatalist(selector, values) {
   }
 }
 
-function populateProviderApprovalControls(result) {
-  latestProviderCatalog = result.ok ? result.data || [] : [];
-  populateDatalist(
-    "#providerApprovalProviderOptions",
-    latestProviderCatalog.map((provider) => provider.id),
+function preferredProviderCatalogEntry() {
+  return (
+    latestProviderCatalog.find((provider) => provider.id === "external-openai-compatible") ||
+    latestProviderCatalog.find(
+      (provider) => provider.enabled && provider.permission_mode === "approval_required",
+    ) ||
+    latestProviderCatalog[0] ||
+    null
   );
-  const providerInput = qs("#providerApprovalProviderInput");
-  if (!providerInput.value && latestProviderCatalog.length) {
-    const preferred =
-      latestProviderCatalog.find((provider) => provider.id === "external-openai-compatible") ||
-      latestProviderCatalog.find(
-        (provider) => provider.enabled && provider.permission_mode === "approval_required",
-      ) ||
-      latestProviderCatalog[0];
-    providerInput.value = preferred.id || "";
-  }
-  updateProviderApprovalModelOptions();
 }
 
-function updateProviderApprovalModelOptions() {
-  const providerId = qs("#providerApprovalProviderInput").value.trim();
+function populateProviderControlPair(providerSelector, providerOptionsSelector, updateModelOptions) {
+  populateDatalist(
+    providerOptionsSelector,
+    latestProviderCatalog.map((provider) => provider.id),
+  );
+  const providerInput = qs(providerSelector);
+  if (!providerInput.value && latestProviderCatalog.length) {
+    const preferred = preferredProviderCatalogEntry();
+    providerInput.value = preferred.id || "";
+  }
+  updateModelOptions();
+}
+
+function updateProviderModelOptions(providerSelector, modelSelector, modelOptionsSelector, streamSelector = "") {
+  const providerId = qs(providerSelector).value.trim();
   const provider = latestProviderCatalog.find((candidate) => candidate.id === providerId);
   const models = provider?.model_names || [];
-  const modelInput = qs("#providerApprovalModelInput");
-  populateDatalist("#providerApprovalModelOptions", models);
+  const modelInput = qs(modelSelector);
+  populateDatalist(modelOptionsSelector, models);
   if (models.length && (!modelInput.value || !models.includes(modelInput.value))) {
     modelInput.value = models[0];
   }
-  if (provider?.supports_streaming === false) {
-    qs("#providerApprovalStreamInput").checked = false;
+  if (streamSelector && provider?.supports_streaming === false) {
+    qs(streamSelector).checked = false;
   }
+}
+
+function populateProviderApprovalControls(result) {
+  latestProviderCatalog = result.ok ? result.data || [] : [];
+  populateProviderControlPair(
+    "#providerApprovalProviderInput",
+    "#providerApprovalProviderOptions",
+    updateProviderApprovalModelOptions,
+  );
+  populateProviderControlPair(
+    "#providerGenerationProviderInput",
+    "#providerGenerationProviderOptions",
+    updateProviderGenerationModelOptions,
+  );
+}
+
+function updateProviderApprovalModelOptions() {
+  updateProviderModelOptions(
+    "#providerApprovalProviderInput",
+    "#providerApprovalModelInput",
+    "#providerApprovalModelOptions",
+    "#providerApprovalStreamInput",
+  );
+}
+
+function updateProviderGenerationModelOptions() {
+  updateProviderModelOptions(
+    "#providerGenerationProviderInput",
+    "#providerGenerationModelInput",
+    "#providerGenerationModelOptions",
+  );
 }
 
 function populateToolApprovalControls(result) {
@@ -5027,6 +5063,101 @@ async function createProviderApprovalRequest(event) {
   } catch (error) {
     clear(target);
     target.append(statusBox("Provider approval failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+function providerGenerationPayload() {
+  const providerId = qs("#providerGenerationProviderInput").value.trim();
+  const model = qs("#providerGenerationModelInput").value.trim();
+  const content = qs("#providerGenerationMessageInput").value.trim();
+  if (!providerId || !model || !content) {
+    throw new Error("Provider ID, model, and message are required.");
+  }
+  const payload = {
+    provider_id: providerId,
+    model,
+    messages: [{ role: qs("#providerGenerationRoleInput").value, content }],
+    stream: false,
+    timeout_seconds: Math.trunc(boundedNumber("#providerGenerationTimeoutInput", 60, 1, 600)),
+  };
+  const temperature = optionalNumber("#providerGenerationTemperatureInput");
+  const maxTokens = optionalNumber("#providerGenerationMaxTokensInput");
+  const options = parseJsonObjectInput("#providerGenerationOptionsInput", {});
+  if (temperature !== null) {
+    payload.temperature = Math.min(2, Math.max(0, temperature));
+  }
+  if (maxTokens !== null) {
+    payload.max_tokens = Math.trunc(Math.min(200000, Math.max(1, maxTokens)));
+  }
+  if (Object.keys(options).length) {
+    payload.options = options;
+  }
+  appendOptionalText(payload, "approval_id", "#providerGenerationApprovalInput");
+  appendOptionalText(payload, "network_approval_id", "#providerGenerationNetworkApprovalInput");
+  appendOptionalText(payload, "requested_by", "#providerGenerationRequesterInput");
+  appendOptionalText(payload, "agent_id", "#providerGenerationAgentInput");
+  appendOptionalText(payload, "agent_role", "#providerGenerationAgentRoleInput");
+  appendOptionalText(payload, "task_id", "#providerGenerationTaskInput");
+  return payload;
+}
+
+function providerGenerationContextLines(result) {
+  return [
+    `Provider: ${result.provider_id || "-"}`,
+    `Model: ${result.model || "-"}`,
+    `Duration: ${result.duration_ms ?? "-"} ms`,
+    `Estimated cost: ${result.estimated_cost_usd ?? "-"}`,
+    `Content: ${boundedString(result.content || "", 900) || "-"}`,
+  ];
+}
+
+function renderProviderGenerationResult(target, result) {
+  target.append(statusBox("Provider generation completed", `${result.provider_id} / ${result.model}`, "ok"));
+  const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Response");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "provider-generation-use-response";
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext("Provider generation", providerGenerationContextLines(result)),
+  );
+  actions.append(contextButton);
+  target.append(actions);
+  const grid = make("div", "checkpoint-grid");
+  appendKeyValue(grid, "Provider", result.provider_id || "-");
+  appendKeyValue(grid, "Model", result.model || "-");
+  appendKeyValue(grid, "Duration", `${result.duration_ms ?? "-"} ms`);
+  appendKeyValue(grid, "Estimated cost", result.estimated_cost_usd ?? "-");
+  appendKeyValue(grid, "Usage", compactCounts(result.usage_metadata || {}));
+  target.append(grid);
+  const content = make("pre", "provider-generation-content");
+  content.textContent = boundedString(result.content || "", 6000) || "No content returned.";
+  target.append(content);
+  target.append(jsonBlock(result));
+}
+
+async function runProviderGeneration(event) {
+  event.preventDefault();
+  const target = qs("#providerGenerationOutput");
+  clear(target);
+  let payload;
+  try {
+    payload = providerGenerationPayload();
+  } catch (error) {
+    target.append(statusBox("Provider generation request invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  target.append(statusBox("Running provider generation", `${payload.provider_id} / ${payload.model}`, "running"));
+  try {
+    const result = await api("/providers/generate", { method: "POST", body: payload });
+    clear(target);
+    renderProviderGenerationResult(target, result);
+    await Promise.all([loadApprovals(), loadTaskChatContext(), loadLogs()]);
+    showToast("Provider generation completed.");
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Provider generation failed", error.message, "failed"));
     showToast(error.message);
   }
 }
@@ -7444,6 +7575,8 @@ function bindEvents() {
   qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute);
   qs("#providerApprovalRequestForm").addEventListener("submit", createProviderApprovalRequest);
   qs("#providerApprovalProviderInput").addEventListener("change", updateProviderApprovalModelOptions);
+  qs("#providerGenerationForm").addEventListener("submit", runProviderGeneration);
+  qs("#providerGenerationProviderInput").addEventListener("change", updateProviderGenerationModelOptions);
   qs("#toolApprovalRequestForm").addEventListener("submit", createToolApprovalRequest);
   qs("#networkPolicyCheckForm").addEventListener("submit", checkNetworkPolicy);
   qs("#networkPolicyApprovalButton").addEventListener("click", requestNetworkPolicyApproval);

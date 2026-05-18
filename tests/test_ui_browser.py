@@ -2132,6 +2132,113 @@ def test_browser_provider_runtime_can_create_provider_approval_request(
     )
 
 
+def test_browser_provider_runtime_can_run_bound_provider_generation(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    requested_by = "dashboard-provider-generation"
+    message = "browser provider generation prompt"
+    approval_payload = {
+        "provider_id": PROVIDER_ID,
+        "model": "gpt-browser",
+        "messages": [{"role": "user", "content": message}],
+        "temperature": 0.2,
+        "max_tokens": 32,
+        "timeout_seconds": 60,
+        "options": {"top_p": 0.9},
+        "requested_by": requested_by,
+    }
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/providers/{PROVIDER_ID}/approvals?requested_by={requested_by}",
+        payload=approval_payload,
+    )
+    assert create_status == 201
+    approve_status, _approve_body = _http_json(
+        "POST",
+        f"{base_url}/providers/approvals/{create_body['id']}/approve",
+        payload={"decided_by": "browser-provider-generation-reviewer"},
+    )
+    assert approve_status == 200
+    network_status, network_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals",
+        payload={
+            "url": "https://provider.example.test/v1",
+            "surface": "provider",
+            "action": "generate",
+            "requested_by": requested_by,
+        },
+    )
+    assert network_status == 201
+    network_approve_status, _network_approve_body = _http_json(
+        "POST",
+        f"{base_url}/network/approvals/{network_body['id']}/approve",
+        payload={"decided_by": "browser-provider-generation-reviewer"},
+    )
+    assert network_approve_status == 200
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#providers"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#providerGenerationForm'))")
+    devtools_page.eval(
+        f"""
+        (() => {{
+          document.querySelector("#providerGenerationPanel").open = true;
+          document.querySelector("#providerGenerationProviderInput").value = "{PROVIDER_ID}";
+          document.querySelector("#providerGenerationModelInput").value = "gpt-browser";
+          document.querySelector("#providerGenerationRoleInput").value = "user";
+          document.querySelector("#providerGenerationRequesterInput").value = "{requested_by}";
+          document.querySelector("#providerGenerationMessageInput").value = {json.dumps(message)};
+          document.querySelector("#providerGenerationApprovalInput").value = "{create_body["id"]}";
+          document.querySelector("#providerGenerationNetworkApprovalInput").value =
+            "{network_body["id"]}";
+          document.querySelector("#providerGenerationTemperatureInput").value = "0.2";
+          document.querySelector("#providerGenerationMaxTokensInput").value = "32";
+          document.querySelector("#providerGenerationTimeoutInput").value = "60";
+          document.querySelector("#providerGenerationOptionsInput").value =
+            JSON.stringify({{ top_p: 0.9 }}, null, 2);
+          document.querySelector("#providerGenerationForm").requestSubmit();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#providerGenerationOutput")
+          ?.textContent.includes("Provider generation completed")
+          && document.querySelector("#providerGenerationOutput")
+            ?.textContent.includes("Approved browser provider response.")
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="provider-generation-use-response"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#taskChatContextInput")
+          ?.value.includes("Approved browser provider response.")
+        """
+    )
+
+    review_status, review_body = _http_json(
+        "GET",
+        f"{base_url}/providers/approvals/{create_body['id']}/review",
+    )
+    assert review_status == 200
+    assert review_body["status"] == "executed"
+    network_review_status, network_review_body = _http_json(
+        "GET",
+        f"{base_url}/network/approvals/{network_body['id']}/review",
+    )
+    assert network_review_status == 200
+    assert network_review_body["status"] == "executed"
+
+
 def test_browser_approval_dashboard_can_execute_seeded_tool_approval(
     ui_live_server,
     devtools_page,

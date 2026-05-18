@@ -53,6 +53,14 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "routingLatencyInput" in response.text
     assert "routingCostInput" in response.text
     assert "routingOutput" in response.text
+    assert "providerGenerationPanel" in response.text
+    assert "providerGenerationForm" in response.text
+    assert "providerGenerationProviderInput" in response.text
+    assert "providerGenerationModelInput" in response.text
+    assert "providerGenerationMessageInput" in response.text
+    assert "providerGenerationApprovalInput" in response.text
+    assert "providerGenerationNetworkApprovalInput" in response.text
+    assert "providerGenerationOutput" in response.text
     assert "toolGovernancePanel" in response.text
     assert "toolGovernanceReasonInput" in response.text
     assert "toolGovernanceList" in response.text
@@ -403,6 +411,22 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "provider_id" in script_response.text
     assert "model_name" in script_response.text
     assert "max_cost_usd" in script_response.text
+    assert "providerGenerationPayload" in script_response.text
+    assert "runProviderGeneration" in script_response.text
+    assert "renderProviderGenerationResult" in script_response.text
+    assert "providerGenerationContextLines" in script_response.text
+    assert "provider-generation-use-response" in script_response.text
+    assert 'api("/providers/generate", { method: "POST", body: payload })' in (script_response.text)
+    assert "Provider generation completed" in script_response.text
+    assert "Provider generation failed" in script_response.text
+    assert (
+        'qs("#providerGenerationForm").addEventListener("submit", runProviderGeneration)'
+        in script_response.text
+    )
+    assert (
+        'qs("#providerGenerationProviderInput").addEventListener("change", '
+        "updateProviderGenerationModelOptions)" in script_response.text
+    )
     assert 'qs("#routingPreviewForm").addEventListener("submit", previewProviderRoute)' in (
         script_response.text
     )

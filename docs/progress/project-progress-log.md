@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bp Memory Metadata Quick-Edit Controls
+
+Status: completed for the scoped Reliability-panel metadata edit slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact memory administration slice after BL-010bo because the dashboard already opened memory metadata detail rows and the backend already exposes guarded metadata PATCH semantics.
+- Completed: Architect/Reviewer kept the slice on the existing `PATCH /api/v1/memory/metadata/{id}` contract; no delete UI, lifecycle mutation change, compression change, or new backend authority was added.
+- Completed: Developer added Reliability-panel metadata quick-edit controls for tags, category, description, relevance, and retention policy, with orchestration shared-memory rows rendered read-only because they are service-authored.
+- Completed: QA added static UI contract coverage and browser coverage that seeds editable memory metadata, edits fields through the dashboard, submits the existing PATCH route, and verifies persisted metadata changes.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: editable memory metadata detail rows can patch tags, category, description, relevance score, and retention policy from the Reliability panel.
+- Implemented in this slice: orchestration shared-memory metadata remains read-only in the UI, preserving the backend service-authored shared-memory protections.
+- Implemented in this slice: browser smoke coverage validates the quick-edit flow against a seeded metadata row and the persisted API result.
+- Still out of scope after this slice: metadata delete workflows, scheduled lifecycle/compression jobs, model-backed memory summarization, broader memory administration workflows, and cross-surface memory management.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_memory_metadata_detail_can_patch_editable_fields` with 2 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 22 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bo Git Diff Review Bulk Decision Controls
 
 Status: completed for the scoped checkpoint-bound Git diff review ergonomics slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply controls, and persistent or multi-worker project activation semantics.

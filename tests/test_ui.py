@@ -692,6 +692,21 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'api("/api/v1/tools/registry?limit=50")' in script_response.text
     assert "renderMemoryReliability" in script_response.text
     assert "renderMemoryReliabilityDetail" in script_response.text
+    assert "renderMemoryMetadataEditor" in script_response.text
+    assert "memoryMetadataIsEditable" in script_response.text
+    assert "memoryMetadataEditorPayload" in script_response.text
+    assert "saveMemoryMetadataEdit" in script_response.text
+    assert "memoryMetadataTagsInput" in script_response.text
+    assert "memoryMetadataCategoryInput" in script_response.text
+    assert "memoryMetadataDescriptionInput" in script_response.text
+    assert "memoryMetadataRelevanceInput" in script_response.text
+    assert "memoryMetadataRetentionInput" in script_response.text
+    assert "memory-metadata-save" in script_response.text
+    assert "Memory metadata read-only" in script_response.text
+    assert "Memory metadata updated." in script_response.text
+    assert "Memory metadata update failed" in script_response.text
+    assert "/api/v1/memory/metadata/${encodeURIComponent(metadataId)}" in script_response.text
+    assert 'method: "PATCH"' in script_response.text
     assert "loadMemoryReliabilityDetail" in script_response.text
     assert "memory-reliability-detail" in script_response.text
     assert "/api/v1/memory/metadata/${encodeURIComponent(metadataId)}" in script_response.text

@@ -5275,7 +5275,113 @@ function renderMemoryReliabilityDetail(target, item) {
   if (item.description) {
     target.append(statusBox("Description", item.description, "ok"));
   }
+  renderMemoryMetadataEditor(target, item);
   target.append(jsonBlock(item));
+}
+
+function memoryMetadataIsEditable(item) {
+  return String(item.category || "").trim().toLowerCase() !== "orchestration_context";
+}
+
+function memoryMetadataEditorPayload() {
+  const category = qs("#memoryMetadataCategoryInput").value.trim();
+  const description = qs("#memoryMetadataDescriptionInput").value.trim();
+  const retentionPolicy = qs("#memoryMetadataRetentionInput").value.trim();
+  return {
+    tags: splitCsv(qs("#memoryMetadataTagsInput").value),
+    category: category || null,
+    description: description || null,
+    relevance_score: boundedNumber("#memoryMetadataRelevanceInput", 0.5, 0, 1),
+    retention_policy: retentionPolicy || "automatic",
+  };
+}
+
+function renderMemoryMetadataEditor(target, item) {
+  const panel = make("details", "policy-editor memory-metadata-editor");
+  panel.append(make("summary", "", "Edit Metadata"));
+  if (!memoryMetadataIsEditable(item)) {
+    panel.append(statusBox("Memory metadata read-only", "Orchestration shared-memory metadata is service-authored.", "blocked"));
+    target.append(panel);
+    return;
+  }
+  const form = make("form", "stacked-form");
+  form.dataset.metadataId = item.id || "";
+  form.append(make("div", "item-meta", "Updates tags, category, description, relevance, and retention policy only."));
+  const firstRow = make("div", "two-column");
+  const tagsLabel = make("label", "", "Tags");
+  const tagsInput = make("input");
+  tagsInput.id = "memoryMetadataTagsInput";
+  tagsInput.type = "text";
+  tagsInput.value = (item.tags || []).join(", ");
+  tagsLabel.append(tagsInput);
+  const categoryLabel = make("label", "", "Category");
+  const categoryInput = make("input");
+  categoryInput.id = "memoryMetadataCategoryInput";
+  categoryInput.type = "text";
+  categoryInput.maxLength = 120;
+  categoryInput.value = item.category || "";
+  categoryLabel.append(categoryInput);
+  firstRow.append(tagsLabel, categoryLabel);
+  form.append(firstRow);
+  const secondRow = make("div", "two-column");
+  const relevanceLabel = make("label", "", "Relevance");
+  const relevanceInput = make("input");
+  relevanceInput.id = "memoryMetadataRelevanceInput";
+  relevanceInput.type = "number";
+  relevanceInput.min = "0";
+  relevanceInput.max = "1";
+  relevanceInput.step = "0.05";
+  relevanceInput.value = String(item.relevance_score ?? 0.5);
+  relevanceLabel.append(relevanceInput);
+  const retentionLabel = make("label", "", "Retention Policy");
+  const retentionInput = make("input");
+  retentionInput.id = "memoryMetadataRetentionInput";
+  retentionInput.type = "text";
+  retentionInput.maxLength = 120;
+  retentionInput.value = item.retention_policy || "automatic";
+  retentionLabel.append(retentionInput);
+  secondRow.append(relevanceLabel, retentionLabel);
+  form.append(secondRow);
+  const descriptionLabel = make("label", "", "Description");
+  const descriptionInput = make("textarea");
+  descriptionInput.id = "memoryMetadataDescriptionInput";
+  descriptionInput.rows = 4;
+  descriptionInput.value = item.description || "";
+  descriptionLabel.append(descriptionInput);
+  form.append(descriptionLabel);
+  const footer = make("div", "form-footer");
+  const save = make("button", "primary-button", "Save Metadata");
+  save.type = "submit";
+  save.dataset.testid = "memory-metadata-save";
+  const cancel = make("button", "link-button", "Cancel");
+  cancel.type = "button";
+  cancel.dataset.testid = "memory-metadata-cancel";
+  cancel.addEventListener("click", () => loadMemoryReliabilityDetail(item.id));
+  footer.append(cancel, save);
+  form.append(footer);
+  form.addEventListener("submit", (event) => saveMemoryMetadataEdit(event, item.id));
+  panel.append(form);
+  target.append(panel);
+}
+
+async function saveMemoryMetadataEdit(event, metadataId) {
+  event.preventDefault();
+  const target = qs("#memoryReliabilityDetail");
+  const payload = memoryMetadataEditorPayload();
+  target.append(statusBox("Saving memory metadata", metadataId, "running"));
+  try {
+    const item = await api(`/api/v1/memory/metadata/${encodeURIComponent(metadataId)}`, {
+      method: "PATCH",
+      body: payload,
+    });
+    await loadReliability();
+    clear(target);
+    renderMemoryReliabilityDetail(target, item);
+    showToast("Memory metadata updated.");
+  } catch (error) {
+    target.append(statusBox("Memory metadata update failed", error.message, "failed"));
+    showToast(error.message);
+  }
 }
 
 async function loadMemoryReliabilityDetail(metadataId) {

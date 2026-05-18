@@ -752,6 +752,92 @@ def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
     assert detail_body["lifecycle_reason"] == "Memory is expired and eligible for soft pruning."
 
 
+def test_browser_memory_metadata_detail_can_patch_editable_fields(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/api/v1/memory/metadata",
+        payload={
+            "entity_type": "memory",
+            "entity_id": "browser-memory-edit",
+            "tags": ["before-edit"],
+            "category": "ui-memory-edit",
+            "description": "Editable memory before browser smoke.",
+            "relevance_score": 0.25,
+            "retention_policy": "automatic",
+        },
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#reliability"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityList")?.textContent
+          .includes("browser-memory-edit")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#memoryReliabilityList .list-item")]
+            .find((candidate) => candidate.textContent.includes("browser-memory-edit"));
+          row.querySelector('[data-testid="memory-reliability-detail"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#memoryReliabilityDetail")?.textContent.includes("Memory detail")
+          && Boolean(document.querySelector("#memoryMetadataTagsInput"))
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector(".memory-metadata-editor").open = true;
+          const values = {
+            memoryMetadataTagsInput: "after-edit, browser",
+            memoryMetadataCategoryInput: "ui-memory-edited",
+            memoryMetadataDescriptionInput: "Editable memory after browser smoke.",
+            memoryMetadataRelevanceInput: "0.85",
+            memoryMetadataRetentionInput: "manual",
+          };
+          for (const [id, value] of Object.entries(values)) {
+            const input = document.querySelector(`#${id}`);
+            input.value = value;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          document.querySelector(".memory-metadata-editor form").requestSubmit();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#toast")?.textContent.includes("Memory metadata updated.")
+          && document.querySelector("#memoryReliabilityDetail")?.textContent
+            .includes("ui-memory-edited")
+        """,
+        timeout_seconds=10.0,
+    )
+
+    detail_status, detail_body = _http_json(
+        "GET",
+        f"{base_url}/api/v1/memory/metadata/{create_body['id']}",
+    )
+    assert detail_status == 200
+    assert detail_body["tags"] == ["after-edit", "browser"]
+    assert detail_body["category"] == "ui-memory-edited"
+    assert detail_body["description"] == "Editable memory after browser smoke."
+    assert detail_body["relevance_score"] == 0.85
+    assert detail_body["retention_policy"] == "manual"
+
+
 def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
     ui_live_server,
     devtools_page,

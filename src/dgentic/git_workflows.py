@@ -32,6 +32,7 @@ MAX_COMMIT_MESSAGE_CHARS = 240
 MAX_PR_TITLE_CHARS = 200
 MAX_PR_BODY_CHARS = 2_000
 MAX_PR_BRANCH_CHARS = 120
+MAX_CHANGE_REVIEW_REASON_CHARS = 500
 GH_TOKEN_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GHE_TOKEN")
 PROTECTED_BRANCHES = frozenset({"main", "master", "production", "release"})
 PROTECTED_FILE_SUFFIXES = frozenset({".key", ".pem", ".pfx", ".p12"})
@@ -245,10 +246,16 @@ class GitChangeReviewDecision(BaseModel):
     scope: Literal["staged", "unstaged"]
     decision: GitChangeReviewDecisionValue = "pending"
     patch_digest: str = Field(min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    reason: str = Field(default="", max_length=MAX_CHANGE_REVIEW_REASON_CHARS)
     paths: list[str] = Field(default_factory=list, max_length=100)
     redacted: bool = False
     truncated: bool = False
     omitted_protected_paths: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def reason_must_be_safe_metadata(cls, value: object) -> str:
+        return _normalize_change_review_reason(value)
 
     @field_validator("paths", "omitted_protected_paths")
     @classmethod
@@ -1943,6 +1950,11 @@ def _normalize_review_paths(paths: list[str]) -> list[str]:
     return normalized
 
 
+def _normalize_change_review_reason(value: object) -> str:
+    normalized = " ".join(str(value or "").split())
+    return redact_sensitive_values(normalized)[:MAX_CHANGE_REVIEW_REASON_CHARS]
+
+
 def _diff_section_paths(section: GitRawDiffSection) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
@@ -1974,6 +1986,7 @@ def _normalize_change_review_decisions(
                 scope=decision.scope,
                 decision=decision.decision,
                 patch_digest=section.patch_digest,
+                reason=decision.reason,
                 paths=_diff_section_paths(section),
                 redacted=section.redacted,
                 truncated=section.truncated,

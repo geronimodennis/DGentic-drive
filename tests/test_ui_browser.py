@@ -1537,11 +1537,29 @@ def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
           && !document.querySelector("#gitApprovalSubmitButton").disabled
         """
     )
+    devtools_page.eval(
+        """
+        (() => {
+          const note = document.querySelector('[data-testid="git-diff-review-note-staged"]');
+          note.value = "Reviewed staged risk.";
+          note.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        gitChangeReviewEvidence(latestGitDiffReview).decisions
+          .find((decision) => decision.scope === "staged")?.reason === "Reviewed staged risk."
+        """
+    )
     devtools_page.eval('document.querySelector(".git-diff-section .danger-button").click()')
     devtools_page.wait_for(
         """
         gitDiffReviewDecisionCounts(latestGitDiffReview).rejected === 1
           && document.querySelector("#gitApprovalSubmitButton").disabled
+          && gitChangeReviewArtifactPayload(latestGitDiffReview).decisions
+            .find((decision) => decision.scope === "staged")?.reason === "Reviewed staged risk."
         """
     )
     devtools_page.eval(
@@ -1551,6 +1569,8 @@ def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
         """
         gitDiffReviewDecisionFilter === "rejected"
           && document.querySelectorAll(".git-diff-section").length === 1
+          && document.querySelector('[data-testid="git-diff-review-note-staged"]')?.value
+            === "Reviewed staged risk."
         """
     )
     devtools_page.eval(
@@ -1560,6 +1580,8 @@ def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
         """
         gitDiffReviewDecisionCounts(latestGitDiffReview).rejected === 0
           && gitDiffReviewDecisionCounts(latestGitDiffReview).pending === 2
+          && gitChangeReviewEvidence(latestGitDiffReview).decisions
+            .find((decision) => decision.scope === "staged")?.reason === "Reviewed staged risk."
           && document.querySelector("#gitDiffReviewOutput")?.textContent
             .includes("No visible diff sections")
           && !document.querySelector("#gitApprovalSubmitButton").disabled
@@ -1574,8 +1596,41 @@ def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
         gitDiffReviewDecisionCounts(latestGitDiffReview).accepted === 2
           && gitDiffReviewDecisionCounts(latestGitDiffReview).pending === 0
           && document.querySelectorAll(".git-diff-section").length === 2
+          && gitChangeReviewArtifactCounts({
+            decisions: gitChangeReviewArtifactPayload(latestGitDiffReview).decisions
+          }).notes === 1
           && document.querySelector("#toast")?.textContent
             .includes("2 visible diff section(s) updated.")
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const artifact = {
+            id: "browser-artifact",
+            checkpoint_digest: latestGitDiffReview.checkpoint_digest,
+            created_at: new Date().toISOString(),
+            decisions: [
+              {
+                scope: "staged",
+                patch_digest: "digest-staged",
+                decision: "rejected",
+                reason: "Restore rejects staged risk."
+              }
+            ]
+          };
+          applyGitChangeReviewArtifact(artifact, latestGitDiffReview);
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionCounts(latestGitDiffReview).rejected === 1
+          && gitChangeReviewEvidence(latestGitDiffReview).decisions
+            .find((decision) => decision.scope === "staged")?.reason
+            === "Restore rejects staged risk."
+          && document.querySelector("#gitApprovalSubmitButton").disabled
         """
     )
 

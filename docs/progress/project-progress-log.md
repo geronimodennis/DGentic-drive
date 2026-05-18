@@ -6,6 +6,35 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bx Git Change-Review Rationale Notes
+
+Status: completed for the scoped metadata-only Git review-rationale slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact AI-change review semantics slice after BL-010bw because checkpoint-bound raw diff review and metadata-only artifacts existed, but reviewers could not attach rationale to accepted or rejected sections.
+- Completed: Architect/Reviewer kept the slice metadata-only and checkpoint-bound; no Git hunk apply/revert, `git add`, branch cleanup, PR metadata expansion, remote fetch, rollback, or broader backend Git mutation authority was added.
+- Completed: Developer added a bounded secret-redacted reviewer `reason` field to Git change-review decisions and preserved it only after fresh checkpoint and section digest validation.
+- Completed: Developer added per-section Review note controls to the dashboard raw diff review UI, included notes in copied evidence and save-artifact payloads, restored notes from matching saved artifacts, and preserved notes across decision filters and bulk visible decisions.
+- Completed: QA added backend contract coverage for note persistence, redaction, length bounding, metadata-only storage, and API list/retrieve behavior.
+- Completed: QA extended static and browser coverage for note controls, evidence serialization, artifact payloads, artifact restore, rejected-section closeout gating, and decision-filter/bulk-decision persistence.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: checkpoint-bound raw Git diff review sections can carry bounded reviewer rationale notes for accepted, rejected, or pending decisions.
+- Implemented in this slice: metadata-only Git change-review artifacts persist sanitized notes together with decisions, derived paths, redaction/truncation flags, and checkpoint binding metadata without storing raw patch bodies.
+- Implemented in this slice: the dashboard can copy rationale-bearing review evidence and restore saved rationale notes only when the artifact still matches the fresh checkpoint digest.
+- Still out of scope after this slice: authoritative Git hunk/file apply or revert, untracked file preview, `git add`, branch cleanup, PR labels/reviewers/assignees/projects/templates, remote fetch freshness, rollback/revert flows, allowed remote/branch policy editors, and deeper Git audit/observability.
+
+Validation:
+- Focused backend validation passed: `uv run pytest -q tests\test_git_workflows.py::test_git_change_review_artifact_persists_metadata_only tests\test_git_workflows.py::test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts tests\test_git_workflows.py::test_git_change_review_artifact_bounds_and_redacts_reviewer_reason` with 3 passed.
+- Focused browser validation passed: `uv run pytest -q tests\test_ui_browser.py::test_browser_git_diff_review_filters_and_bulk_visible_decisions` with 1 passed.
+- Broader touched-file validation passed: `uv run pytest -q tests\test_git_workflows.py tests\test_ui.py tests\test_ui_browser.py` with 92 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010bw Task-Chat Provider Approval Requests
 
 Status: completed for the scoped Task Chat provider-approval request handoff slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies, orchestration creation/context reuse, and approval-review/request/response handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

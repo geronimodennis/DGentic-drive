@@ -905,6 +905,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "gitDiffReviewVisibleSections" in script_response.text
     assert "setGitDiffReviewDecisionFilter" in script_response.text
     assert "setVisibleGitDiffReviewDecisions" in script_response.text
+    assert "gitDiffSectionReviewState" in script_response.text
+    assert "gitDiffSectionDecisionReason" in script_response.text
+    assert "setGitDiffSectionDecisionReason" in script_response.text
     assert "gitChangeReviewEvidence" in script_response.text
     assert "copyGitChangeReviewEvidence" in script_response.text
     assert "gitChangeReviewArtifactPayload" in script_response.text
@@ -917,6 +920,11 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "/cli/git/change-review-artifacts?" in script_response.text
     assert "Save Artifact" in script_response.text
     assert "Saved artifacts" in script_response.text
+    assert "Review note" in script_response.text
+    assert "Reason, risk, or follow-up for this decision" in script_response.text
+    assert "reason: gitDiffSectionDecisionReason(section)" in script_response.text
+    assert "reason: decision.reason" in script_response.text
+    assert "reason: decision.reason ||" in script_response.text
     assert "Stale artifacts cannot unblock Git closeout." in script_response.text
     assert "setGitDiffSectionDecision" in script_response.text
     assert "gitDiffReviewDecisionCounts" in script_response.text
@@ -1085,6 +1093,7 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".git-diff-review" in style_response.text
     assert ".git-diff-section" in style_response.text
     assert ".git-diff-decision-controls" in style_response.text
+    assert ".git-diff-review-note" in style_response.text
     assert ".status-chip.accepted" in style_response.text
     assert ".status-chip.rejected" in style_response.text
     assert ".diff-patch" in style_response.text

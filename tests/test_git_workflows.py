@@ -426,6 +426,7 @@ def test_git_change_review_artifact_persists_metadata_only(git_workspace) -> Non
                     scope="staged",
                     decision="accepted",
                     patch_digest=staged.patch_digest,
+                    reason=f"Reviewer saw API_KEY={raw_secret} and accepts the staged section.",
                     paths=["spoofed TOKEN=path-secret"],
                     redacted=False,
                 )
@@ -441,6 +442,7 @@ def test_git_change_review_artifact_persists_metadata_only(git_workspace) -> Non
 
     assert artifact.checkpoint_digest == checkpoint.checkpoint_digest
     assert artifact.decisions[0].decision == "accepted"
+    assert "Reviewer saw API_KEY=[REDACTED]" in artifact.decisions[0].reason
     assert artifact.decisions[0].paths == ["README.md"]
     assert artifact.decisions[0].redacted is True
     assert raw_secret not in serialized
@@ -483,6 +485,7 @@ def test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts(
                     "scope": "staged",
                     "decision": "rejected",
                     "patch_digest": staged.patch_digest,
+                    "reason": "Missing rollback evidence.",
                     "paths": ["README.md"],
                     "redacted": staged.redacted,
                     "truncated": staged.truncated,
@@ -501,10 +504,59 @@ def test_git_change_review_artifact_api_lists_and_retrieves_saved_artifacts(
     assert create_response.status_code == 201
     assert artifact["checkpoint_digest"] == checkpoint.checkpoint_digest
     assert artifact["decisions"][0]["decision"] == "rejected"
+    assert artifact["decisions"][0]["reason"] == "Missing rollback evidence."
     assert list_response.status_code == 200
     assert [item["id"] for item in list_response.json()] == [artifact["id"]]
     assert get_response.status_code == 200
     assert get_response.json()["id"] == artifact["id"]
+    assert get_response.json()["decisions"][0]["reason"] == "Missing rollback evidence."
+
+
+def test_git_change_review_artifact_bounds_and_redacts_reviewer_reason(
+    git_workspace,
+) -> None:
+    raw_secret = "review-reason-secret-token"
+    git_workspace.joinpath("README.md").write_text(
+        "# Checkpoint\n\nReviewer reason.\n",
+        encoding="utf-8",
+    )
+    _git(git_workspace, "add", "README.md")
+    checkpoint = _checkpoint("commit", git_workspace)
+    review = create_git_raw_diff_review(
+        GitRawDiffReviewRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+        )
+    )
+    staged = next(section for section in review.sections if section.scope == "staged")
+
+    artifact = create_git_change_review_artifact(
+        GitChangeReviewArtifactRequest(
+            action="commit",
+            cwd=git_workspace,
+            checkpoint_digest=checkpoint.checkpoint_digest,
+            test_evidence=["uv run pytest tests/test_git_workflows.py -q"],
+            decisions=[
+                GitChangeReviewDecision(
+                    scope="staged",
+                    decision="rejected",
+                    patch_digest=staged.patch_digest,
+                    reason=f"Reject because API_KEY={raw_secret}. {'x' * 900}",
+                )
+            ],
+        )
+    )
+    stored_reason = artifact.decisions[0].reason
+    serialized = artifact.model_dump_json()
+
+    assert artifact.decisions[0].decision == "rejected"
+    assert len(stored_reason) <= 500
+    assert "Reject because API_KEY=[REDACTED]" in stored_reason
+    assert raw_secret not in stored_reason
+    assert raw_secret not in serialized
+    assert "diff --git" not in serialized
 
 
 def test_git_change_review_artifact_rejects_stale_checkpoint_digest(

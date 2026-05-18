@@ -3960,25 +3960,53 @@ function gitDiffSectionDecisionKey(section) {
   return `${section.scope || "diff"}:${section.patch_digest || section.byte_count || section.returned_byte_count || "empty"}`;
 }
 
+function gitDiffSectionReviewState(section) {
+  return gitDiffReviewDecisions[gitDiffSectionDecisionKey(section)] || {};
+}
+
 function gitDiffSectionDecision(section) {
-  return gitDiffReviewDecisions[gitDiffSectionDecisionKey(section)]?.decision || "pending";
+  return gitDiffSectionReviewState(section).decision || "pending";
+}
+
+function gitDiffSectionDecisionReason(section) {
+  return gitDiffSectionReviewState(section).reason || "";
 }
 
 function setGitDiffSectionDecision(section, decision) {
   const key = gitDiffSectionDecisionKey(section);
-  if (decision === "pending") {
+  const current = gitDiffReviewDecisions[key] || {};
+  const reason = current.reason || "";
+  if (decision === "pending" && !reason) {
     delete gitDiffReviewDecisions[key];
   } else {
     gitDiffReviewDecisions[key] = {
-      decision,
+      decision: decision === "pending" ? "pending" : decision,
       scope: section.scope || "diff",
       patch_digest: section.patch_digest || "",
       decided_at: new Date().toISOString(),
+      reason,
     };
   }
   if (latestGitDiffReview) {
     renderGitDiffReview(qs("#gitDiffReviewOutput"), latestGitDiffReview);
   }
+}
+
+function setGitDiffSectionDecisionReason(section, reason) {
+  const key = gitDiffSectionDecisionKey(section);
+  const current = gitDiffReviewDecisions[key] || {};
+  const normalizedReason = String(reason || "").trim().slice(0, 500);
+  if (!normalizedReason && (!current.decision || current.decision === "pending")) {
+    delete gitDiffReviewDecisions[key];
+    return;
+  }
+  gitDiffReviewDecisions[key] = {
+    decision: current.decision || "pending",
+    scope: section.scope || "diff",
+    patch_digest: section.patch_digest || "",
+    decided_at: current.decided_at || new Date().toISOString(),
+    reason: normalizedReason,
+  };
 }
 
 function gitDiffReviewVisibleSections(review) {
@@ -4001,14 +4029,17 @@ function setVisibleGitDiffReviewDecisions(review, decision) {
   const decidedAt = new Date().toISOString();
   for (const section of sections) {
     const key = gitDiffSectionDecisionKey(section);
-    if (decision === "pending") {
+    const current = gitDiffReviewDecisions[key] || {};
+    const reason = current.reason || "";
+    if (decision === "pending" && !reason) {
       delete gitDiffReviewDecisions[key];
     } else {
       gitDiffReviewDecisions[key] = {
-        decision,
+        decision: decision === "pending" ? "pending" : decision,
         scope: section.scope || "diff",
         patch_digest: section.patch_digest || "",
         decided_at: decidedAt,
+        reason,
       };
     }
   }
@@ -4067,6 +4098,7 @@ function gitChangeReviewEvidence(review) {
     decisions: (review.sections || []).map((section) => ({
       scope: section.scope || "diff",
       decision: gitDiffSectionDecision(section),
+      reason: gitDiffSectionDecisionReason(section),
       patch_digest: section.patch_digest || "",
       paths: gitDiffSectionPaths(section),
       redacted: Boolean(section.redacted),
@@ -4086,6 +4118,7 @@ function gitChangeReviewArtifactPayload(review) {
     decisions: evidence.decisions.map((decision) => ({
       scope: decision.scope,
       decision: decision.decision,
+      reason: decision.reason,
       patch_digest: decision.patch_digest,
       paths: decision.paths,
       redacted: decision.redacted,
@@ -4142,12 +4175,15 @@ async function saveGitChangeReviewArtifact(review) {
 }
 
 function gitChangeReviewArtifactCounts(artifact) {
-  const counts = { accepted: 0, rejected: 0, pending: 0 };
+  const counts = { accepted: 0, rejected: 0, pending: 0, notes: 0 };
   for (const decision of artifact.decisions || []) {
     if (decision.decision === "accepted" || decision.decision === "rejected") {
       counts[decision.decision] += 1;
     } else {
       counts.pending += 1;
+    }
+    if (decision.reason) {
+      counts.notes += 1;
     }
   }
   return counts;
@@ -4162,7 +4198,7 @@ function applyGitChangeReviewArtifact(artifact, review) {
   gitDiffReviewDecisions = {};
   for (const decision of artifact.decisions || []) {
     const key = `${decision.scope || "diff"}:${decision.patch_digest || "empty"}`;
-    if (!sectionKeys.has(key) || decision.decision === "pending") {
+    if (!sectionKeys.has(key) || (decision.decision === "pending" && !decision.reason)) {
       continue;
     }
     gitDiffReviewDecisions[key] = {
@@ -4171,6 +4207,7 @@ function applyGitChangeReviewArtifact(artifact, review) {
       patch_digest: decision.patch_digest || "",
       decided_at: artifact.created_at || new Date().toISOString(),
       artifact_id: artifact.id,
+      reason: decision.reason || "",
     };
   }
   renderGitDiffReview(qs("#gitDiffReviewOutput"), review);
@@ -4203,6 +4240,7 @@ function renderGitChangeReviewArtifacts(target, review) {
     chips.append(statusChip(`accepted ${counts.accepted}`, counts.accepted ? "accepted" : ""));
     chips.append(statusChip(`rejected ${counts.rejected}`, counts.rejected ? "rejected" : ""));
     chips.append(statusChip(`pending ${counts.pending}`, counts.pending ? "pending" : "ok"));
+    chips.append(statusChip(`notes ${counts.notes}`, counts.notes ? "pending" : "ok"));
     copy.append(chips);
     const apply = make("button", "link-button", "Apply");
     apply.type = "button";
@@ -4315,6 +4353,17 @@ function renderGitDiffSection(target, section) {
     }
     box.append(omitted);
   }
+  const note = make("label", "git-diff-review-note");
+  note.textContent = "Review note";
+  const noteInput = make("textarea");
+  noteInput.rows = 2;
+  noteInput.maxLength = 500;
+  noteInput.placeholder = "Reason, risk, or follow-up for this decision";
+  noteInput.value = gitDiffSectionDecisionReason(section);
+  noteInput.dataset.testid = `git-diff-review-note-${section.scope || "diff"}`;
+  noteInput.addEventListener("input", () => setGitDiffSectionDecisionReason(section, noteInput.value));
+  note.append(noteInput);
+  box.append(note);
   const controls = make("div", "git-diff-decision-controls");
   const accept = make("button", "success-button", "Accept");
   accept.type = "button";

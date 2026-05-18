@@ -7,9 +7,9 @@ Use this page as the current PM control panel. It does not replace the backlog o
 ## Current Sprint
 
 - Active sprint: Sprint 16, Cross-Platform UI And Approval Dashboard.
-- Latest stable implementation checkpoint: BL-010bw task-chat provider approval requests are implemented and validation-clean.
-- Latest completed slice: BL-010bw, Task Chat can now create a pending provider approval request from the same provider/model/stream and message/context/acceptance prompt used by Ask Provider, omit generation-only approval IDs from the approval payload, render the approval in the chat transcript, reuse the approval ID, and open the exact safe provider review in the unified inbox.
-- Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution, provider replies, orchestration creation, reusable orchestration context, and approval-review/request/response handoff, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
+- Latest stable implementation checkpoint: BL-010bx Git change-review rationale notes are implemented and validation-clean.
+- Latest completed slice: BL-010bx, checkpoint-bound raw Git diff review sections now support bounded reviewer rationale notes, include those notes in copied review evidence and metadata-only saved artifacts, restore notes for matching fresh checkpoints, redact secret-shaped note content, and keep raw patch bodies out of saved artifact state.
+- Current objective: continue deepening the Sprint 16 user-facing UI, with richer unified chat semantics beyond deterministic execution, provider replies, orchestration creation, reusable orchestration context, and approval-review/request/response handoff, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply and metadata quick-edit controls, and persistent or multi-worker project activation semantics, while keeping remaining Sprint 15 backend security and Git expansion work deferred, not cancelled.
 
 ## Priority Order
 
@@ -33,6 +33,7 @@ Current implemented Git foundation:
 - Checkpoint-bound commit, push, and PR approval creation.
 - Direct checkpoint-bound local commit, configured-upstream push, and GitHub PR creation runners.
 - Dashboard review-to-run controls for the direct checkpoint-bound Git runners.
+- Metadata-only AI-change review artifacts with per-section reviewer rationale notes.
 - Authenticated actor binding, protected branch/file checks, secret-shaped staged-addition checks, workflow revalidation, and safe audit metadata.
 
 Remaining Git roadmap:
@@ -59,7 +60,7 @@ Sprint 15 is closed at the BL-009av safe backend security checkpoint. These item
 ## Sprint Placement
 
 - Sprint 15: production identity, secrets, network guardrails, and the already implemented backend Git safety foundation. Closed at BL-009av for the current backend security checkpoint.
-- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, provider generation, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bw implemented.
+- Sprint 16: cross-platform UI and approval dashboard, including chat, project add/open, file explorer, code editor, orchestration task/execution detail, AI-change review, Git checkpoint, approval, run history, provider generation, blocker, freshness, approval contract coverage, and responsive/browser-validation surfaces. Active with BL-010a through BL-010bx implemented.
 - Sprint 17: VS Code chat extension and dedicated CLI client, including native VS Code workspace-folder `rootDir` binding, Explorer/editor integration, AI-change diff review, Git checkpoint, commit, push, PR, review, and status flows.
 - Sprint 18: deployment, CI/CD, observability, rollback, and Git usage telemetry.
 - Sprint 19: provider-specific external adapter expansion after a concrete provider target is selected.

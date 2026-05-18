@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cd Provider Routing Settings Review
+
+Status: completed for the scoped provider-routing settings review slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session context insertion beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact settings/routing slice because `/settings/effective` already exposed `provider_role_routing`, but operators only saw it as raw JSON.
+- Completed: Architect/Reviewer kept the slice read-only on existing effective-settings data; no backend routing mutation, provider generation, approval bypass, or Git backend expansion was added.
+- Completed: Developer added parsed provider-role routing cards to the Settings panel.
+- Completed: Developer added Use In Task Chat and Preview Role controls that fill existing Task Chat provider/model/routing role fields or existing Providers routing-preview role input and open the target panels.
+- Completed: QA added static UI assertions and browser smoke coverage for managed routing settings, rendered cards, panel-open behavior, and both control handoffs.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: configured `provider_role_routing` JSON is parsed client-side into role/provider/model cards in the Settings panel.
+- Implemented in this slice: routing cards can apply provider/model/role values to existing Task Chat controls and open the provider panel without starting generation or creating approvals.
+- Implemented in this slice: routing cards can seed the Providers routing-preview role input and open the preview panel without changing backend routing policy.
+- Still out of scope after this slice: editing `provider_role_routing`, managed settings mutation, automatic provider execution, provider/network approval pairing, provider adapter expansion, and backend Git workflow expansion.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Formatting validation passed: `uv run ruff format --check .` with 76 files already formatted.
+- Lint validation passed: `uv run ruff check .`.
+- Whitespace validation passed: `git diff --check`.
+- Focused UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 35 passed.
+
 ### Sprint 16 BL-010cc Activity And Session Workbench
 
 Status: completed for the scoped Activity/session workbench slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session context insertion beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

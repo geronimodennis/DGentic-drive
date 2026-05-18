@@ -5290,7 +5290,101 @@ function renderSettingsReview(settingsView, target) {
   renderChipList(summary, "Managed fields", settingsView.managed_fields || [], "managed");
   renderChipList(summary, "Policy locks", managedLocks, "locked");
   target.append(summary);
+  renderProviderRoutingSettings(target, settingMap.get("provider_role_routing"));
   renderSettingsGroups(target, settings);
+}
+
+function providerRoutingEntries(setting) {
+  const rawValue = typeof setting?.value === "string" ? setting.value.trim() : "";
+  if (!rawValue) {
+    return { entries: [], error: "" };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch (_error) {
+    return { entries: [], error: "Provider role routing is not valid JSON." };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { entries: [], error: "Provider role routing must be a JSON object." };
+  }
+  const entries = [];
+  for (const [role, route] of Object.entries(parsed).slice(0, 24)) {
+    if (!route || typeof route !== "object" || Array.isArray(route)) {
+      continue;
+    }
+    const providerId = String(route.provider_id || "").trim();
+    const model = String(route.model || "").trim();
+    if (!providerId || !model) {
+      continue;
+    }
+    const normalizedRole = String(role || "").trim().toLowerCase();
+    if (!normalizedRole) {
+      continue;
+    }
+    entries.push({
+      role: normalizedRole,
+      provider_id: providerId,
+      model,
+      source: setting?.source || "default",
+    });
+  }
+  return { entries, error: "" };
+}
+
+function renderProviderRoutingSettings(target, setting) {
+  const review = make("div", "settings-routing-review");
+  review.append(make("div", "item-title", "Provider Role Routing"));
+  const parsed = providerRoutingEntries(setting);
+  if (parsed.error) {
+    review.append(statusBox("Routing setting invalid", parsed.error, "blocked"));
+    target.append(review);
+    return;
+  }
+  if (!parsed.entries.length) {
+    review.append(statusBox("No configured role routes", "Provider role routing is empty.", "pending"));
+    target.append(review);
+    return;
+  }
+  const list = make("div", "settings-routing-list");
+  for (const route of parsed.entries) {
+    const item = make("div", "settings-routing-card");
+    const copy = make("div");
+    copy.append(make("div", "item-title", route.role || "role"));
+    copy.append(make("div", "item-meta", `${route.provider_id} / ${route.model}`));
+    copy.append(statusChip(route.source));
+    const actions = make("div", "settings-routing-actions");
+    const useButton = make("button", "link-button", "Use In Task Chat");
+    useButton.type = "button";
+    useButton.dataset.testid = "provider-routing-use-task-chat";
+    useButton.addEventListener("click", () => applyProviderRoutingSettingToTaskChat(route));
+    const previewButton = make("button", "link-button", "Preview Role");
+    previewButton.type = "button";
+    previewButton.dataset.testid = "provider-routing-preview-role";
+    previewButton.addEventListener("click", () => applyProviderRoutingSettingToPreview(route));
+    actions.append(useButton, previewButton);
+    item.append(copy, actions);
+    list.append(item);
+  }
+  review.append(list);
+  target.append(review);
+}
+
+function applyProviderRoutingSettingToTaskChat(route) {
+  qs("#taskChatProviderPanel").open = true;
+  qs("#taskChatProviderInput").value = route.provider_id || "";
+  qs("#taskChatProviderInput").dispatchEvent(new Event("change", { bubbles: true }));
+  qs("#taskChatProviderModelInput").value = route.model || "";
+  qs("#taskChatRoutingRoleInput").value = route.role || "";
+  window.location.hash = "tasks";
+  showToast("Provider route applied to Task Chat.");
+}
+
+function applyProviderRoutingSettingToPreview(route) {
+  qs("#routingPreviewPanel").open = true;
+  qs("#routingRoleInput").value = route.role || "";
+  window.location.hash = "providers";
+  showToast("Routing role ready for preview.");
 }
 
 function renderChipList(target, title, values, chipClass) {

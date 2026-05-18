@@ -753,6 +753,118 @@ def test_browser_activity_session_workbench_captures_filters_and_reuses_context(
     )
 
 
+def test_browser_settings_provider_role_routing_cards_apply_controls(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    routing_value = json.dumps(
+        {
+            "reviewer": {
+                "provider_id": "external-openai-compatible",
+                "model": "gpt-browser",
+            },
+            "planner": {
+                "provider_id": "external-openai-compatible",
+                "model": "gpt-browser",
+            },
+        }
+    )
+    settings_payload = {
+        "managed_settings_enabled": True,
+        "managed_settings_file": "managed-routing.json",
+        "managed_settings_digest": "abcdef1234567890",
+        "managed_fields": ["provider_role_routing"],
+        "settings": [
+            {
+                "name": "provider_role_routing",
+                "source": "managed",
+                "value": routing_value,
+                "redacted": False,
+            },
+            {
+                "name": "root_dir",
+                "source": "default",
+                "value": "C:/workspace/browser",
+                "redacted": False,
+            },
+            {
+                "name": "effective_auth_enabled",
+                "source": "derived",
+                "value": False,
+                "redacted": False,
+            },
+        ],
+    }
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#settings"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#settingsOutput'))")
+    devtools_page.eval(
+        f"""
+        (async () => {{
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = async (input, init = {{}}) => {{
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/settings/effective")) {{
+              return new Response(
+                JSON.stringify({json.dumps(settings_payload)}),
+                {{ status: 200, headers: {{ "Content-Type": "application/json" }} }},
+              );
+            }}
+            return originalFetch(input, init);
+          }};
+          await loadSettings();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const text = document.querySelector("#settingsOutput")?.textContent || "";
+          return text.includes("Provider Role Routing")
+            && text.includes("reviewer")
+            && text.includes("external-openai-compatible")
+            && Boolean(document.querySelector('[data-testid="provider-routing-use-task-chat"]'))
+            && Boolean(document.querySelector('[data-testid="provider-routing-preview-role"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="provider-routing-use-task-chat"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        window.location.hash === "#tasks"
+          && document.querySelector("#taskChatProviderPanel")?.open === true
+          && document.querySelector("#taskChatProviderInput")?.value
+            === "external-openai-compatible"
+          && document.querySelector("#taskChatProviderModelInput")?.value === "gpt-browser"
+          && document.querySelector("#taskChatRoutingRoleInput")?.value === "reviewer"
+        """,
+        timeout_seconds=10.0,
+    )
+
+    devtools_page.eval(
+        """
+        document.querySelector('[data-testid="provider-routing-preview-role"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        window.location.hash === "#providers"
+          && document.querySelector("#routingPreviewPanel")?.open === true
+          && document.querySelector("#routingRoleInput")?.value === "reviewer"
+        """,
+        timeout_seconds=10.0,
+    )
+
+
 def test_browser_task_chat_can_plan_run_and_insert_execution_evidence(
     ui_live_server,
     devtools_page,

@@ -1116,6 +1116,7 @@ textarea {
 }
 
 .settings-review-summary,
+.settings-routing-review,
 .settings-groups,
 .settings-group-list {
   display: grid;
@@ -1124,8 +1125,33 @@ textarea {
 }
 
 .settings-review-summary,
+.settings-routing-review,
 .settings-groups {
   grid-column: 1 / -1;
+}
+
+.settings-routing-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-routing-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.settings-routing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .settings-group {
@@ -1435,6 +1461,7 @@ textarea {
   .recipe-parameter-grid,
   .recipe-parameter-row,
   .settings-grid,
+  .settings-routing-list,
   .settings-group-list,
   .approval-summary-grid,
   .agent-brief-grid,
@@ -1453,6 +1480,10 @@ textarea {
   }
 
   .approval-item {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-routing-card {
     grid-template-columns: 1fr;
   }
 

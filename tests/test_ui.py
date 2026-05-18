@@ -725,6 +725,13 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "updateTaskChatMessage" in script_response.text
     assert "task-chat-execution-use-evidence" in script_response.text
     assert "task-plan-create-orchestration" in script_response.text
+    assert "providerRoutingEntries" in script_response.text
+    assert "renderProviderRoutingSettings" in script_response.text
+    assert "applyProviderRoutingSettingToTaskChat" in script_response.text
+    assert "applyProviderRoutingSettingToPreview" in script_response.text
+    assert "provider-routing-use-task-chat" in script_response.text
+    assert "provider-routing-preview-role" in script_response.text
+    assert 'settingMap.get("provider_role_routing")' in script_response.text
     assert "Create Orchestration" in script_response.text
     assert 'api("/tasks/orchestrations", { method: "POST", body: payload })' in (
         script_response.text
@@ -1152,6 +1159,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".recipe-action-buttons" in style_response.text
     assert ".approval-list" in style_response.text
     assert ".settings-review-summary" in style_response.text
+    assert ".settings-routing-review" in style_response.text
+    assert ".settings-routing-card" in style_response.text
+    assert ".settings-routing-actions" in style_response.text
     assert ".settings-group-list" in style_response.text
     assert ".setting-source-row" in style_response.text
     assert ".policy-review-section" in style_response.text

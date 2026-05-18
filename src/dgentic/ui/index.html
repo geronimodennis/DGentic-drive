@@ -316,6 +316,34 @@ review</textarea>
                 </button>
               </div>
             </form>
+            <details id="projectEditPanel" class="policy-editor" hidden>
+              <summary>Edit Project</summary>
+              <form id="projectEditForm" class="stacked-form">
+                <label>
+                  Project ID
+                  <input id="projectEditIdInput" type="text" readonly>
+                </label>
+                <label>
+                  Name
+                  <input id="projectEditNameInput" type="text" maxlength="120" required>
+                </label>
+                <label>
+                  Status
+                  <select id="projectEditStatusInput">
+                    <option value="available">Available</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <div class="button-row">
+                  <button id="projectEditCancelButton" type="button" class="link-button">Cancel</button>
+                  <button type="submit" class="primary-button">
+                    <span class="button-icon" aria-hidden="true">S</span>
+                    Save Project
+                  </button>
+                </div>
+              </form>
+              <div id="projectEditOutput" class="output-region" aria-live="polite"></div>
+            </details>
             <div id="projectRegistryOutput" class="compact-list"></div>
           </article>
 

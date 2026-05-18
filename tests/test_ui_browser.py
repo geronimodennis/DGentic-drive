@@ -416,6 +416,126 @@ def devtools_page(tmp_path):
             process.wait(timeout=5)
 
 
+def test_browser_project_panel_can_edit_archive_and_restore_registered_project(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, root_dir = ui_live_server
+    project_dir = root_dir / "browser-project-alt"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("# Browser project\n", encoding="utf-8")
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#project-context"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#projectForm'))")
+    devtools_page.eval(
+        f"""
+        (() => {{
+          document.querySelector("#projectNameInput").value = "Browser Project";
+          document.querySelector("#projectRootInput").value = {json.dumps(str(project_dir))};
+          document.querySelector("#projectForm").requestSubmit();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+          .some((row) => row.textContent.includes("Browser Project"))
+        """,
+        timeout_seconds=10.0,
+    )
+
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+            .find((candidate) => candidate.textContent.includes("Browser Project"));
+          row.querySelector('[data-testid="project-edit"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        !document.querySelector("#projectEditPanel").hidden
+          && document.querySelector("#projectEditNameInput")?.value === "Browser Project"
+        """
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#projectEditNameInput").value = "Browser Project Renamed";
+          document.querySelector("#projectEditStatusInput").value = "available";
+          document.querySelector("#projectEditForm").requestSubmit();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#projectEditOutput")?.textContent.includes("Project updated")
+          && [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+            .some((row) => row.textContent.includes("Browser Project Renamed"))
+        """,
+        timeout_seconds=10.0,
+    )
+    list_status, list_body = _http_json("GET", f"{base_url}/projects")
+    assert list_status == 200
+    project = next(item for item in list_body if item["name"] == "Browser Project Renamed")
+    assert project["status"] == "available"
+
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+            .find((candidate) => candidate.textContent.includes("Browser Project Renamed"));
+          row.querySelector('[data-testid="project-status-toggle"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+          .some((row) => row.textContent.includes("Browser Project Renamed")
+            && row.textContent.includes("archived"))
+        """,
+        timeout_seconds=10.0,
+    )
+    archived_status, archived_body = _http_json("GET", f"{base_url}/projects")
+    assert archived_status == 200
+    archived_project = next(
+        item for item in archived_body if item["name"] == "Browser Project Renamed"
+    )
+    assert archived_project["status"] == "archived"
+
+    devtools_page.eval(
+        """
+        (() => {
+          const row = [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+            .find((candidate) => candidate.textContent.includes("Browser Project Renamed"));
+          row.querySelector('[data-testid="project-status-toggle"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        [...document.querySelectorAll("#projectRegistryOutput .list-item")]
+          .some((row) => row.textContent.includes("Browser Project Renamed")
+            && row.textContent.includes("available"))
+        """,
+        timeout_seconds=10.0,
+    )
+    restored_status, restored_body = _http_json("GET", f"{base_url}/projects")
+    assert restored_status == 200
+    restored_project = next(
+        item for item in restored_body if item["name"] == "Browser Project Renamed"
+    )
+    assert restored_project["status"] == "available"
+
+
 def test_browser_workspace_editor_can_apply_and_revert_file_change(
     ui_live_server,
     devtools_page,

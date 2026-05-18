@@ -678,11 +678,20 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "projectOpenRootButton" in script_response.text
     assert "projectPreflightButton" in script_response.text
     assert "projectForm" in script_response.text
+    assert "projectEditPanel" in html_response.text
+    assert "projectEditForm" in html_response.text
+    assert "projectEditStatusInput" in html_response.text
     assert 'api("/projects/preflight"' in script_response.text
     assert 'api("/projects"' in script_response.text
     assert 'api("/projects/active")' in script_response.text
     assert "activateProject" in script_response.text
     assert "api(`/projects/${encodeURIComponent(projectId)}/activate`" in script_response.text
+    assert "editProject" in script_response.text
+    assert "projectEditPayload" in script_response.text
+    assert "patchProject" in script_response.text
+    assert "toggleProjectStatus" in script_response.text
+    assert "project-status-toggle" in script_response.text
+    assert "api(`/projects/${encodeURIComponent(projectId)}`" in script_response.text
     assert "renderActivationChecks" in script_response.text
     assert "workspaceRootButton" in script_response.text
     assert "selectedOrchestrationId" in script_response.text

@@ -25,6 +25,7 @@ let toastTimer = null;
 let activeRootDir = "";
 let activeRootSource = "";
 let activeProjectId = "";
+let editingProjectId = "";
 let selectedOrchestrationId = "";
 let taskGraphBuilderTasks = [];
 let latestSettingsView = null;
@@ -4320,6 +4321,96 @@ async function registerProject(event) {
   }
 }
 
+function resetProjectEditForm() {
+  editingProjectId = "";
+  const panel = qs("#projectEditPanel");
+  panel.hidden = true;
+  panel.open = false;
+  qs("#projectEditForm").reset();
+  clear(qs("#projectEditOutput"));
+}
+
+function editProject(project) {
+  editingProjectId = project.id || "";
+  qs("#projectEditIdInput").value = editingProjectId;
+  qs("#projectEditNameInput").value = project.name || "";
+  qs("#projectEditStatusInput").value = project.status || "available";
+  const panel = qs("#projectEditPanel");
+  panel.hidden = false;
+  panel.open = true;
+  clear(qs("#projectEditOutput"));
+}
+
+function projectEditPayload() {
+  const payload = {
+    name: qs("#projectEditNameInput").value.trim(),
+    status: qs("#projectEditStatusInput").value,
+  };
+  if (!payload.name) {
+    throw new Error("Project name is required.");
+  }
+  return payload;
+}
+
+async function patchProject(projectId, payload, outputTarget, successTitle = "Project updated") {
+  outputTarget.append(statusBox("Updating project", projectId, "running"));
+  const project = await api(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: payload,
+  });
+  clear(outputTarget);
+  outputTarget.append(statusBox(successTitle, project.name || project.id, project.status));
+  outputTarget.append(jsonBlock(project));
+  await Promise.all([loadProjects(), loadTaskChatContext()]);
+  showToast(successTitle);
+  return project;
+}
+
+async function updateProjectMetadata(event) {
+  event.preventDefault();
+  const target = qs("#projectEditOutput");
+  clear(target);
+  if (!editingProjectId) {
+    target.append(statusBox("Project edit unavailable", "Select a project first.", "blocked"));
+    return;
+  }
+  let payload;
+  try {
+    payload = projectEditPayload();
+  } catch (error) {
+    target.append(statusBox("Project update invalid", error.message, "failed"));
+    showToast(error.message);
+    return;
+  }
+  try {
+    await patchProject(editingProjectId, payload, target);
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Project update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
+async function toggleProjectStatus(projectId, status) {
+  const target = qs("#projectRegistryOutput");
+  clear(target);
+  try {
+    await patchProject(
+      projectId,
+      { status },
+      target,
+      status === "available" ? "Project restored" : "Project archived",
+    );
+    if (editingProjectId === projectId) {
+      resetProjectEditForm();
+    }
+  } catch (error) {
+    clear(target);
+    target.append(statusBox("Project status update failed", error.message, "failed"));
+    showToast(error.message);
+  }
+}
+
 async function activateProject(projectId) {
   const target = qs("#projectRegistryOutput");
   clear(target);
@@ -4381,12 +4472,31 @@ function renderProjectList(projects, active) {
     item.append(make("div", "item-meta", compactPath(project.root_dir)));
     item.append(statusChip(isActive ? "active" : project.status || "available"));
     const actions = make("div", "button-row");
+    const editButton = make("button", "link-button", "Edit");
+    editButton.type = "button";
+    editButton.dataset.testid = "project-edit";
+    editButton.dataset.projectId = project.id || "";
+    editButton.addEventListener("click", () => editProject(project));
     const openButton = make("button", "link-button", isActive ? "Active" : "Open");
     openButton.type = "button";
+    openButton.dataset.testid = "project-open";
+    openButton.dataset.projectId = project.id || "";
     openButton.disabled =
       isActive || project.status !== "available" || !active.ok || !active.data.switching_available;
     openButton.addEventListener("click", () => activateProject(project.id));
-    actions.append(openButton);
+    const statusButton = make(
+      "button",
+      project.status === "archived" ? "success-button" : "danger-button",
+      project.status === "archived" ? "Restore" : "Archive",
+    );
+    statusButton.type = "button";
+    statusButton.dataset.testid = "project-status-toggle";
+    statusButton.dataset.projectId = project.id || "";
+    statusButton.disabled = isActive;
+    statusButton.addEventListener("click", () =>
+      toggleProjectStatus(project.id, project.status === "archived" ? "available" : "archived"),
+    );
+    actions.append(editButton, openButton, statusButton);
     item.append(actions);
     target.append(item);
   }
@@ -7314,6 +7424,8 @@ function bindEvents() {
   });
   qs("#projectPreflightButton").addEventListener("click", preflightProjectRoot);
   qs("#projectForm").addEventListener("submit", registerProject);
+  qs("#projectEditForm").addEventListener("submit", updateProjectMetadata);
+  qs("#projectEditCancelButton").addEventListener("click", resetProjectEditForm);
   qs("#workspaceRootButton").addEventListener("click", () => loadWorkspace("."));
   qs("#workspaceParentButton").addEventListener("click", () => loadWorkspace(parentPath(workspacePath)));
   qs("#workspaceSaveButton").addEventListener("click", saveWorkspaceFile);

@@ -599,9 +599,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatApprovalOutcome" in script_response.text
     assert "compactTaskChatApprovalOutcome" in script_response.text
     assert "appendTaskChatApprovalOutcomeMessage" in script_response.text
+    assert "approvalOutcomeReferenceLabel" in script_response.text
+    assert "approvalOutcomeContextTitle" in script_response.text
     assert "approvalOutcomeContextLines" in script_response.text
+    assert "canUseApprovalOutcomeAndAsk" in script_response.text
+    assert "useTaskChatApprovalOutcomeAndAsk" in script_response.text
     assert "task-chat-approval-outcome-use-context" in script_response.text
+    assert "task-chat-approval-outcome-use-and-ask" in script_response.text
     assert "task-chat-approval-outcome-review" in script_response.text
+    assert "Use Outcome & Ask" in script_response.text
     assert "Provider Approval Request" in script_response.text
     assert "Approval Outcome" in script_response.text
     assert "task-chat-provider-approval-use-id" in script_response.text

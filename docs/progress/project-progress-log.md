@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010ch Task Chat Approval Outcome-To-Reply Automation
+
+Status: completed for the scoped Task Chat approval outcome-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome-to-reply handoffs, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected approval outcome-to-reply automation as the next compact Sprint 16 slice because Approval Outcome cards already provided bounded context and exact review reopening, but operators still needed a separate manual Ask Provider step.
+- Completed: Architect kept the slice client-only on existing approval-outcome context and provider-generation contracts; outcome IDs are represented as non-capability references, not provider approval authority.
+- Completed: Developer added an explicit Use Outcome & Ask control to Approval Outcome cards.
+- Completed: QA added static assertions and browser coverage proving the new control inserts bounded outcome context, invokes the existing provider reply path, preserves current provider/model/message role controls, does not invent provider or network approval IDs, and does not send raw outcome IDs to provider prompts.
+- Completed: Security identified a raw approval-ID prompt leak in the first draft; Developer replaced raw outcome identifiers in Task Chat context with fingerprinted non-capability references before release.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Approval Outcome cards can insert bounded non-capability outcome context and immediately call the existing guarded Task Chat provider reply flow.
+- Implemented in this slice: outcome-to-reply still uses the current composer/provider controls for provider, model, message role, stream mode, prompt, and any manually supplied provider/network approval IDs.
+- Still out of scope after this slice: automatic approval creation, provider execution bypass, backend route/schema changes, exposing raw outcome IDs to provider prompts, and treating outcome IDs as provider approval IDs.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Static QA validation passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Focused QA validation passed: `uv run pytest -q tests\test_ui_browser.py::test_browser_settings_provider_role_routing_cards_apply_controls tests\test_ui_browser.py::test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions tests\test_ui.py::test_web_ui_static_assets_are_served` with 3 passed.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 35 passed.
+
 ### Sprint 16 BL-010cg Task Chat Route-To-Reply Automation
 
 Status: completed for the scoped Task Chat route-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route-to-reply handoff, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

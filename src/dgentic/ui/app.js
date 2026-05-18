@@ -1670,6 +1670,8 @@ function compactTaskChatApprovalOutcome(item) {
       decision_reason: boundedString(item.decision_reason, 500),
       executed_at: boundedString(item.executed_at, 80),
       updated_at: boundedString(item.updated_at, 80),
+      provider_id: boundedString(item.provider_id, 128),
+      model: boundedString(item.model, 256),
     };
   }
   const source = item.source || {};
@@ -1693,6 +1695,8 @@ function compactTaskChatApprovalOutcome(item) {
     ),
     executed_at: boundedString(review.executed_at || approval.executed_at, 80),
     updated_at: boundedString(review.updated_at || review.decided_at || approval.updated_at || approval.created_at, 80),
+    provider_id: boundedString(review.provider_id || approval.provider_id, 128),
+    model: boundedString(review.model || approval.model, 256),
   };
 }
 
@@ -2200,13 +2204,23 @@ function renderTaskChatProviderApproval(target, approval) {
   target.append(card);
 }
 
+function approvalOutcomeReferenceLabel(outcome) {
+  return handoffReferenceLabel(
+    handoffReference(outcome?.id, `${outcome?.source_label || "Approval"} approval`),
+  );
+}
+
+function approvalOutcomeContextTitle(outcome) {
+  return `${outcome?.source_label || "Approval"} outcome`;
+}
+
 function approvalOutcomeContextLines(outcome) {
   return [
-    `Approval: ${outcome.source_label || "Approval"} ${outcome.id || "-"}`,
-    `Status: ${outcome.status || "-"}`,
-    `Subject: ${outcome.subject || "-"}`,
-    `Reason: ${outcome.decision_reason || "-"}`,
-    `Decided by: ${outcome.decided_by || "-"}`,
+    `Approval: ${approvalOutcomeReferenceLabel(outcome)}`,
+    `Status: ${safeHandoffString(outcome.status, 80) || "-"}`,
+    `Subject: ${safeHandoffString(outcome.subject, 300) || "-"}`,
+    `Reason: ${safeHandoffString(outcome.decision_reason, 500) || "-"}`,
+    `Decided by: ${safeHandoffString(outcome.decided_by, 256) || "-"}`,
     `Executed: ${formatTimestamp(outcome.executed_at)}`,
   ];
 }
@@ -2225,6 +2239,15 @@ function approvalOutcomeTaskChatItem(outcome) {
   };
 }
 
+function canUseApprovalOutcomeAndAsk(outcome) {
+  return Boolean(outcome?.id);
+}
+
+async function useTaskChatApprovalOutcomeAndAsk(outcome) {
+  insertTaskChatContext(approvalOutcomeContextTitle(outcome), approvalOutcomeContextLines(outcome));
+  await askTaskChatProvider();
+}
+
 function renderTaskChatApprovalOutcome(target, outcome) {
   const card = make("div", "task-chat-execution-card");
   const header = make("div", "task-chat-execution-header");
@@ -2232,24 +2255,35 @@ function renderTaskChatApprovalOutcome(target, outcome) {
   copy.append(make("div", "item-title", "Approval Outcome"));
   copy.append(make("div", "item-meta", `${outcome.source_label || "Approval"} / ${outcome.id || "-"}`));
   const actions = make("div", "task-run-actions");
+  const canUseOutcomeAndAsk = canUseApprovalOutcomeAndAsk(outcome);
   const contextButton = make("button", "link-button", "Use Outcome");
   contextButton.type = "button";
   contextButton.dataset.testid = "task-chat-approval-outcome-use-context";
   contextButton.disabled = !outcome.id;
   contextButton.addEventListener("click", () =>
-    insertTaskChatContext(`Approval ${outcome.id}`, approvalOutcomeContextLines(outcome)),
+    insertTaskChatContext(approvalOutcomeContextTitle(outcome), approvalOutcomeContextLines(outcome)),
   );
+  const askButton = make("button", "primary-button", "Use Outcome & Ask");
+  askButton.type = "button";
+  askButton.dataset.testid = "task-chat-approval-outcome-use-and-ask";
+  askButton.disabled = !canUseOutcomeAndAsk;
+  if (!canUseOutcomeAndAsk) {
+    askButton.title = "Approval outcome context is required before asking a provider.";
+  }
+  askButton.addEventListener("click", () => useTaskChatApprovalOutcomeAndAsk(outcome));
   const reviewButton = make("button", "link-button", "Review");
   reviewButton.type = "button";
   reviewButton.dataset.testid = "task-chat-approval-outcome-review";
   reviewButton.disabled = !approvalOutcomeTaskChatItem(outcome);
   reviewButton.addEventListener("click", () => openTaskChatApprovalReview(approvalOutcomeTaskChatItem(outcome)));
-  actions.append(statusChip(outcome.status || "updated"), contextButton, reviewButton);
+  actions.append(statusChip(outcome.status || "updated"), contextButton, askButton, reviewButton);
   header.append(copy, actions);
   card.append(header);
 
   const grid = make("div", "task-chat-execution-grid");
   appendKeyValue(grid, "Status", outcome.status || "-");
+  appendKeyValue(grid, "Provider", outcome.provider_id || "-");
+  appendKeyValue(grid, "Model", outcome.model || "-");
   appendKeyValue(grid, "Subject", outcome.subject || "-");
   appendKeyValue(grid, "Requested by", outcome.requested_by || "-");
   appendKeyValue(grid, "Decided by", outcome.decided_by || "-");

@@ -907,6 +907,34 @@ def test_browser_settings_provider_role_routing_cards_apply_controls(
 
     devtools_page.eval(
         """
+        document.querySelector('[data-testid="provider-routing-preview-role"]').click()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        window.location.hash === "#providers"
+          && document.querySelector("#routingPreviewPanel")?.open === true
+          && document.querySelector("#routingRoleInput")?.value === "reviewer"
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        (async () => {
+          window.location.hash = "settings";
+          await loadSettings();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        Boolean(document.querySelector('[data-testid="provider-routing-use-task-chat"]'))
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
         document.querySelector('[data-testid="provider-routing-use-task-chat"]').click()
         """
     )
@@ -918,20 +946,6 @@ def test_browser_settings_provider_role_routing_cards_apply_controls(
             === "external-openai-compatible"
           && document.querySelector("#taskChatProviderModelInput")?.value === "gpt-browser"
           && document.querySelector("#taskChatRoutingRoleInput")?.value === "reviewer"
-        """,
-        timeout_seconds=10.0,
-    )
-
-    devtools_page.eval(
-        """
-        document.querySelector('[data-testid="provider-routing-preview-role"]').click()
-        """
-    )
-    devtools_page.wait_for(
-        """
-        window.location.hash === "#providers"
-          && document.querySelector("#routingPreviewPanel")?.open === true
-          && document.querySelector("#routingRoleInput")?.value === "reviewer"
         """,
         timeout_seconds=10.0,
     )
@@ -1609,11 +1623,26 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
           const originalFetch = window.fetch.bind(window);
           window.__taskChatProviderApprovalRequests = [];
           window.__taskChatProviderApprovalRefreshes = [];
+          window.__taskChatApprovedProviderRequests = [];
           window.fetch = async (input, init = {{}}) => {{
             const requestUrl = typeof input === "string" ? input : input.url;
             const parsed = new URL(requestUrl, window.location.href);
             const method = (init.method || "GET").toUpperCase();
             const path = parsed.pathname;
+            if (method === "POST" && path === "/providers/generate") {{
+              window.__taskChatApprovedProviderRequests.push(JSON.parse(init.body));
+              return new Response(
+                JSON.stringify({{
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  content: "Approval-outcome task chat provider reply",
+                  duration_ms: 31,
+                  usage_metadata: {{ total_tokens: 9 }},
+                  finish_reasons: ["stop"],
+                }}),
+                {{ status: 200, headers: {{ "Content-Type": "application/json" }} }},
+              );
+            }}
             if (
               method === "POST"
               && path === "/providers/chat-provider/approvals"
@@ -1803,6 +1832,9 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
           const useButton = document.querySelector(
             '[data-testid="task-chat-approval-outcome-use-context"]'
           );
+          const askButton = document.querySelector(
+            '[data-testid="task-chat-approval-outcome-use-and-ask"]'
+          );
           const reviewButton = document.querySelector(
             '[data-testid="task-chat-approval-outcome-review"]'
           );
@@ -1811,6 +1843,8 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
             && transcript.includes("{approval_id}")
             && transcript.includes("Task Chat approval outcome.")
             && Boolean(useButton)
+            && Boolean(askButton)
+            && !askButton.disabled
             && Boolean(reviewButton);
         }})()
         """,
@@ -1825,16 +1859,65 @@ def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wi
         f"""
         (() => {{
           const value = document.querySelector("#taskChatContextInput")?.value || "";
-          return value.includes("Approval {approval_id}")
+          return !value.includes("{approval_id}")
+            && value.includes("Provider outcome")
+            && value.includes("Approval: Provider approval")
             && value.includes("Status: approved")
             && value.includes("Task Chat approval outcome.") ? value : null;
         }})()
         """,
         timeout_seconds=10.0,
     )
-    assert f"Approval {approval_id}" in context_value
+    assert approval_id not in context_value
+    assert "Approval: Provider approval" in context_value
     assert "Status: approved" in context_value
     assert "Task Chat approval outcome." in context_value
+
+    devtools_page.eval(
+        """
+        (() => {
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderApprovalInput").value = "";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value = "";
+          document.querySelector("#taskChatProviderRoleInput").value = "assistant";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value = "Use the approval outcome as context.";
+          document.querySelector("#taskChatContextInput").value = "";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Approved provider reply is generated";
+          document.querySelector('[data-testid="task-chat-approval-outcome-use-and-ask"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatApprovedProviderRequests.length === 1
+            && transcript.includes("Provider Reply")
+            && transcript.includes("Approval-outcome task chat provider reply");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    approved_payload = devtools_page.eval("window.__taskChatApprovedProviderRequests[0]")
+    assert approved_payload["provider_id"] == "chat-provider"
+    assert approved_payload["model"] == "chat-model"
+    assert "approval_id" not in approved_payload
+    assert "network_approval_id" not in approved_payload
+    assert approved_payload["stream"] is False
+    assert approved_payload["messages"][0]["role"] == "assistant"
+    approved_prompt = approved_payload["messages"][0]["content"]
+    assert "Message: Use the approval outcome as context." in approved_prompt
+    assert approval_id not in approved_prompt
+    assert "Approval: Provider approval" in approved_prompt
+    assert "Status: approved" in approved_prompt
+    assert "Task Chat approval outcome." in approved_prompt
+    assert "Approved provider reply is generated" in approved_prompt
 
 
 def test_browser_task_chat_can_insert_memory_context_from_stream_detail_and_retrieval(

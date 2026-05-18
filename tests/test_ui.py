@@ -38,11 +38,16 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderInput" in response.text
     assert "taskChatProviderModelInput" in response.text
     assert "taskChatProviderRoleInput" in response.text
+    assert "taskChatRoutingRoleInput" in response.text
+    assert "taskChatRoutingCapabilitiesInput" in response.text
+    assert "taskChatRoutingPrivacyInput" in response.text
     assert "taskChatProviderStreamInput" in response.text
     assert "taskChatProviderApprovalInput" in response.text
     assert "taskChatProviderNetworkApprovalInput" in response.text
     assert "taskChatProviderButton" in response.text
+    assert "taskChatRouteButton" in response.text
     assert "taskChatProviderApprovalRequestButton" in response.text
+    assert "Preview Route" in response.text
     assert "Request Approval" in response.text
     assert "orchestrationCreateForm" in response.text
     assert "orchestrationTaskBuilder" in response.text
@@ -650,6 +655,20 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "taskChatProviderPayload" in script_response.text
     assert "taskChatProviderRoleInput" in script_response.text
     assert 'role: qs("#taskChatProviderRoleInput").value' in script_response.text
+    assert "taskChatRoutePreviewPayload" in script_response.text
+    assert "taskChatRouteCapabilities" in script_response.text
+    assert "previewTaskChatProviderRoute" in script_response.text
+    assert "compactTaskChatRouteDecision" in script_response.text
+    assert "renderTaskChatRouteDecision" in script_response.text
+    assert "taskChatRouteContextLines" in script_response.text
+    assert "applyTaskChatRoute" in script_response.text
+    assert "task-chat-route-use-provider" in script_response.text
+    assert "task-chat-route-use-context" in script_response.text
+    assert "Provider Route" in script_response.text
+    assert 'api("/routing/decide", { method: "POST", body: payload })' in script_response.text
+    assert 'qs("#taskChatRouteButton").addEventListener("click", previewTaskChatProviderRoute)' in (
+        script_response.text
+    )
     assert "askTaskChatProvider" in script_response.text
     assert "renderTaskChatProviderGeneration" in script_response.text
     assert "compactTaskChatProviderGeneration" in script_response.text

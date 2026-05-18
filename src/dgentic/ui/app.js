@@ -689,6 +689,22 @@ function taskChatProviderApprovalRequest() {
   };
 }
 
+function taskChatRouteCapabilities() {
+  const capabilities = splitCsv(qs("#taskChatRoutingCapabilitiesInput").value);
+  if (qs("#taskChatProviderStreamInput").checked && !capabilities.includes("streaming")) {
+    capabilities.push("streaming");
+  }
+  return capabilities;
+}
+
+function taskChatRoutePreviewPayload() {
+  return {
+    role: qs("#taskChatRoutingRoleInput").value.trim() || "planner",
+    privacy_required: qs("#taskChatRoutingPrivacyInput").checked,
+    required_capabilities: taskChatRouteCapabilities(),
+  };
+}
+
 function isAuthorizationError(result) {
   return /^(401|403)\b/.test(String(result?.error || ""));
 }
@@ -1138,6 +1154,27 @@ function compactTaskChatProviderGeneration(result) {
   };
 }
 
+function compactTaskChatRouteDecision(decision) {
+  if (!decision || typeof decision !== "object") {
+    return null;
+  }
+  const policy = decision.policy || decision.request || {};
+  return {
+    provider_id: boundedString(decision.provider_id, 128),
+    model_name: boundedString(decision.model_name || decision.model, 256),
+    score: finiteNumberOrNull(decision.score),
+    reason: boundedString(decision.reason, 500),
+    candidate_scores: compactNumericMetadata(decision.candidate_scores),
+    policy: {
+      role: boundedString(policy.role, 80),
+      privacy_required: Boolean(policy.privacy_required),
+      max_latency_ms: finiteNumberOrNull(policy.max_latency_ms),
+      max_cost_usd: finiteNumberOrNull(policy.max_cost_usd),
+      required_capabilities: boundedStringList(policy.required_capabilities, 12, 80),
+    },
+  };
+}
+
 function compactTaskChatProviderApproval(approval) {
   if (!approval || typeof approval !== "object") {
     return null;
@@ -1249,6 +1286,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.providerGeneration) {
     compact.providerGeneration = compactTaskChatProviderGeneration(message.providerGeneration);
+  }
+  if (message.routeDecision) {
+    compact.routeDecision = compactTaskChatRouteDecision(message.routeDecision);
   }
   if (message.providerApproval) {
     compact.providerApproval = compactTaskChatProviderApproval(message.providerApproval);
@@ -1402,6 +1442,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.providerGeneration) {
     renderTaskChatProviderGeneration(item, message.providerGeneration);
+  }
+  if (message.routeDecision) {
+    renderTaskChatRouteDecision(item, message.routeDecision);
   }
   if (message.providerApproval) {
     renderTaskChatProviderApproval(item, message.providerApproval);
@@ -1585,6 +1628,73 @@ function renderTaskChatProviderGeneration(target, result) {
   const content = make("pre", "provider-generation-content");
   content.textContent = boundedString(result.content || "", 2400) || "No content returned.";
   card.append(content);
+  target.append(card);
+}
+
+function taskChatRouteContextLines(route) {
+  const candidateScores = Object.entries(route.candidate_scores || {})
+    .sort((left, right) => Number(right[1]) - Number(left[1]))
+    .slice(0, 5)
+    .map(([providerId, score]) => `${providerId}: ${Number(score).toFixed(3)}`);
+  return [
+    `Provider: ${route.provider_id || "-"}`,
+    `Model: ${route.model_name || "-"}`,
+    `Role: ${route.policy?.role || "-"}`,
+    `Privacy required: ${route.policy?.privacy_required ? "yes" : "no"}`,
+    `Required capabilities: ${(route.policy?.required_capabilities || []).join(", ") || "-"}`,
+    `Score: ${route.score === null || route.score === undefined ? "-" : Number(route.score).toFixed(3)}`,
+    `Reason: ${route.reason || "-"}`,
+    `Candidates: ${candidateScores.join("; ") || "-"}`,
+  ];
+}
+
+function applyTaskChatRoute(route) {
+  qs("#taskChatProviderPanel").open = true;
+  qs("#taskChatProviderInput").value = route.provider_id || "";
+  qs("#taskChatProviderInput").dispatchEvent(new Event("change", { bubbles: true }));
+  qs("#taskChatProviderModelInput").value = route.model_name || "";
+  showToast("Provider route applied.");
+}
+
+function renderTaskChatRouteDecision(target, route) {
+  const card = make("div", "task-chat-execution-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Provider Route"));
+  copy.append(make("div", "item-meta", `${route.provider_id || "-"} / ${route.model_name || "-"}`));
+  const actions = make("div", "task-run-actions");
+  const applyButton = make("button", "link-button", "Use Route");
+  applyButton.type = "button";
+  applyButton.dataset.testid = "task-chat-route-use-provider";
+  applyButton.disabled = !route.provider_id || !route.model_name;
+  applyButton.addEventListener("click", () => applyTaskChatRoute(route));
+  const contextButton = make("button", "link-button", "Use Context");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "task-chat-route-use-context";
+  contextButton.disabled = !route.provider_id;
+  contextButton.addEventListener("click", () =>
+    insertTaskChatContext("Provider route", taskChatRouteContextLines(route)),
+  );
+  actions.append(statusChip(route.provider_id ? "ready" : "blocked"), applyButton, contextButton);
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Role", route.policy?.role || "-");
+  appendKeyValue(grid, "Privacy", route.policy?.privacy_required ? "Required" : "Not required");
+  appendKeyValue(grid, "Capabilities", (route.policy?.required_capabilities || []).join(", ") || "-");
+  appendKeyValue(grid, "Score", route.score === null || route.score === undefined ? "-" : Number(route.score).toFixed(3));
+  appendKeyValue(grid, "Reason", route.reason || "-");
+  card.append(grid);
+  renderChipList(
+    card,
+    "Candidates",
+    Object.entries(route.candidate_scores || {})
+      .sort((left, right) => Number(right[1]) - Number(left[1]))
+      .slice(0, 6)
+      .map(([providerId, score]) => `${providerId}: ${Number(score).toFixed(3)}`),
+    "pending",
+  );
   target.append(card);
 }
 
@@ -1798,6 +1908,35 @@ async function createTaskChatOrchestration(plan) {
     updateTaskChatMessage(creatingMessage.clientId, {
       role: "agent",
       title: "Orchestration create failed",
+      detail: error.message,
+      state: "failed",
+    });
+    showToast(error.message);
+  }
+}
+
+async function previewTaskChatProviderRoute() {
+  const payload = taskChatRoutePreviewPayload();
+  const runningMessage = appendTaskChatMessage({
+    role: "agent",
+    title: "Previewing provider route",
+    detail: payload.role,
+    state: "running",
+  });
+  try {
+    const decision = await api("/routing/decide", { method: "POST", body: payload });
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: "Provider route preview",
+      detail: `${decision.provider_id || "-"} / ${decision.model_name || "-"}`,
+      state: decision.provider_id ? "ready" : "blocked",
+      routeDecision: compactTaskChatRouteDecision({ ...decision, request: payload }),
+    });
+    showToast("Provider route previewed.");
+  } catch (error) {
+    updateTaskChatMessage(runningMessage.clientId, {
+      role: "agent",
+      title: "Provider route failed",
       detail: error.message,
       state: "failed",
     });
@@ -8289,6 +8428,7 @@ function bindEvents() {
   qs("#loadTasksButton").addEventListener("click", () => Promise.all([loadTasks(), loadTaskChatContext()]));
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider);
+  qs("#taskChatRouteButton").addEventListener("click", previewTaskChatProviderRoute);
   qs("#taskChatProviderApprovalRequestButton").addEventListener(
     "click",
     createTaskChatProviderApprovalRequest,

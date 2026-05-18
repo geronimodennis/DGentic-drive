@@ -6,6 +6,33 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cb Task Chat Provider Route Preview Handoff
+
+Status: completed for the scoped Task Chat provider-route preview handoff slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory context insertion, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Task Chat route-preview slice because provider routing already existed in the Providers panel, but Task Chat users had to manually copy the chosen provider/model before asking for provider output.
+- Completed: Architect/Reviewer kept the slice on the existing `/routing/decide` contract; no backend routing, provider transport, approval bypass, network approval pairing, or Git backend expansion was added.
+- Completed: Developer added Task Chat routing role, capability, and privacy inputs plus a Preview Route action.
+- Completed: Developer added bounded Provider Route transcript cards with Use Route and Use Context controls.
+- Completed: QA extended static UI assertions and the Task Chat provider browser smoke to verify route-preview payloads, route-card rendering, provider/model application, and route context insertion.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/setup/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat can call `/routing/decide` using bounded role, privacy, and required-capability inputs, with streaming automatically adding the `streaming` capability.
+- Implemented in this slice: Provider Route cards persist through capped browser-local transcript history and can apply the selected provider/model to the Task Chat provider controls.
+- Implemented in this slice: Provider Route cards can insert bounded routing context, candidate scores, and rationale into the composer for follow-up turns.
+- Still out of scope after this slice: automatic provider execution after route preview, durable backend conversation records, automatic provider/network approval pairing, provider adapter expansion beyond existing backend contracts, and broader Git hunk apply/revert authority.
+
+Validation:
+- Focused static/browser validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context` with 3 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 33 passed.
+- Final quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010ca Task Chat Approval Outcome Handoff
 
 Status: completed for the scoped Task Chat approval-outcome handoff slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider replies with selectable message roles, active memory context insertion, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

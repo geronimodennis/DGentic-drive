@@ -228,6 +228,8 @@ Task-chat memory context cards show active SQL metadata from the existing memory
 
 Task-chat provider controls include a Message Role selector for the provider roles already accepted by the backend. The selected role is used for both Ask Provider generation payloads and Request Approval provider approval payloads.
 
+Task-chat provider route preview uses the existing `/routing/decide` contract. The Preview Route action adds a bounded Provider Route card, Use Route fills the selected provider and model into the Task Chat provider controls, and Use Context inserts the route rationale without starting generation.
+
 Task-chat approval outcome cards appear after approval decisions, approved CLI execution, or dashboard-callable bound execution. They include bounded source/status/reason metadata, a Use Outcome action for follow-up context, and a Review action that reopens the exact safe review.
 
 The same Policy panel now includes a local network-domain rule editor. Use a bearer token with `network` capability to create, edit, or toggle local rules; managed network records and managed `network_policy` locks are rendered read-only.

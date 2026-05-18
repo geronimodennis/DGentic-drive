@@ -146,6 +146,16 @@
                   </label>
                   <div class="two-column">
                     <label>
+                      Routing Role
+                      <input id="taskChatRoutingRoleInput" type="text" maxlength="80" value="planner">
+                    </label>
+                    <label>
+                      Route Capabilities
+                      <input id="taskChatRoutingCapabilitiesInput" type="text" maxlength="160" placeholder="chat, streaming">
+                    </label>
+                  </div>
+                  <div class="two-column">
+                    <label>
                       Provider Approval ID
                       <input id="taskChatProviderApprovalInput" type="text" maxlength="256" placeholder="provider-approval-...">
                     </label>
@@ -157,6 +167,10 @@
                   <label class="checkbox-label">
                     <input id="taskChatProviderStreamInput" type="checkbox">
                     Stream
+                  </label>
+                  <label class="checkbox-label">
+                    <input id="taskChatRoutingPrivacyInput" type="checkbox">
+                    Privacy Required
                   </label>
                 </details>
                 <div class="task-chat-actions">
@@ -179,6 +193,10 @@
                   <button id="taskChatProviderButton" type="button" class="link-button">
                     <span class="button-icon" aria-hidden="true">P</span>
                     Ask Provider
+                  </button>
+                  <button id="taskChatRouteButton" type="button" class="link-button">
+                    <span class="button-icon" aria-hidden="true">?</span>
+                    Preview Route
                   </button>
                   <button id="taskChatProviderApprovalRequestButton" type="button" class="link-button">
                     <span class="button-icon" aria-hidden="true">A</span>

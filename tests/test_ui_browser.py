@@ -847,8 +847,30 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
           const originalFetch = window.fetch.bind(window);
           window.__taskChatProviderRequests = [];
           window.__taskChatProviderStreamRequests = [];
+          window.__taskChatRouteRequests = [];
           window.fetch = async (input, init = {{}}) => {{
             const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/routing/decide")) {{
+              window.__taskChatRouteRequests.push(JSON.parse(init.body));
+              return new Response(
+                JSON.stringify({{
+                  provider_id: "chat-provider",
+                  model_name: "chat-model",
+                  score: 0.913,
+                  reason: "Routed to the chat provider.",
+                  policy: {{
+                    role: "reviewer",
+                    privacy_required: true,
+                    required_capabilities: ["chat", "streaming"],
+                  }},
+                  candidate_scores: {{
+                    "chat-provider": 0.913,
+                    "offline-provider": 0.421,
+                  }},
+                }}),
+                {{ status: 200, headers: {{ "Content-Type": "application/json" }} }},
+              );
+            }}
             if (url.endsWith("/providers/generate/stream")) {{
               window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
               const encoder = new TextEncoder();
@@ -904,6 +926,65 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
         """
         (() => {
           const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "offline-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatRoutingRoleInput").value = "reviewer";
+          document.querySelector("#taskChatRoutingCapabilitiesInput").value = "chat";
+          document.querySelector("#taskChatRoutingPrivacyInput").checked = true;
+          document.querySelector("#taskChatProviderStreamInput").checked = true;
+          document.querySelector("#taskChatRouteButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return transcript.includes("Provider Route")
+            && transcript.includes("chat-provider")
+            && transcript.includes("Routed to the chat provider.")
+            && Boolean(document.querySelector('[data-testid="task-chat-route-use-provider"]'))
+            && Boolean(document.querySelector('[data-testid="task-chat-route-use-context"]'));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    route_payload = devtools_page.eval("window.__taskChatRouteRequests[0]")
+    assert route_payload["role"] == "reviewer"
+    assert route_payload["privacy_required"] is True
+    assert route_payload["required_capabilities"] == ["chat", "streaming"]
+
+    devtools_page.eval(
+        "document.querySelector('[data-testid=\"task-chat-route-use-provider\"]').click()"
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelector("#taskChatProviderInput")?.value === "chat-provider"
+          && document.querySelector("#taskChatProviderModelInput")?.value === "chat-model"
+        """
+    )
+    devtools_page.eval(
+        "document.querySelector('[data-testid=\"task-chat-route-use-context\"]').click()"
+    )
+    route_context = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return value.includes("Provider route")
+            && value.includes("Provider: chat-provider")
+            && value.includes("Required capabilities: chat, streaming")
+            ? value
+            : null;
+        })()
+        """
+    )
+    assert "Provider route" in route_context
+
+    devtools_page.eval(
+        """
+        (() => {
+          const providerInput = document.querySelector("#taskChatProviderInput");
           providerInput.value = "chat-provider";
           providerInput.dispatchEvent(new Event("change", { bubbles: true }));
           document.querySelector("#taskChatProviderModelInput").value = "chat-model";
@@ -924,9 +1005,10 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     devtools_page.wait_for(
         """
         (() => {
-          const card = document.querySelector(".task-chat-execution-card")?.textContent || "";
-          return card.includes("Provider Reply")
-            && card.includes("Task chat provider reply")
+          const cards = [...document.querySelectorAll(".task-chat-execution-card")]
+            .map((card) => card.textContent || "");
+          return cards.some((card) => card.includes("Provider Reply")
+            && card.includes("Task chat provider reply"))
             && Boolean(document.querySelector('[data-testid="task-chat-provider-use-response"]'));
         })()
         """,

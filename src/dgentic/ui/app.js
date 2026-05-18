@@ -35,6 +35,7 @@ let latestGitCheckpoint = null;
 let latestGitCheckpointRequest = null;
 let latestGitDiffReview = null;
 let latestGitChangeReviewArtifacts = [];
+let gitDiffReviewDecisionFilter = "all";
 let editingCliPolicyRuleId = "";
 let editingNetworkDomainPolicyRuleId = "";
 let editingCommandRecipeId = "";
@@ -3644,7 +3645,11 @@ function renderGitDiffReview(target, review) {
   target.append(grid);
   renderFindings(target, "Diff review warnings", review.warnings || [], "pending");
   renderGitChangeReview(target, review);
-  for (const section of review.sections || []) {
+  const visibleSections = gitDiffReviewVisibleSections(review);
+  if ((review.sections || []).length && !visibleSections.length) {
+    target.append(statusBox("No visible diff sections", `Filter: ${gitDiffReviewDecisionFilter}`, "pending"));
+  }
+  for (const section of visibleSections) {
     renderGitDiffSection(target, section);
   }
 }
@@ -3672,6 +3677,41 @@ function setGitDiffSectionDecision(section, decision) {
   if (latestGitDiffReview) {
     renderGitDiffReview(qs("#gitDiffReviewOutput"), latestGitDiffReview);
   }
+}
+
+function gitDiffReviewVisibleSections(review) {
+  const sections = review.sections || [];
+  if (gitDiffReviewDecisionFilter === "all") {
+    return sections;
+  }
+  return sections.filter((section) => gitDiffSectionDecision(section) === gitDiffReviewDecisionFilter);
+}
+
+function setGitDiffReviewDecisionFilter(filter) {
+  gitDiffReviewDecisionFilter = ["all", "accepted", "rejected", "pending"].includes(filter) ? filter : "all";
+  if (latestGitDiffReview) {
+    renderGitDiffReview(qs("#gitDiffReviewOutput"), latestGitDiffReview);
+  }
+}
+
+function setVisibleGitDiffReviewDecisions(review, decision) {
+  const sections = gitDiffReviewVisibleSections(review);
+  const decidedAt = new Date().toISOString();
+  for (const section of sections) {
+    const key = gitDiffSectionDecisionKey(section);
+    if (decision === "pending") {
+      delete gitDiffReviewDecisions[key];
+    } else {
+      gitDiffReviewDecisions[key] = {
+        decision,
+        scope: section.scope || "diff",
+        patch_digest: section.patch_digest || "",
+        decided_at: decidedAt,
+      };
+    }
+  }
+  renderGitDiffReview(qs("#gitDiffReviewOutput"), review);
+  showToast(`${sections.length} visible diff section(s) updated.`);
 }
 
 function gitDiffReviewDecisionCounts(review) {
@@ -3891,7 +3931,22 @@ function renderGitChangeReview(target, review) {
   button.type = "button";
   button.disabled = !(review.sections || []).length;
   button.addEventListener("click", () => copyGitChangeReviewEvidence(review));
-  actions.append(save, button);
+  const acceptVisible = make("button", "success-button", "Accept Visible");
+  acceptVisible.type = "button";
+  acceptVisible.dataset.testid = "git-diff-accept-visible";
+  acceptVisible.disabled = !gitDiffReviewVisibleSections(review).length;
+  acceptVisible.addEventListener("click", () => setVisibleGitDiffReviewDecisions(review, "accepted"));
+  const rejectVisible = make("button", "danger-button", "Reject Visible");
+  rejectVisible.type = "button";
+  rejectVisible.dataset.testid = "git-diff-reject-visible";
+  rejectVisible.disabled = !gitDiffReviewVisibleSections(review).length;
+  rejectVisible.addEventListener("click", () => setVisibleGitDiffReviewDecisions(review, "rejected"));
+  const clearVisible = make("button", "link-button", "Clear Visible");
+  clearVisible.type = "button";
+  clearVisible.dataset.testid = "git-diff-clear-visible";
+  clearVisible.disabled = !gitDiffReviewVisibleSections(review).length;
+  clearVisible.addEventListener("click", () => setVisibleGitDiffReviewDecisions(review, "pending"));
+  actions.append(save, button, acceptVisible, rejectVisible, clearVisible);
   header.append(copy, actions);
   box.append(header);
   const counts = gitDiffReviewDecisionCounts(review);
@@ -3900,7 +3955,25 @@ function renderGitChangeReview(target, review) {
   appendKeyValue(grid, "Rejected", String(counts.rejected), counts.rejected ? "rejected" : "");
   appendKeyValue(grid, "Pending", String(counts.pending), counts.pending ? "pending" : "ok");
   appendKeyValue(grid, "Sections", String((review.sections || []).length));
+  appendKeyValue(grid, "Visible", String(gitDiffReviewVisibleSections(review).length));
   box.append(grid);
+  const filters = make("div", "segmented-control git-diff-filter");
+  filters.setAttribute("role", "group");
+  filters.setAttribute("aria-label", "Git diff decision filters");
+  for (const [label, value] of [
+    ["All", "all"],
+    ["Accepted", "accepted"],
+    ["Rejected", "rejected"],
+    ["Pending", "pending"],
+  ]) {
+    const filterButton = make("button", gitDiffReviewDecisionFilter === value ? "active" : "", label);
+    filterButton.type = "button";
+    filterButton.dataset.testid = `git-diff-filter-${value}`;
+    filterButton.setAttribute("aria-pressed", String(gitDiffReviewDecisionFilter === value));
+    filterButton.addEventListener("click", () => setGitDiffReviewDecisionFilter(value));
+    filters.append(filterButton);
+  }
+  box.append(filters);
   if (counts.rejected) {
     box.append(statusBox("Git closeout paused", "Rejected diff sections block dashboard Git approval and direct run controls.", "blocked"));
   }
@@ -3952,7 +4025,11 @@ function renderGitDiffSection(target, section) {
   const clearDecision = make("button", "link-button", "Clear");
   clearDecision.type = "button";
   clearDecision.addEventListener("click", () => setGitDiffSectionDecision(section, "pending"));
-  controls.append(accept, reject, clearDecision);
+  const copyPatch = make("button", "link-button", "Copy Patch");
+  copyPatch.type = "button";
+  copyPatch.disabled = !section.patch;
+  copyPatch.addEventListener("click", () => copyTextToClipboard(section.patch || "", "Diff patch copied."));
+  controls.append(accept, reject, clearDecision, copyPatch);
   box.append(controls);
   const patch = make("pre", "diff-patch", section.patch || "No tracked patch content.");
   box.append(patch);

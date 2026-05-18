@@ -752,6 +752,111 @@ def test_browser_memory_lifecycle_controls_preview_and_apply_seeded_memory(
     assert detail_body["lifecycle_reason"] == "Memory is expired and eligible for soft pruning."
 
 
+def test_browser_git_diff_review_filters_and_bulk_visible_decisions(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#git"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#gitOutput'))")
+    devtools_page.eval(
+        r"""
+        (() => {
+          const output = document.querySelector("#gitOutput");
+          output.replaceChildren();
+          const target = document.createElement("div");
+          target.id = "gitDiffReviewOutput";
+          target.className = "git-diff-review-output";
+          output.append(target);
+          latestGitCheckpoint = {
+            action: "commit",
+            ready: true,
+            checkpoint_digest: "browser-checkpoint-digest",
+          };
+          latestGitCheckpointRequest = { cwd: ".", test_evidence: ["browser"] };
+          latestGitChangeReviewArtifacts = [];
+          gitDiffReviewDecisions = {};
+          gitDiffReviewDecisionFilter = "all";
+          latestGitDiffReview = {
+            action: "commit",
+            branch: "main",
+            head_sha: "1234567890abcdef",
+            checkpoint_digest: "browser-checkpoint-digest",
+            warnings: [],
+            sections: [
+              {
+                scope: "staged",
+                patch_digest: "digest-staged",
+                byte_count: 120,
+                returned_byte_count: 120,
+                patch: "diff --git a/a.txt b/a.txt\n@@ -1 +1 @@\n-alpha\n+beta\n",
+              },
+              {
+                scope: "unstaged",
+                patch_digest: "digest-unstaged",
+                byte_count: 140,
+                returned_byte_count: 140,
+                patch: "diff --git a/b.txt b/b.txt\n@@ -1 +1 @@\n-old\n+new\n",
+              },
+            ],
+          };
+          renderGitDiffReview(target, latestGitDiffReview);
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionCounts(latestGitDiffReview).pending === 2
+          && document.querySelectorAll(".git-diff-section").length === 2
+          && !document.querySelector("#gitApprovalSubmitButton").disabled
+        """
+    )
+    devtools_page.eval('document.querySelector(".git-diff-section .danger-button").click()')
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionCounts(latestGitDiffReview).rejected === 1
+          && document.querySelector("#gitApprovalSubmitButton").disabled
+        """
+    )
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"git-diff-filter-rejected\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionFilter === "rejected"
+          && document.querySelectorAll(".git-diff-section").length === 1
+        """
+    )
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"git-diff-clear-visible\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionCounts(latestGitDiffReview).rejected === 0
+          && gitDiffReviewDecisionCounts(latestGitDiffReview).pending === 2
+          && document.querySelector("#gitDiffReviewOutput")?.textContent
+            .includes("No visible diff sections")
+          && !document.querySelector("#gitApprovalSubmitButton").disabled
+        """
+    )
+    devtools_page.eval('document.querySelector("[data-testid=\\"git-diff-filter-all\\"]").click()')
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"git-diff-accept-visible\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        gitDiffReviewDecisionCounts(latestGitDiffReview).accepted === 2
+          && gitDiffReviewDecisionCounts(latestGitDiffReview).pending === 0
+          && document.querySelectorAll(".git-diff-section").length === 2
+          && document.querySelector("#toast")?.textContent
+            .includes("2 visible diff section(s) updated.")
+        """
+    )
+
+
 def test_browser_approval_dashboard_can_review_and_approve_seeded_cli_approval(
     ui_live_server,
     devtools_page,

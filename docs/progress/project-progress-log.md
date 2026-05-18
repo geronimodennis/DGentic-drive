@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010bo Git Diff Review Bulk Decision Controls
+
+Status: completed for the scoped checkpoint-bound Git diff review ergonomics slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only review artifacts and UI-side diff decisions, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact Git review UX slice because checkpoint-bound raw diff review already existed and the remaining backend Git roadmap should stay deferred rather than pulled forward for hunk mutation.
+- Completed: Architect/Reviewer kept the slice client-side on existing `/cli/git/diff-reviews` data and metadata-only review artifacts; no branch cleanup, PR metadata, remote freshness, rollback/revert, allowed-remote policy, or new Git mutation route was added.
+- Completed: Developer added review decision filtering, bulk visible accept/reject/clear actions, visible-section counts, empty-filter feedback, and per-section patch copy controls.
+- Completed: QA added static UI contract coverage plus browser coverage that renders a fake checkpoint-bound diff review, rejects one section, filters rejected sections, clears visible decisions, accepts all visible sections, and verifies Git closeout gating responds.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture/usage notes, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: raw Git diff review sections can be filtered by all, accepted, rejected, or pending decision state.
+- Implemented in this slice: operators can accept, reject, or clear every currently visible diff section in one action.
+- Implemented in this slice: operators can copy individual patch sections from the review UI for handoff evidence.
+- Still out of scope after this slice: actual hunk apply/revert, rollback/revert flows, remote fetch freshness, branch cleanup, PR labels/reviewers/assignees/projects/templates, allowed remote/branch policies, and richer Git audit/observability.
+
+Validation:
+- Focused validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_git_diff_review_filters_and_bulk_visible_decisions` with 2 passed.
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Quality gates passed: `uv run ruff format --check tests\test_ui.py tests\test_ui_browser.py`, `uv run ruff check tests\test_ui.py tests\test_ui_browser.py`, and `git diff --check`.
+
 ### Sprint 16 BL-010bn Memory Lifecycle Policy Threshold Controls
 
 Status: completed for the scoped Reliability-panel lifecycle threshold slice; Sprint 16 remains active for model-backed/streaming chat, durable backend conversation records, cross-surface chat sync, deeper Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations and metadata-only review artifacts, broader editable settings and policy workflows beyond the currently implemented CLI policy, hook policy, network policy, command recipes, plugin trust, generated-tool governance, memory lifecycle/compression administration beyond manual thresholded preview/apply controls, and persistent or multi-worker project activation semantics.

@@ -760,11 +760,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "latestGitDiffReview" in script_response.text
     assert "latestGitChangeReviewArtifacts" in script_response.text
     assert "gitDiffReviewDecisions" in script_response.text
+    assert "gitDiffReviewDecisionFilter" in script_response.text
     assert "renderGitDiffReviewPanel" in script_response.text
     assert "loadGitDiffReview" in script_response.text
     assert "renderGitDiffSection" in script_response.text
     assert "gitDiffReviewPayload" in script_response.text
     assert "renderGitChangeReview" in script_response.text
+    assert "gitDiffReviewVisibleSections" in script_response.text
+    assert "setGitDiffReviewDecisionFilter" in script_response.text
+    assert "setVisibleGitDiffReviewDecisions" in script_response.text
     assert "gitChangeReviewEvidence" in script_response.text
     assert "copyGitChangeReviewEvidence" in script_response.text
     assert "gitChangeReviewArtifactPayload" in script_response.text
@@ -786,6 +790,17 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'make("button", "success-button", "Accept")' in script_response.text
     assert 'make("button", "danger-button", "Reject")' in script_response.text
     assert 'make("button", "link-button", "Clear")' in script_response.text
+    assert 'make("button", "success-button", "Accept Visible")' in script_response.text
+    assert 'make("button", "danger-button", "Reject Visible")' in script_response.text
+    assert 'make("button", "link-button", "Clear Visible")' in script_response.text
+    assert 'make("button", "link-button", "Copy Patch")' in script_response.text
+    assert "filterButton.dataset.testid = `git-diff-filter-${value}`" in script_response.text
+    assert '["All", "all"]' in script_response.text
+    assert '["Accepted", "accepted"]' in script_response.text
+    assert '["Rejected", "rejected"]' in script_response.text
+    assert '["Pending", "pending"]' in script_response.text
+    assert "No visible diff sections" in script_response.text
+    assert "Diff patch copied." in script_response.text
     assert "checkpoint_digest: review.checkpoint_digest" in script_response.text
     assert 'qs("#gitApprovalSubmitButton").disabled = !enabled' in script_response.text
     assert 'api("/cli/git/diff-reviews"' in script_response.text

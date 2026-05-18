@@ -106,6 +106,15 @@
                 </div>
               </div>
               <div id="taskChatContextStream" class="task-chat-context-stream" aria-live="polite"></div>
+              <details id="taskChatHandoffPanel" class="task-chat-handoff-panel">
+                <summary>Handoff Packet</summary>
+                <div class="task-chat-handoff-actions">
+                  <button id="taskChatHandoffPreviewButton" type="button" class="link-button">Preview</button>
+                  <button id="taskChatHandoffCopyMarkdownButton" type="button" class="link-button">Copy Markdown</button>
+                  <button id="taskChatHandoffCopyJsonButton" type="button" class="link-button">Copy JSON</button>
+                </div>
+                <div id="taskChatHandoffOutput" class="output-region" aria-live="polite"></div>
+              </details>
               <div id="taskChatTranscript" class="task-chat-transcript" aria-live="polite"></div>
               <form id="taskChatForm" class="task-chat-composer">
                 <label for="taskChatInput">Message</label>

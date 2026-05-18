@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cf Task Chat Handoff Packet
+
+Status: completed for the scoped Task Chat handoff packet preview/copy slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected the handoff packet slice because Sprint 17 VS Code/CLI surfaces will need portable Task Chat context without inventing new backend contracts.
+- Completed: Architect kept the packet client-side on existing Task Chat context, transcript, Activity, approval, provider route/reply, and active-root data.
+- Completed: Developer added a Task Chat handoff panel with Preview, Copy Markdown, and Copy JSON controls.
+- Completed: QA added static assertions plus browser coverage for Activity/session/log packet content and provider route/reply Markdown/JSON copying.
+- Completed: PM updated README, project status, backlog, Agile plan, architecture, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: handoff packets include bounded composer, active root, recent plan/run/orchestration/session/log/approval/memory context, provider route/reply metadata, and transcript summaries.
+- Implemented in this slice: copied Markdown and JSON are generated from existing client state and apply secret-shaped key/value, authorization header, common standalone provider key/PAT/AWS key, and approval-shaped value redaction.
+- Still out of scope after this slice: shared backend handoff packet persistence, VS Code/CLI native packet consumers, richer chat turns, and Git hunk/patch apply or revert flows.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Formatting and lint validation passed: `uv run ruff format --check .` and `uv run ruff check .`.
+- Diff hygiene validation passed: `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 35 passed.
+
 ### Sprint 16 BL-010ce Activity Log Context Handoff
 
 Status: completed for the scoped Activity log context/evidence slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, provider reply automation beyond the current selectable-role route/reply controls, active memory/session/log context beyond bounded cards, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

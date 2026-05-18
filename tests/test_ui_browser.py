@@ -809,6 +809,20 @@ def test_browser_activity_session_workbench_captures_filters_and_reuses_context(
         """,
         timeout_seconds=10.0,
     )
+    devtools_page.eval('document.querySelector("#taskChatHandoffPreviewButton").click()')
+    devtools_page.wait_for(
+        """
+        (() => {
+          const handoff = document.querySelector("#taskChatHandoffOutput")?.textContent || "";
+          return handoff.includes("DGentic Task Chat Handoff")
+            && handoff.includes("Sessions")
+            && handoff.includes("browser-session-summary")
+            && handoff.includes("Logs")
+            && handoff.includes("Created session summary.");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
 
 
 def test_browser_settings_provider_role_routing_cards_apply_controls(
@@ -1380,6 +1394,120 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert stream_payload["messages"][0]["content"].startswith("Message: Stream a provider answer.")
     assert "Streaming context line" in stream_payload["messages"][0]["content"]
     assert "Stream card appears" in stream_payload["messages"][0]["content"]
+
+    handoff = devtools_page.eval(
+        """
+        (async () => {
+          const clipboard = {
+            writeText: async (text) => {
+              window.__taskChatHandoffCopies = window.__taskChatHandoffCopies || [];
+              window.__taskChatHandoffCopies.push(text);
+            },
+          };
+          try {
+            Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+          } catch (_error) {
+            Object.defineProperty(Navigator.prototype, "clipboard", {
+              configurable: true,
+              get: () => clipboard,
+            });
+          }
+          latestTaskChatContext.logs.unshift({
+            event_type: "security",
+            actor: "browser",
+            subject_id: "handoff-secret-check",
+            message: "Authorization: Bearer log-secret-token",
+            created_at: "2026-05-19T00:00:00+00:00",
+            metadata: {
+              token: "json-log-token",
+              approval_id: "approval-live-secret",
+            },
+          });
+          taskChatMessages.push({
+            role: "agent",
+            title: "Secret check",
+            detail:
+              "sk-proj-standaloneProviderKey1234567890 " +
+              "ghp_standalonePatSecret1234567890abcd AKIAIOSFODNN7EXAMPLE " +
+              "provider-approval-free network-approval-free approval-bare-live-secret " +
+              "--api-key flag-secret password=pass-secret " +
+              '{"credential":"json-credential"}',
+            state: "ready",
+            providerGeneration: {
+              provider_id: "chat-provider",
+              model: "chat-model",
+              content:
+                "Provider content sk-ant-api03-providerReplySecret1234567890 " +
+                "provider-approval-content",
+              streamed: false,
+              duration_ms: 9,
+            },
+            createdAt: new Date().toISOString(),
+          });
+          document.querySelector("#taskChatProviderApprovalInput").value =
+            "provider-approval-live";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value =
+            "network-approval-live";
+          document.querySelector("#taskChatInput").value =
+            "Prepare a portable Task Chat handoff token=composer-secret";
+          document.querySelector("#taskChatHandoffPanel").open = true;
+          renderTaskChatHandoffPreview();
+          await copyTaskChatHandoff("markdown");
+          await copyTaskChatHandoff("json");
+          return {
+            output: document.querySelector("#taskChatHandoffOutput")?.textContent || "",
+            markdown: window.__taskChatHandoffCopies[0],
+            jsonText: window.__taskChatHandoffCopies[1],
+          };
+        })()
+        """
+    )
+    assert "DGentic Task Chat Handoff" in handoff["output"]
+    assert "Provider Route chat-provider / chat-model" in handoff["markdown"]
+    assert "Provider Reply chat-provider / chat-model" in handoff["markdown"]
+    assert "Prepare a portable Task Chat handoff" in handoff["markdown"]
+    packet = json.loads(handoff["jsonText"])
+    assert packet["schema"] == "dgentic.task-chat-handoff.v1"
+    assert packet["provider_controls"]["provider_id"] == "chat-provider"
+    assert packet["provider_controls"]["model"] == "chat-model"
+    assert packet["provider_controls"]["message_role"] == "system"
+    assert "approval_id" not in packet["provider_controls"]
+    assert "network_approval_id" not in packet["provider_controls"]
+    assert packet["provider_controls"]["approval_reference"]["present"] is True
+    assert packet["provider_controls"]["network_approval_reference"]["present"] is True
+    assert packet["provider_controls"]["routing"]["required_capabilities"] == [
+        "chat",
+        "streaming",
+    ]
+    assert any(message.get("provider_route") for message in packet["recent_transcript"])
+    assert any(message.get("provider_reply") for message in packet["recent_transcript"])
+    copied = f"{handoff['markdown']}\n{handoff['jsonText']}"
+    for secret in [
+        "composer-secret",
+        "log-secret-token",
+        "json-log-token",
+        "approval-live-secret",
+        "flag-secret",
+        "pass-secret",
+        "json-credential",
+        "provider-approval-live",
+        "network-approval-live",
+        "provider-approval-chat",
+        "network-approval-chat",
+        "sk-proj-standaloneProviderKey1234567890",
+        "ghp_standalonePatSecret1234567890abcd",
+        "AKIAIOSFODNN7EXAMPLE",
+        "provider-approval-free",
+        "network-approval-free",
+        "approval-bare-live-secret",
+        "sk-ant-api03-providerReplySecret1234567890",
+        "provider-approval-content",
+    ]:
+        assert secret not in copied
+    assert "[redacted]" in copied
+    assert "provider approval" in handoff["markdown"]
+    assert "network approval" in handoff["jsonText"]
+    assert len(handoff["jsonText"]) < 16000
 
 
 def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions(

@@ -2,6 +2,7 @@ const TOKEN_KEY = "dgentic.ui.token";
 const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages";
 const TASK_CHAT_HISTORY_MAX_MESSAGES = 40;
 const TASK_CHAT_HISTORY_MAX_BYTES = 120000;
+const TASK_CHAT_HANDOFF_RECENT_LIMIT = 3;
 
 const approvalSources = [
   { key: "cli", label: "CLI", base: "/cli/approvals" },
@@ -43,6 +44,7 @@ let editingCommandRecipeId = "";
 let editingHookPolicyRuleId = "";
 let taskChatMessages = [];
 let taskChatMessageSequence = 0;
+let latestTaskChatHandoffPacket = null;
 let latestProviderCatalog = [];
 let latestToolCatalog = [];
 let latestTaskChatContext = {
@@ -854,6 +856,421 @@ function memoryRetrievalContextLines(item) {
     `Similarity score: ${retrievalScore(item.similarity_score)}`,
     `Matched fields: ${(item.matched_fields || []).slice(0, 8).join(", ") || "-"}`,
   ];
+}
+
+function safeHandoffString(value, limit = 600) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const secretKeys =
+    "api[_-]?key|token|secret|password|credential|authorization|approval[_-]?digest|approval[_-]?id|provider[_-]?approval[_-]?id|network[_-]?approval[_-]?id";
+  let text = boundedString(String(value), limit);
+  text = text.replace(
+    new RegExp(`(["']?(?:${secretKeys})["']?\\s*:\\s*)(["'])(?:\\\\.|(?!\\2).)*\\2`, "gi"),
+    "$1$2[redacted]$2",
+  );
+  text = text.replace(/\b(authorization\s*:\s*)(?:bearer|token|basic)?\s*[^\s,;]+/gi, "$1[redacted]");
+  text = text.replace(
+    new RegExp(`\\b((?:${secretKeys})\\s*[:=]\\s*)(?:bearer|token|basic)?\\s*[^\\s,;]+`, "gi"),
+    "$1[redacted]",
+  );
+  text = text.replace(
+    /\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|APPROVAL_ID)[A-Z0-9_]*\s*=\s*)[^\s,;]+/g,
+    "$1[redacted]",
+  );
+  text = text.replace(
+    /(--(?:api[-_]?key|token|secret|password|credential|approval[-_]?id)(?:=|\s+))("[^"]*"|'[^']*'|[^\s]+)/gi,
+    "$1[redacted]",
+  );
+  text = text.replace(/\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]");
+  text = text.replace(
+    /\b(?:sk-(?:proj-|ant-api03-)?[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16})\b/g,
+    "[redacted]",
+  );
+  text = text.replace(
+    /\b(?:provider|network)[_-]approval[_-][A-Za-z0-9._~+/=-]{4,}\b/gi,
+    "[redacted]",
+  );
+  text = text.replace(
+    /\bapproval[_-](?!(?:outcome|review|request|handoff|context|response|dashboard|workflow|policy|source|status|reference|references)\b)[A-Za-z0-9._~+/=-]{6,}\b/gi,
+    "[redacted]",
+  );
+  return text;
+}
+
+function safeHandoffStringList(values, limit = 6, itemLimit = 240) {
+  return boundedStringList(values, limit, itemLimit).map((value) =>
+    safeHandoffString(value, itemLimit),
+  );
+}
+
+function handoffReferenceFingerprint(value) {
+  const text = String(value || "");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function handoffReference(value, label = "reference") {
+  const text = String(value || "").trim();
+  if (!text) {
+    return { present: false, label };
+  }
+  return {
+    present: true,
+    label,
+    fingerprint: handoffReferenceFingerprint(text),
+    length: text.length,
+  };
+}
+
+function handoffReferenceLabel(reference) {
+  if (!reference?.present) {
+    return "-";
+  }
+  return `${reference.label || "reference"} ${reference.fingerprint} (${reference.length} chars)`;
+}
+
+function taskChatHandoffPlan(plan) {
+  return {
+    id: safeHandoffString(plan.id, 120),
+    objective: safeHandoffString(plan.objective, 500),
+    status: safeHandoffString(plan.status || "ready", 80),
+    steps: (plan.steps || []).slice(0, 6).map((step) => ({
+      id: safeHandoffString(step.id, 120),
+      title: safeHandoffString(step.title || step.id, 220),
+      role: safeHandoffString(step.agent_role, 120),
+    })),
+    created_at: safeHandoffString(plan.created_at, 80),
+  };
+}
+
+function taskChatHandoffRun(run) {
+  return {
+    id: safeHandoffString(run.id, 120),
+    plan_id: safeHandoffString(run.plan_id, 120),
+    status: safeHandoffString(run.status, 80),
+    results: (run.results || []).slice(0, 8).map((result) => ({
+      step_id: safeHandoffString(result.step_id, 120),
+      status: safeHandoffString(result.status, 80),
+      title: safeHandoffString(result.output?.title || result.error || "", 220),
+    })),
+    completed_at: safeHandoffString(run.completed_at || run.started_at, 80),
+  };
+}
+
+function taskChatHandoffOrchestration(run) {
+  return {
+    id: safeHandoffString(run.id, 120),
+    objective: safeHandoffString(run.objective, 500),
+    status: safeHandoffString(run.status, 80),
+    task_count: Array.isArray(run.tasks) ? run.tasks.length : Number(run.task_count || 0),
+    evidence: safeHandoffStringList(run.required_dod_evidence || [], 6, 120),
+    updated_at: safeHandoffString(run.updated_at || run.created_at, 80),
+  };
+}
+
+function taskChatHandoffSession(summary) {
+  return {
+    id: safeHandoffString(summary.id, 120),
+    created_at: safeHandoffString(summary.created_at, 80),
+    actions: safeHandoffStringList(summary.actions || [], 4, 180),
+    decisions: safeHandoffStringList(summary.decisions || [], 4, 180),
+    learned_knowledge: safeHandoffStringList(summary.learned_knowledge || [], 4, 180),
+    next_steps: safeHandoffStringList(summary.next_steps || [], 4, 180),
+  };
+}
+
+function taskChatHandoffLogEvent(event) {
+  return {
+    event_type: safeHandoffString(event.event_type, 80),
+    actor: safeHandoffString(event.actor, 160),
+    subject_id: safeHandoffString(event.subject_id, 160),
+    message: safeHandoffString(event.message, 300),
+    created_at: safeHandoffString(event.created_at, 80),
+    metadata: event.metadata ? safeHandoffString(JSON.stringify(event.metadata), 500) : "",
+  };
+}
+
+function taskChatHandoffApproval(item) {
+  const sourceLabel = safeHandoffString(item.source?.label || item.source?.key || "Approval", 80);
+  const approvalReference = handoffReference(item.approval?.id, `${sourceLabel} approval`);
+  const subject = approvalTitle(item) === item.approval?.id
+    ? handoffReferenceLabel(approvalReference)
+    : safeHandoffString(approvalTitle(item), 240);
+  return {
+    source_key: safeHandoffString(item.source?.key, 40),
+    source_label: sourceLabel,
+    approval_reference: approvalReference,
+    status: safeHandoffString(item.approval?.status, 80),
+    subject,
+    requested_by: safeHandoffString(item.approval?.requested_by, 180),
+    created_at: safeHandoffString(item.approval?.created_at, 80),
+  };
+}
+
+function taskChatHandoffMemory(item) {
+  return {
+    id: safeHandoffString(item.entity_id || item.metadata_id || item.id, 160),
+    type: safeHandoffString(item.entity_type || "memory", 80),
+    category: safeHandoffString(item.category, 120),
+    lifecycle: safeHandoffString(item.lifecycle_state || "active", 80),
+    description: safeHandoffString(item.description, 260),
+  };
+}
+
+function taskChatHandoffMessage(message) {
+  const compact = {
+    role: safeHandoffString(message.role || "agent", 40),
+    title: safeHandoffString(message.title, 160),
+    state: safeHandoffString(message.state, 80),
+    detail: safeHandoffString(message.detail, 300),
+    created_at: safeHandoffString(message.createdAt, 80),
+  };
+  if (message.plan) {
+    compact.plan = taskChatHandoffPlan(message.plan);
+  }
+  if (message.run) {
+    compact.run = taskChatHandoffRun(message.run);
+  }
+  if (message.orchestration) {
+    compact.orchestration = taskChatHandoffOrchestration(message.orchestration);
+  }
+  if (message.routeDecision) {
+    compact.provider_route = {
+      provider_id: safeHandoffString(message.routeDecision.provider_id, 128),
+      model_name: safeHandoffString(message.routeDecision.model_name, 256),
+      role: safeHandoffString(message.routeDecision.policy?.role, 80),
+      reason: safeHandoffString(message.routeDecision.reason, 300),
+    };
+  }
+  if (message.providerGeneration) {
+    compact.provider_reply = {
+      provider_id: safeHandoffString(message.providerGeneration.provider_id, 128),
+      model: safeHandoffString(message.providerGeneration.model, 256),
+      streamed: Boolean(message.providerGeneration.streamed),
+      content_preview: safeHandoffString(message.providerGeneration.content, 500),
+      duration_ms: finiteNumberOrNull(message.providerGeneration.duration_ms),
+    };
+  }
+  if (message.providerApproval) {
+    compact.provider_approval = {
+      approval_reference: handoffReference(message.providerApproval.id, "provider approval"),
+      provider_id: safeHandoffString(message.providerApproval.provider_id, 128),
+      model: safeHandoffString(message.providerApproval.model, 256),
+      status: safeHandoffString(message.providerApproval.status, 80),
+    };
+  }
+  if (message.approvalOutcome) {
+    compact.approval_outcome = {
+      approval_reference: handoffReference(message.approvalOutcome.id, "approval outcome"),
+      source: safeHandoffString(message.approvalOutcome.source_label, 80),
+      status: safeHandoffString(message.approvalOutcome.status, 80),
+      subject: safeHandoffString(message.approvalOutcome.subject, 240),
+    };
+  }
+  return compact;
+}
+
+function taskChatHandoffPacket() {
+  const chatPayload = taskChatPayload();
+  const context = latestTaskChatContext;
+  return {
+    schema: "dgentic.task-chat-handoff.v1",
+    generated_at: new Date().toISOString(),
+    active_project: {
+      root_dir: safeHandoffString(context.active?.active_root_dir || activeRootDir || "-", 500),
+      root_source: safeHandoffString(context.active?.source || activeRootSource || "-", 80),
+      project_id: safeHandoffString(context.active?.project?.id || activeProjectId || "", 160),
+    },
+    composer: {
+      objective: safeHandoffString(chatPayload.objective, 900),
+      constraints: safeHandoffStringList(chatPayload.constraints, 10, 260),
+      acceptance_criteria: safeHandoffStringList(chatPayload.acceptance_criteria, 10, 260),
+      priority: safeHandoffString(chatPayload.priority, 40),
+      provider_prompt: safeHandoffString(taskChatProviderPrompt(chatPayload), 2400),
+    },
+    provider_controls: {
+      provider_id: safeHandoffString(qs("#taskChatProviderInput").value.trim(), 128),
+      model: safeHandoffString(qs("#taskChatProviderModelInput").value.trim(), 256),
+      message_role: safeHandoffString(qs("#taskChatProviderRoleInput").value, 40),
+      stream: qs("#taskChatProviderStreamInput").checked,
+      approval_reference: handoffReference(
+        qs("#taskChatProviderApprovalInput").value,
+        "provider approval",
+      ),
+      network_approval_reference: handoffReference(
+        qs("#taskChatProviderNetworkApprovalInput").value,
+        "network approval",
+      ),
+      routing: {
+        role: safeHandoffString(qs("#taskChatRoutingRoleInput").value.trim() || "planner", 80),
+        privacy_required: qs("#taskChatRoutingPrivacyInput").checked,
+        required_capabilities: safeHandoffStringList(taskChatRouteCapabilities(), 12, 80),
+      },
+    },
+    context_summary: {
+      plans: context.plans.length,
+      runs: context.runs.length,
+      orchestrations: context.orchestrations.length,
+      sessions: context.sessions.length,
+      memory: context.memory.length,
+      pending_approvals: context.approvals.length,
+      logs: context.logs.length,
+      latest_activity: taskChatLatestActivity(context),
+      unavailable_sources: context.unavailable_count || 0,
+      errors: (context.errors || []).slice(0, 4).map((error) => ({
+        label: safeHandoffString(error.label, 120),
+        error: safeHandoffString(error.error, 240),
+      })),
+    },
+    recent_context: {
+      plans: context.plans.slice(-TASK_CHAT_HANDOFF_RECENT_LIMIT).reverse().map(taskChatHandoffPlan),
+      runs: context.runs.slice(-TASK_CHAT_HANDOFF_RECENT_LIMIT).reverse().map(taskChatHandoffRun),
+      orchestrations: context.orchestrations
+        .slice(-TASK_CHAT_HANDOFF_RECENT_LIMIT)
+        .reverse()
+        .map(taskChatHandoffOrchestration),
+      sessions: context.sessions
+        .slice(-TASK_CHAT_HANDOFF_RECENT_LIMIT)
+        .reverse()
+        .map(taskChatHandoffSession),
+      memory: context.memory.slice(0, TASK_CHAT_HANDOFF_RECENT_LIMIT).map(taskChatHandoffMemory),
+      approvals: context.approvals.slice(0, TASK_CHAT_HANDOFF_RECENT_LIMIT).map(taskChatHandoffApproval),
+      logs: context.logs.slice(0, TASK_CHAT_HANDOFF_RECENT_LIMIT).map(taskChatHandoffLogEvent),
+    },
+    recent_transcript: taskChatMessages.slice(-8).map(taskChatHandoffMessage),
+  };
+}
+
+function appendHandoffList(lines, title, values, renderer) {
+  lines.push("", `## ${title}`);
+  if (!values.length) {
+    lines.push("- None");
+    return;
+  }
+  for (const value of values) {
+    lines.push(`- ${renderer(value)}`);
+  }
+}
+
+function taskChatHandoffMarkdown(packet) {
+  const lines = [
+    "# DGentic Task Chat Handoff",
+    "",
+    `Generated: ${packet.generated_at}`,
+    `Root: ${packet.active_project.root_dir}`,
+    `Project: ${packet.active_project.project_id || "-"}`,
+    `Latest activity: ${packet.context_summary.latest_activity}`,
+    `Unavailable sources: ${packet.context_summary.unavailable_sources}`,
+    "",
+    "## Composer",
+    `Message: ${packet.composer.objective || "-"}`,
+    `Priority: ${packet.composer.priority || "-"}`,
+    `Context: ${packet.composer.constraints.join("; ") || "-"}`,
+    `Acceptance: ${packet.composer.acceptance_criteria.join("; ") || "-"}`,
+    "",
+    "## Provider",
+    `Provider: ${packet.provider_controls.provider_id || "-"} / ${packet.provider_controls.model || "-"}`,
+    `Message role: ${packet.provider_controls.message_role || "-"}`,
+    `Stream: ${packet.provider_controls.stream ? "yes" : "no"}`,
+    `Provider approval: ${handoffReferenceLabel(packet.provider_controls.approval_reference)}`,
+    `Network approval: ${handoffReferenceLabel(packet.provider_controls.network_approval_reference)}`,
+    `Routing role: ${packet.provider_controls.routing.role || "-"}`,
+    `Routing capabilities: ${(packet.provider_controls.routing.required_capabilities || []).join(", ") || "-"}`,
+    "",
+    "## Prompt",
+    packet.composer.provider_prompt || "-",
+  ];
+  appendHandoffList(
+    lines,
+    "Plans",
+    packet.recent_context.plans,
+    (plan) => `${plan.id || "-"} - ${plan.objective || "-"} - ${plan.status || "-"}`,
+  );
+  appendHandoffList(
+    lines,
+    "Runs",
+    packet.recent_context.runs,
+    (run) => `${run.id || "-"} - ${run.status || "-"} - ${(run.results || []).length} results`,
+  );
+  appendHandoffList(
+    lines,
+    "Orchestrations",
+    packet.recent_context.orchestrations,
+    (run) => `${run.id || "-"} - ${run.objective || "-"} - ${run.status || "-"}`,
+  );
+  appendHandoffList(
+    lines,
+    "Sessions",
+    packet.recent_context.sessions,
+    (summary) => `${summary.id || "-"} - ${(summary.actions || []).join("; ") || "no actions"}`,
+  );
+  appendHandoffList(
+    lines,
+    "Logs",
+    packet.recent_context.logs,
+    (event) => `${event.event_type || "log"} - ${event.subject_id || "-"} - ${event.message || "-"}`,
+  );
+  appendHandoffList(
+    lines,
+    "Approvals",
+    packet.recent_context.approvals,
+    (approval) =>
+      `${approval.source_label || "Approval"} ${handoffReferenceLabel(approval.approval_reference)} - ${
+        approval.status || "-"
+      }`,
+  );
+  appendHandoffList(
+    lines,
+    "Transcript",
+    packet.recent_transcript,
+    (message) => {
+      const details = [
+        message.detail,
+        message.provider_route
+          ? `Provider Route ${message.provider_route.provider_id || "-"} / ${message.provider_route.model_name || "-"}`
+          : "",
+        message.provider_reply
+          ? `Provider Reply ${message.provider_reply.provider_id || "-"} / ${message.provider_reply.model || "-"}`
+          : "",
+        message.provider_approval
+          ? `Provider Approval ${handoffReferenceLabel(message.provider_approval.approval_reference)}`
+          : "",
+        message.approval_outcome
+          ? `Approval Outcome ${handoffReferenceLabel(message.approval_outcome.approval_reference)}`
+          : "",
+      ].filter(Boolean);
+      return `${message.title || message.role || "Message"} - ${details.join(" - ") || message.state || "-"}`;
+    },
+  );
+  return lines.join("\n");
+}
+
+function renderTaskChatHandoffPreview() {
+  const target = qs("#taskChatHandoffOutput");
+  clear(target);
+  latestTaskChatHandoffPacket = taskChatHandoffPacket();
+  const markdown = taskChatHandoffMarkdown(latestTaskChatHandoffPacket);
+  const jsonText = JSON.stringify(latestTaskChatHandoffPacket, null, 2);
+  target.append(statusBox("Handoff packet", `${markdown.length} markdown bytes / ${jsonText.length} JSON bytes`, "ready"));
+  const preview = make("pre", "task-chat-handoff-preview");
+  preview.textContent = markdown;
+  target.append(preview);
+  return latestTaskChatHandoffPacket;
+}
+
+async function copyTaskChatHandoff(format) {
+  const packet = renderTaskChatHandoffPreview();
+  const isJson = format === "json";
+  const text = isJson ? JSON.stringify(packet, null, 2) : taskChatHandoffMarkdown(packet);
+  await copyTextToClipboard(
+    text,
+    isJson ? "Task Chat handoff JSON copied." : "Task Chat handoff Markdown copied.",
+  );
 }
 
 function insertTaskChatContext(title, lines) {
@@ -8696,6 +9113,11 @@ function bindEvents() {
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider);
   qs("#taskChatRouteButton").addEventListener("click", previewTaskChatProviderRoute);
+  qs("#taskChatHandoffPreviewButton").addEventListener("click", renderTaskChatHandoffPreview);
+  qs("#taskChatHandoffCopyMarkdownButton").addEventListener("click", () =>
+    copyTaskChatHandoff("markdown"),
+  );
+  qs("#taskChatHandoffCopyJsonButton").addEventListener("click", () => copyTaskChatHandoff("json"));
   qs("#taskChatProviderApprovalRequestButton").addEventListener(
     "click",
     createTaskChatProviderApprovalRequest,

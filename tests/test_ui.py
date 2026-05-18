@@ -47,6 +47,12 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderButton" in response.text
     assert "taskChatRouteButton" in response.text
     assert "taskChatProviderApprovalRequestButton" in response.text
+    assert "taskChatHandoffPanel" in response.text
+    assert "taskChatHandoffPreviewButton" in response.text
+    assert "taskChatHandoffCopyMarkdownButton" in response.text
+    assert "taskChatHandoffCopyJsonButton" in response.text
+    assert "taskChatHandoffOutput" in response.text
+    assert "Handoff Packet" in response.text
     assert "Preview Route" in response.text
     assert "Request Approval" in response.text
     assert "refreshActivityButton" in response.text
@@ -571,6 +577,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert 'const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages"' in script_response.text
     assert "TASK_CHAT_HISTORY_MAX_MESSAGES" in script_response.text
     assert "TASK_CHAT_HISTORY_MAX_BYTES" in script_response.text
+    assert "TASK_CHAT_HANDOFF_RECENT_LIMIT" in script_response.text
+    assert "latestTaskChatHandoffPacket" in script_response.text
+    assert "safeHandoffString" in script_response.text
+    assert "handoffReference" in script_response.text
+    assert "handoffReferenceLabel" in script_response.text
+    assert "taskChatHandoffPacket" in script_response.text
+    assert "taskChatHandoffMarkdown" in script_response.text
+    assert "renderTaskChatHandoffPreview" in script_response.text
+    assert "copyTaskChatHandoff" in script_response.text
+    assert "dgentic.task-chat-handoff.v1" in script_response.text
+    assert "Task Chat handoff Markdown copied." in script_response.text
+    assert "Task Chat handoff JSON copied." in script_response.text
     assert "taskPlanContextLines" in script_response.text
     assert "taskRunContextLines" in script_response.text
     assert "orchestrationContextLines" in script_response.text
@@ -591,6 +609,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "delete body.approval_id" in script_response.text
     assert "delete body.network_approval_id" in script_response.text
     assert 'qs("#taskChatProviderApprovalRequestButton").addEventListener(' in script_response.text
+    assert (
+        'qs("#taskChatHandoffPreviewButton").addEventListener("click", '
+        "renderTaskChatHandoffPreview)" in script_response.text
+    )
+    assert 'copyTaskChatHandoff("markdown")' in script_response.text
+    assert 'copyTaskChatHandoff("json")' in script_response.text
     assert "task-plan-use-context" in script_response.text
     assert "task-run-use-evidence" in script_response.text
     assert "task-chat-orchestration-use-context" in script_response.text
@@ -1107,6 +1131,9 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-chat-context-cards" in style_response.text
     assert ".task-chat-context-card" in style_response.text
     assert ".task-chat-context-actions" in style_response.text
+    assert ".task-chat-handoff-panel" in style_response.text
+    assert ".task-chat-handoff-actions" in style_response.text
+    assert ".task-chat-handoff-preview" in style_response.text
     assert ".task-chat-message" in style_response.text
     assert ".task-chat-message-user" in style_response.text
     assert ".task-chat-message-agent" in style_response.text

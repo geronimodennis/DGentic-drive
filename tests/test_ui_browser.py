@@ -1546,6 +1546,135 @@ def test_browser_task_chat_context_review_stale_remove_refreshes_without_deletin
     assert "fresh c" in stale_state["value"]
 
 
+def test_browser_task_chat_context_review_reorders_blocks_safely(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextReviewPanel'))")
+    devtools_page.eval(
+        """
+        (() => {
+          insertTaskChatContext("Move A", ["alpha"]);
+          insertTaskChatContext("Move B", ["bravo"]);
+          insertTaskChatContext("Move C", ["charlie"]);
+          document.querySelector("#taskChatContextReviewPanel").open = true;
+          document.querySelector("#taskChatContextPreviewButton").click();
+          return true;
+        })()
+        """
+    )
+    initial_state = devtools_page.wait_for(
+        """
+        (() => {
+          const rows = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block"]')
+          );
+          const up = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block-move-up"]')
+          );
+          const down = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block-move-down"]')
+          );
+          return rows.length === 3
+            && up.length === 3
+            && down.length === 3
+            && up[0].disabled
+            && down[2].disabled
+            && !down[0].disabled
+            && !up[2].disabled
+            ? true
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert initial_state is True
+
+    devtools_page.eval(
+        """
+        document.querySelectorAll('[data-testid="task-chat-context-block-move-down"]')[0].click()
+        """
+    )
+    moved_down_state = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const a = value.indexOf("Move A");
+          const b = value.indexOf("Move B");
+          const c = value.indexOf("Move C");
+          return b >= 0
+            && a > b
+            && c > a
+            && output.indexOf("Move B") < output.indexOf("Move A")
+            && output.indexOf("Move A") < output.indexOf("Move C")
+            ? { output, value }
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert moved_down_state["value"].index("Move B") < moved_down_state["value"].index("Move A")
+
+    devtools_page.eval(
+        """
+        document.querySelectorAll('[data-testid="task-chat-context-block-move-up"]')[1].click()
+        """
+    )
+    moved_up_state = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          const a = value.indexOf("Move A");
+          const b = value.indexOf("Move B");
+          const c = value.indexOf("Move C");
+          return a >= 0 && b > a && c > b ? value : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert moved_up_state.index("Move A") < moved_up_state.index("Move B")
+
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#taskChatContextInput");
+          input.value = "[Fresh C]\\ncharlie\\n\\n[Move A]\\nalpha\\n\\n[Fresh B]\\nbravo";
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          document.querySelectorAll('[data-testid="task-chat-context-block-move-down"]')[0].click();
+          return true;
+        })()
+        """
+    )
+    stale_move_state = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const c = value.indexOf("Fresh C");
+          const moveA = value.indexOf("Move A");
+          const b = value.indexOf("Fresh B");
+          return c >= 0
+            && moveA > c
+            && b > moveA
+            && output.includes("Fresh C")
+            && output.includes("Move A")
+            && output.includes("Fresh B")
+            && !output.includes("Move B")
+            ? { output, value }
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert stale_move_state["value"].index("Fresh C") < stale_move_state["value"].index("Move A")
+    assert stale_move_state["value"].index("Move A") < stale_move_state["value"].index("Fresh B")
+
+
 def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context(
     ui_live_server,
     devtools_page,

@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010co Task Chat Context Block Ordering
+
+Status: completed for the scoped Task Chat context block ordering slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution and explicit route/outcome/response/context/review-to-reply handoffs plus non-generating prompt previews, composer context review/redaction/clear, and current context block removal/ordering controls, more granular active context organization beyond the blank-line block model and bounded cards, broader approval-response automation beyond curated review/outcome context, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected Task Chat context block ordering after BL-010cn because operators could remove individual blocks but still could not prioritize the context order before provider asks.
+- Completed: Architect kept the slice client-only on the existing Task Chat composer, blank-line-delimited context model, and Context Review panel; no backend route, schema, provider execution, approval, or durable context store changed.
+- Completed: Developer added Move Up and Move Down controls to each context block row with boundary disabling and stale-review refresh protection.
+- Completed: QA added static assertions and browser coverage for block reordering, boundary disabled states, stale rendered move controls that keep the same target text, and preservation of current composer order.
+- Completed: Reviewer identified stale same-text and duplicate-block ambiguity risk, and Developer/QA fixed it by requiring the rendered index and captured block text to still match before mutation.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat Context Review can move blank-line-delimited context blocks up or down before a provider ask while preserving block text and using the existing redacted display path.
+- Implemented in this slice: stale rendered Move controls refresh the review instead of reordering changed composer context.
+- Still out of scope after this slice: automatic context grouping, drag/drop context ordering, named context collections, durable backend chat context storage, backend context schemas, and treating context block order as approval or execution authority.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Focused QA validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_context_review_reorders_blocks_safely` with 2 passed.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 43 passed.
+
 ### Sprint 16 BL-010cn Task Chat Context Block Management
 
 Status: completed for the scoped Task Chat context block management slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution and explicit route/outcome/response/context/review-to-reply handoffs plus non-generating prompt previews, composer context review/redaction/clear, and current blank-line block removal controls, more granular active context organization beyond the blank-line block model and bounded cards, broader approval-response automation beyond curated review/outcome context, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

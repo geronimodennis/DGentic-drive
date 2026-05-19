@@ -686,6 +686,15 @@ textarea {
   white-space: pre-wrap;
 }
 
+.task-chat-context-block-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.task-chat-context-block-action,
 .task-chat-context-block-remove {
   flex: 0 0 auto;
 }

@@ -1404,32 +1404,73 @@ function renderTaskChatContextBlockList(target, blocks) {
     if (block.excerpt) {
       copy.append(make("div", "task-chat-context-block-excerpt", block.excerpt));
     }
+    const actions = make("div", "task-chat-context-block-actions");
+    const moveUpButton = make("button", "link-button task-chat-context-block-action", "Move Up");
+    moveUpButton.type = "button";
+    moveUpButton.disabled = block.index === 0;
+    moveUpButton.dataset.testid = "task-chat-context-block-move-up";
+    moveUpButton.dataset.blockIndex = String(block.index);
+    moveUpButton.addEventListener("click", () => moveTaskChatContextBlock(block.index, -1, block.text));
+    const moveDownButton = make("button", "link-button task-chat-context-block-action", "Move Down");
+    moveDownButton.type = "button";
+    moveDownButton.disabled = block.index === blocks.length - 1;
+    moveDownButton.dataset.testid = "task-chat-context-block-move-down";
+    moveDownButton.dataset.blockIndex = String(block.index);
+    moveDownButton.addEventListener("click", () => moveTaskChatContextBlock(block.index, 1, block.text));
     const removeButton = make("button", "link-button task-chat-context-block-remove", "Remove");
     removeButton.type = "button";
     removeButton.dataset.testid = "task-chat-context-block-remove";
     removeButton.dataset.blockIndex = String(block.index);
     removeButton.addEventListener("click", () => removeTaskChatContextBlock(block.index, block.text));
-    row.append(copy, removeButton);
+    actions.append(moveUpButton, moveDownButton, removeButton);
+    row.append(copy, actions);
     list.append(row);
   }
   target.append(list);
 }
 
+function taskChatContextBlockIndex(blocks, blockIndex, expectedText = "") {
+  if (expectedText) {
+    return blocks[blockIndex]?.text === expectedText ? blockIndex : -1;
+  }
+  if (blockIndex >= 0 && blockIndex < blocks.length) {
+    return blockIndex;
+  }
+  return -1;
+}
+
+function refreshChangedTaskChatContextBlock(expectedText = "") {
+  renderTaskChatContextReview();
+  showToast(expectedText ? "Context block changed; review refreshed." : "Context block not found.");
+}
+
 function removeTaskChatContextBlock(blockIndex, expectedText = "") {
   const blocks = taskChatContextBlocks(qs("#taskChatContextInput").value || "");
-  let removeIndex = -1;
-  if (expectedText) {
-    removeIndex = blocks.findIndex((block) => block.text === expectedText);
-  } else if (blockIndex >= 0 && blockIndex < blocks.length) {
-    removeIndex = blockIndex;
-  }
+  const removeIndex = taskChatContextBlockIndex(blocks, blockIndex, expectedText);
   if (removeIndex < 0) {
-    renderTaskChatContextReview();
-    showToast(expectedText ? "Context block changed; review refreshed." : "Context block not found.");
+    refreshChangedTaskChatContextBlock(expectedText);
     return;
   }
   writeTaskChatContextBlocks(blocks.filter((_block, index) => index !== removeIndex));
   showToast("Task chat context block removed.");
+}
+
+function moveTaskChatContextBlock(blockIndex, direction, expectedText = "") {
+  const blocks = taskChatContextBlocks(qs("#taskChatContextInput").value || "");
+  const moveIndex = taskChatContextBlockIndex(blocks, blockIndex, expectedText);
+  if (moveIndex < 0) {
+    refreshChangedTaskChatContextBlock(expectedText);
+    return;
+  }
+  const targetIndex = moveIndex + direction;
+  if (targetIndex < 0 || targetIndex >= blocks.length) {
+    showToast(direction < 0 ? "Context block is already first." : "Context block is already last.");
+    return;
+  }
+  const nextBlocks = blocks.slice();
+  [nextBlocks[moveIndex], nextBlocks[targetIndex]] = [nextBlocks[targetIndex], nextBlocks[moveIndex]];
+  writeTaskChatContextBlocks(nextBlocks);
+  showToast(direction < 0 ? "Task chat context block moved up." : "Task chat context block moved down.");
 }
 
 function redactTaskChatContext() {

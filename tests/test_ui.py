@@ -652,6 +652,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatContextStream" in script_response.text
     assert "renderTaskChatContextCard" in script_response.text
     assert "insertTaskChatContext" in script_response.text
+    assert "useTaskChatContextAndAsk" in script_response.text
+    assert "Use Context & Ask" in script_response.text
+    assert "task-chat-plan-use-and-ask" in script_response.text
+    assert "task-chat-run-use-and-ask" in script_response.text
+    assert "task-chat-orchestration-context-use-and-ask" in script_response.text
+    assert "task-chat-session-use-and-ask" in script_response.text
+    assert "task-chat-memory-use-and-ask" in script_response.text
+    assert "task-chat-log-use-and-ask" in script_response.text
+    assert "safeHandoffString(String(line), 280)" in script_response.text
     assert "memoryContextLabel" in script_response.text
     assert "memoryMetadataContextLines" in script_response.text
     assert "memoryRetrievalContextLines" in script_response.text

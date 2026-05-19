@@ -1117,6 +1117,142 @@ def test_browser_task_chat_can_create_orchestration_from_fresh_plan(
     )
 
 
+def test_browser_task_chat_context_card_use_and_ask_redacts_log_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatProviderButton'))")
+    devtools_page.eval(
+        """
+        (() => {
+          populateProviderApprovalControls({
+            ok: true,
+            data: [
+              {
+                id: "chat-provider",
+                name: "Task Chat Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["chat-model"],
+                supports_streaming: true,
+              },
+            ],
+          });
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderRequests = [];
+          window.__taskChatProviderStreamRequests = [];
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {
+              window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
+              throw new Error("Unexpected stream request");
+            }
+            if (url.endsWith("/providers/generate")) {
+              window.__taskChatProviderRequests.push(JSON.parse(init.body));
+              return new Response(
+                JSON.stringify({
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  content: "Follow-up from log context",
+                  duration_ms: 7,
+                  usage_metadata: { total_tokens: 4 },
+                  finish_reasons: ["stop"],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            return originalFetch(input, init);
+          };
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value =
+            "Summarize the safe event context.";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Provider uses redacted context only.";
+          latestTaskChatContext = {
+            plans: [],
+            runs: [],
+            orchestrations: [],
+            sessions: [],
+            memory: [],
+            approvals: [],
+            logs: [
+              {
+                event_type: "audit",
+                actor: "browser",
+                subject_id: "log-use-ask",
+                message: "Authorization: Bearer log-use-ask-token",
+                created_at: "2026-05-19T00:00:00+00:00",
+                metadata: {
+                  token: "metadata-token",
+                  approval_id: "approval-use-ask-secret",
+                  note: "visible-note",
+                },
+              },
+            ],
+            active: null,
+            errors: [],
+            unavailable_count: 0,
+          };
+          renderTaskChatContextStream();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        Boolean(document.querySelector('[data-testid="task-chat-log-use-and-ask"]'))
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        'document.querySelector("[data-testid=\\"task-chat-log-use-and-ask\\"]").click()'
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatProviderRequests.length === 1
+            && window.__taskChatProviderStreamRequests.length === 0
+            && transcript.includes("Follow-up from log context");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    payload = devtools_page.eval("window.__taskChatProviderRequests[0]")
+    prompt = payload["messages"][0]["content"]
+    context_value = devtools_page.eval(
+        'document.querySelector("#taskChatContextInput")?.value || ""'
+    )
+    assert payload["provider_id"] == "chat-provider"
+    assert payload["model"] == "chat-model"
+    assert payload["stream"] is False
+    assert payload["messages"][0]["role"] == "developer"
+    assert "approval_id" not in payload
+    assert "network_approval_id" not in payload
+    assert "Message: Summarize the safe event context." in prompt
+    assert "Event audit" in prompt
+    assert "visible-note" in prompt
+    assert "[redacted]" in prompt
+    assert "[redacted]" in context_value
+    for secret in [
+        "log-use-ask-token",
+        "metadata-token",
+        "approval-use-ask-secret",
+    ]:
+        assert secret not in prompt
+        assert secret not in context_value
+
+
 def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context(
     ui_live_server,
     devtools_page,

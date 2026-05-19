@@ -772,7 +772,7 @@ function taskChatLatestActivity(context) {
 }
 
 function taskChatContextLines(title, lines) {
-  return [title, ...lines].filter(Boolean).map((line) => boundedString(String(line), 280));
+  return [title, ...lines].filter(Boolean).map((line) => safeHandoffString(String(line), 280));
 }
 
 function taskPlanContextLines(plan) {
@@ -1281,6 +1281,11 @@ function insertTaskChatContext(title, lines) {
   showToast("Context added to task chat.");
 }
 
+async function useTaskChatContextAndAsk(title, lines) {
+  insertTaskChatContext(title, lines);
+  await askTaskChatProvider();
+}
+
 function openTaskChatContextSection(sectionId) {
   const target = document.getElementById(sectionId);
   if (!target) {
@@ -1321,6 +1326,13 @@ function renderTaskChatContextCard(target, card) {
   }
   useButton.addEventListener("click", () => insertTaskChatContext(card.title, card.lines || []));
   actions.append(useButton);
+  if (card.askTestId) {
+    const askButton = make("button", "primary-button", "Use Context & Ask");
+    askButton.type = "button";
+    askButton.dataset.testid = card.askTestId;
+    askButton.addEventListener("click", () => useTaskChatContextAndAsk(card.title, card.lines || []));
+    actions.append(askButton);
+  }
   if (card.approvalItem) {
     const reviewButton = make("button", "link-button", "Review");
     reviewButton.type = "button";
@@ -1379,6 +1391,7 @@ function renderTaskChatContextStream() {
       meta: `${formatTimestamp(plan.created_at)} - ${plan.steps?.length || 0} steps`,
       state: plan.status || "ready",
       sectionId: "tasks",
+      askTestId: "task-chat-plan-use-and-ask",
       lines: taskPlanContextLines(plan),
     });
   }
@@ -1388,6 +1401,7 @@ function renderTaskChatContextStream() {
       meta: `${run.plan_id || "plan"} - ${formatTimestamp(run.completed_at || run.started_at)}`,
       state: run.status,
       sectionId: "tasks",
+      askTestId: "task-chat-run-use-and-ask",
       lines: taskRunContextLines(run),
     });
   }
@@ -1397,6 +1411,7 @@ function renderTaskChatContextStream() {
       meta: `${run.tasks?.length || run.task_count || 0} tasks - ${formatTimestamp(run.updated_at || run.created_at)}`,
       state: run.status,
       sectionId: "orchestrationDetail",
+      askTestId: "task-chat-orchestration-context-use-and-ask",
       lines: orchestrationContextLines(run),
     });
   }
@@ -1407,6 +1422,7 @@ function renderTaskChatContextStream() {
       state: "session",
       sectionId: "activity",
       useTestId: "task-chat-session-use-context",
+      askTestId: "task-chat-session-use-and-ask",
       lines: sessionSummaryContextLines(summary),
     });
   }
@@ -1419,6 +1435,7 @@ function renderTaskChatContextStream() {
       state: memoryStatusChip(item),
       sectionId: "reliability",
       useTestId: "task-chat-memory-use-context",
+      askTestId: "task-chat-memory-use-and-ask",
       lines: memoryMetadataContextLines(item),
     });
   }
@@ -1442,6 +1459,7 @@ function renderTaskChatContextStream() {
       meta: formatTimestamp(event.created_at),
       state: "event",
       sectionId: "logs",
+      askTestId: "task-chat-log-use-and-ask",
       lines: logEventContextLines(event),
     });
   }

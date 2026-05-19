@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010ck Task Chat Context-To-Reply Automation
+
+Status: completed for the scoped Task Chat context-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution and explicit route/outcome/response/context-to-reply handoffs plus non-generating prompt previews, active memory/session/log context review and removal beyond bounded cards, Use Context & Ask actions, and handoff packets, broader approval-response automation beyond bounded outcome context, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected the compact context-to-reply slice after BL-010cj because Task Chat context cards already inserted useful plan/run/orchestration/session/memory/log evidence, but operators still needed a separate Ask Provider step for follow-up.
+- Completed: Architect kept the slice client-only on existing context-card builders and guarded Task Chat provider reply contracts; pending approval cards remain review/context handoffs only and no backend route, schema, approval creation, or execution authority changed.
+- Completed: Developer added explicit Use Context & Ask controls to non-capability Task Chat context cards for plans, runs, orchestration runs, session summaries, active memory, and logs.
+- Completed: Developer hardened shared inserted Task Chat context with secret-shaped redaction before context-card text can be reused in provider prompts.
+- Completed: QA added static UI assertions and browser coverage proving log context is redacted before context-to-reply provider prompts, the existing provider/model/message-role controls are preserved, streaming is not invoked unexpectedly, and provider/network approval IDs are not invented.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: plan, run, orchestration, session-summary, active-memory, and log context cards can explicitly Use Context & Ask, inserting bounded redacted context and immediately calling the existing guarded Task Chat provider reply flow.
+- Implemented in this slice: context-to-reply uses current composer/provider controls for provider, model, message role, stream mode, prompt, and any manually supplied provider/network approval IDs.
+- Still out of scope after this slice: automatic multi-turn provider loops, backend route/schema changes, approval creation, treating pending approvals or context cards as capability-bearing authority, and durable backend chat conversation records.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Focused/full UI validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 38 passed.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+
 ### Sprint 16 BL-010cj Task Chat Provider Response-To-Reply Automation
 
 Status: completed for the scoped Task Chat provider response-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome/response-to-reply handoffs and non-generating prompt previews, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

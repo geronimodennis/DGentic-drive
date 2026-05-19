@@ -1296,17 +1296,50 @@ async function useTaskChatContextAndAsk(title, lines) {
   await askTaskChatProvider();
 }
 
+function taskChatContextBlocks(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return [];
+  }
+  return trimmed.split(/\n{2,}/).map((block, index) => {
+    const text = block.trim();
+    const lines = splitLines(text);
+    const firstLine = lines[0] || "";
+    const titleMatch = firstLine.match(/^\[(.+)]$/);
+    const title = titleMatch ? titleMatch[1] : firstLine || `Context ${index + 1}`;
+    const excerptSource = titleMatch ? lines.slice(1).join("\n") : text;
+    return {
+      index,
+      text,
+      title: safeHandoffString(title, 120) || `Context ${index + 1}`,
+      excerpt: safeHandoffString(excerptSource, 220).trim(),
+      lines: lines.length,
+      bytes: workspaceTextBytes(text),
+    };
+  });
+}
+
+function writeTaskChatContextBlocks(blocks) {
+  const input = qs("#taskChatContextInput");
+  input.value = blocks.map((block) => block.text).join("\n\n");
+  updateTaskChatContextReviewStatus();
+  renderTaskChatContextReview();
+  input.focus();
+}
+
 function taskChatContextReviewStats() {
   const raw = qs("#taskChatContextInput").value || "";
   const trimmed = raw.trim();
   const redactedPreview = safeHandoffString(raw, TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT);
   const bytes = workspaceTextBytes(raw);
+  const blockItems = taskChatContextBlocks(raw);
   return {
     raw,
     trimmed,
     bytes,
     lines: splitLines(raw).length,
-    blocks: trimmed ? trimmed.split(/\n{2,}/).length : 0,
+    blocks: blockItems.length,
+    blockItems,
     large: bytes > TASK_CHAT_CONTEXT_REDACT_LIMIT,
     redacted: redactedPreview !== boundedString(raw, TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT),
     preview: redactedPreview,
@@ -1350,7 +1383,53 @@ function renderTaskChatContextReview() {
   preview.dataset.testid = "task-chat-context-review-preview";
   preview.textContent = stats.preview.trim() || "No context.";
   target.append(preview);
+  renderTaskChatContextBlockList(target, stats.blockItems);
   updateTaskChatContextReviewStatus();
+}
+
+function renderTaskChatContextBlockList(target, blocks) {
+  if (!blocks.length) {
+    return;
+  }
+  const list = make("div", "task-chat-context-block-list");
+  list.dataset.testid = "task-chat-context-block-list";
+  for (const block of blocks) {
+    const row = make("div", "task-chat-context-block");
+    row.dataset.testid = "task-chat-context-block";
+    const copy = make("div", "task-chat-context-block-copy");
+    copy.append(
+      make("div", "item-title", block.title),
+      make("div", "item-meta", `${block.lines} lines / ${block.bytes} bytes`),
+    );
+    if (block.excerpt) {
+      copy.append(make("div", "task-chat-context-block-excerpt", block.excerpt));
+    }
+    const removeButton = make("button", "link-button task-chat-context-block-remove", "Remove");
+    removeButton.type = "button";
+    removeButton.dataset.testid = "task-chat-context-block-remove";
+    removeButton.dataset.blockIndex = String(block.index);
+    removeButton.addEventListener("click", () => removeTaskChatContextBlock(block.index, block.text));
+    row.append(copy, removeButton);
+    list.append(row);
+  }
+  target.append(list);
+}
+
+function removeTaskChatContextBlock(blockIndex, expectedText = "") {
+  const blocks = taskChatContextBlocks(qs("#taskChatContextInput").value || "");
+  let removeIndex = -1;
+  if (expectedText) {
+    removeIndex = blocks.findIndex((block) => block.text === expectedText);
+  } else if (blockIndex >= 0 && blockIndex < blocks.length) {
+    removeIndex = blockIndex;
+  }
+  if (removeIndex < 0) {
+    renderTaskChatContextReview();
+    showToast(expectedText ? "Context block changed; review refreshed." : "Context block not found.");
+    return;
+  }
+  writeTaskChatContextBlocks(blocks.filter((_block, index) => index !== removeIndex));
+  showToast("Task chat context block removed.");
 }
 
 function redactTaskChatContext() {

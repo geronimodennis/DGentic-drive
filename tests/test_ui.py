@@ -674,13 +674,22 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT" in script_response.text
     assert "TASK_CHAT_CONTEXT_REDACT_LIMIT" in script_response.text
     assert "redactHandoffSecrets" in script_response.text
+    assert "taskChatContextBlocks" in script_response.text
+    assert "writeTaskChatContextBlocks" in script_response.text
     assert "taskChatContextReviewStats" in script_response.text
     assert "updateTaskChatContextReviewStatus" in script_response.text
     assert "renderTaskChatContextReview" in script_response.text
+    assert "renderTaskChatContextBlockList" in script_response.text
+    assert "removeTaskChatContextBlock" in script_response.text
     assert "redactTaskChatContext" in script_response.text
     assert "clearTaskChatContext" in script_response.text
     assert "task-chat-context-review-preview" in script_response.text
+    assert "task-chat-context-block-list" in script_response.text
+    assert "task-chat-context-block" in script_response.text
+    assert "task-chat-context-block-remove" in script_response.text
+    assert "Context block changed; review refreshed." in script_response.text
     assert "Preview redaction is display-only" in script_response.text
+    assert "Task chat context block removed." in script_response.text
     assert "Task chat context redacted." in script_response.text
     assert "Task chat context cleared." in script_response.text
     assert "useTaskChatContextAndAsk" in script_response.text
@@ -1260,6 +1269,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".task-chat-context-review-status" in style_response.text
     assert ".task-chat-context-review-actions" in style_response.text
     assert ".task-chat-context-review-preview" in style_response.text
+    assert ".task-chat-context-block-list" in style_response.text
+    assert ".task-chat-context-block" in style_response.text
+    assert ".task-chat-context-block-excerpt" in style_response.text
+    assert ".task-chat-context-block-remove" in style_response.text
     assert ".settings-group-list" in style_response.text
     assert ".setting-source-row" in style_response.text
     assert ".policy-review-section" in style_response.text

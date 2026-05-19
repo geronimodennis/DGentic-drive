@@ -1388,6 +1388,164 @@ def test_browser_task_chat_context_review_can_preview_redact_and_clear(
     )
 
 
+def test_browser_task_chat_context_review_lists_and_removes_inserted_blocks_safely(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextReviewPanel'))")
+    devtools_page.eval(
+        """
+        (() => {
+          window.__contextBlockXss = false;
+          insertTaskChatContext("Block A", ["Safe A line"]);
+          insertTaskChatContext("Block B", [
+            "Authorization: Bearer remove-me-secret",
+            "token=remove-token",
+            "<img src=x onerror='window.__contextBlockXss=true'>",
+          ]);
+          insertTaskChatContext("Block C", [
+            "Safe C line",
+            "token=preserve-token",
+          ]);
+          document.querySelector("#taskChatContextReviewPanel").open = true;
+          document.querySelector("#taskChatContextPreviewButton").click();
+          return true;
+        })()
+        """
+    )
+    block_state = devtools_page.wait_for(
+        """
+        (() => {
+          const rows = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block"]')
+          );
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return rows.length === 3
+            && output.includes("Block A")
+            && output.includes("Block B")
+            && output.includes("Block C")
+            && output.includes("<img src=x onerror='window.__contextBlockXss=true'>")
+            && output.includes("[redacted]")
+            && value.includes("Block A")
+            && value.includes("Block B")
+            && value.includes("Block C")
+            ? { output, value }
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert devtools_page.eval("window.__contextBlockXss") is False
+    for secret in ["remove-me-secret", "remove-token", "preserve-token"]:
+        assert secret not in block_state["output"]
+        assert secret not in block_state["value"]
+
+    devtools_page.eval(
+        """
+        document.querySelectorAll('[data-testid="task-chat-context-block-remove"]')[1].click()
+        """
+    )
+    removal_state = devtools_page.wait_for(
+        """
+        (() => {
+          const rows = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block"]')
+          );
+          const status = document.querySelector("#taskChatContextReviewStatus")?.textContent || "";
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return rows.length === 2
+            && status.includes("2 blocks")
+            && output.includes("Block A")
+            && output.includes("Block C")
+            && output.includes("[redacted]")
+            && value.includes("Block A")
+            && value.includes("Block C")
+            && !value.includes("Block B")
+            && !output.includes("Block B")
+            ? { output, value }
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert "Safe A line" in removal_state["value"]
+    assert "Safe C line" in removal_state["value"]
+    assert "<img src=x onerror='window.__contextBlockXss=true'>" not in removal_state["value"]
+    assert devtools_page.eval("window.__contextBlockXss") is False
+
+
+def test_browser_task_chat_context_review_stale_remove_refreshes_without_deleting(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextReviewPanel'))")
+    devtools_page.eval(
+        """
+        (() => {
+          insertTaskChatContext("Old A", ["old a"]);
+          insertTaskChatContext("Old B", ["old b"]);
+          insertTaskChatContext("Old C", ["old c"]);
+          document.querySelector("#taskChatContextReviewPanel").open = true;
+          document.querySelector("#taskChatContextPreviewButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        document.querySelectorAll('[data-testid="task-chat-context-block"]').length === 3
+        """,
+        timeout_seconds=10.0,
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          const input = document.querySelector("#taskChatContextInput");
+          input.value = "[New A]\\nfresh a\\n\\n[New B]\\nfresh b\\n\\n[New C]\\nfresh c";
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          document.querySelectorAll('[data-testid="task-chat-context-block-remove"]')[1].click();
+          return true;
+        })()
+        """
+    )
+    stale_state = devtools_page.wait_for(
+        """
+        (() => {
+          const rows = Array.from(
+            document.querySelectorAll('[data-testid="task-chat-context-block"]')
+          );
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          return rows.length === 3
+            && output.includes("New A")
+            && output.includes("New B")
+            && output.includes("New C")
+            && value.includes("New A")
+            && value.includes("New B")
+            && value.includes("New C")
+            && !output.includes("Old B")
+            && !value.includes("Old B")
+            ? { output, value }
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert "fresh a" in stale_state["value"]
+    assert "fresh b" in stale_state["value"]
+    assert "fresh c" in stale_state["value"]
+
+
 def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context(
     ui_live_server,
     devtools_page,

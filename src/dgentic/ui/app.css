@@ -657,6 +657,39 @@ textarea {
   white-space: pre-wrap;
 }
 
+.task-chat-context-block-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.task-chat-context-block {
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.task-chat-context-block-copy {
+  min-width: 0;
+}
+
+.task-chat-context-block-excerpt {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.task-chat-context-block-remove {
+  flex: 0 0 auto;
+}
+
 .task-chat-handoff-panel {
   border: 1px solid var(--line);
   border-radius: 8px;

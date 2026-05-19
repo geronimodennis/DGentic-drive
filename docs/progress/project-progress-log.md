@@ -6,6 +6,34 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cm Task Chat Context Review And Removal
+
+Status: completed for the scoped Task Chat composer context review/removal slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution and explicit route/outcome/response/context/review-to-reply handoffs plus non-generating prompt previews and composer context review/redaction/clear controls, more granular active context organization beyond bounded cards and composer-level review, broader approval-response automation beyond curated review/outcome context, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected Task Chat context review/removal after BL-010cl because Task Chat had many safe context insertion paths, but operators still needed a compact way to inspect, redact, or clear active composer context before provider asks.
+- Completed: Architect kept the slice client-only on the existing Task Chat composer and shared redaction helpers; no backend route, schema, provider execution, approval, or durable context store changed.
+- Completed: Developer added a Context Review panel with line, block, and byte counts plus Preview Context, Redact Context, and Clear Context actions.
+- Completed: Developer extracted full-text secret redaction so Redact Context can preserve long non-secret context instead of truncating through the bounded preview helper.
+- Completed: QA added static assertions and browser coverage for preview non-mutation, display-only redaction warning text, safe text rendering for HTML-shaped context, broader secret-shaped redaction variants, long-context preservation, and explicit clear behavior.
+- Completed: Reviewer/Security found and Developer fixed the two release-blocking UX risks: redacted preview now says it is display-only, and redaction no longer silently trims long context.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Task Chat composer context shows live line/block/byte status and a bounded preview rendered with text content, not HTML.
+- Implemented in this slice: Preview Context redacts secret-shaped text for display only and leaves the composer unchanged until the operator explicitly clicks Redact Context.
+- Implemented in this slice: Redact Context applies shared secret redaction to the full composer context without trimming long non-secret content; Clear Context removes the active composer context.
+- Still out of scope after this slice: automatic provider asks, durable backend chat context storage, item-level context block deletion, and treating context review as approval or execution authority.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Focused QA validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_context_review_can_preview_redact_and_clear` with 2 passed.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 40 passed.
+
 ### Sprint 16 BL-010cl Safe Approval Review Context-To-Reply Automation
 
 Status: completed for the scoped safe approval-review context-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution and explicit route/outcome/response/context/review-to-reply handoffs plus non-generating prompt previews, active memory/session/log context review and removal beyond bounded cards, Use Context & Ask actions, and handoff packets, broader approval-response automation beyond curated review/outcome context, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

@@ -3,6 +3,8 @@ const TASK_CHAT_HISTORY_KEY = "dgentic.ui.taskChatMessages";
 const TASK_CHAT_HISTORY_MAX_MESSAGES = 40;
 const TASK_CHAT_HISTORY_MAX_BYTES = 120000;
 const TASK_CHAT_HANDOFF_RECENT_LIMIT = 3;
+const TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT = 2400;
+const TASK_CHAT_CONTEXT_REDACT_LIMIT = 120000;
 
 const approvalSources = [
   { key: "cli", label: "CLI", base: "/cli/approvals" },
@@ -858,13 +860,13 @@ function memoryRetrievalContextLines(item) {
   ];
 }
 
-function safeHandoffString(value, limit = 600) {
+function redactHandoffSecrets(value) {
   if (value === null || value === undefined) {
     return "";
   }
   const secretKeys =
     "api[_-]?key|token|secret|password|credential|authorization|approval[_-]?digest|approval[_-]?id|provider[_-]?approval[_-]?id|network[_-]?approval[_-]?id";
-  let text = boundedString(String(value), limit);
+  let text = String(value);
   text = text.replace(
     new RegExp(`(["']?(?:${secretKeys})["']?\\s*:\\s*)(["'])(?:\\\\.|(?!\\2).)*\\2`, "gi"),
     "$1$2[redacted]$2",
@@ -896,6 +898,13 @@ function safeHandoffString(value, limit = 600) {
     "[redacted]",
   );
   return text;
+}
+
+function safeHandoffString(value, limit = 600) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return redactHandoffSecrets(boundedString(String(value), limit));
 }
 
 function safeHandoffStringList(values, limit = 6, itemLimit = 240) {
@@ -1278,12 +1287,88 @@ function insertTaskChatContext(title, lines) {
   const block = taskChatContextLines(title, lines).join("\n");
   input.value = input.value.trim() ? `${input.value.trim()}\n\n${block}` : block;
   input.focus();
+  updateTaskChatContextReviewStatus();
   showToast("Context added to task chat.");
 }
 
 async function useTaskChatContextAndAsk(title, lines) {
   insertTaskChatContext(title, lines);
   await askTaskChatProvider();
+}
+
+function taskChatContextReviewStats() {
+  const raw = qs("#taskChatContextInput").value || "";
+  const trimmed = raw.trim();
+  const redactedPreview = safeHandoffString(raw, TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT);
+  const bytes = workspaceTextBytes(raw);
+  return {
+    raw,
+    trimmed,
+    bytes,
+    lines: splitLines(raw).length,
+    blocks: trimmed ? trimmed.split(/\n{2,}/).length : 0,
+    large: bytes > TASK_CHAT_CONTEXT_REDACT_LIMIT,
+    redacted: redactedPreview !== boundedString(raw, TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT),
+    preview: redactedPreview,
+  };
+}
+
+function updateTaskChatContextReviewStatus() {
+  const status = qs("#taskChatContextReviewStatus");
+  if (!status) {
+    return;
+  }
+  const stats = taskChatContextReviewStats();
+  status.textContent = stats.trimmed
+    ? `${stats.lines} lines / ${stats.blocks} blocks / ${stats.bytes} bytes`
+    : "No context";
+}
+
+function renderTaskChatContextReview() {
+  const target = qs("#taskChatContextReviewOutput");
+  clear(target);
+  const stats = taskChatContextReviewStats();
+  const detailParts = stats.trimmed
+    ? [`${stats.lines} lines / ${stats.blocks} blocks / ${stats.bytes} bytes`]
+    : ["No context"];
+  if (stats.redacted) {
+    detailParts.push(
+      "Preview redaction is display-only; use Redact Context to replace the composer text before asking.",
+    );
+  }
+  if (stats.large) {
+    detailParts.push("Redact Context preserves full text for large context.");
+  }
+  target.append(
+    statusBox(
+      "Context review",
+      detailParts.join(" "),
+      stats.redacted ? "pending" : "ready",
+    ),
+  );
+  const preview = make("pre", "task-chat-context-review-preview");
+  preview.dataset.testid = "task-chat-context-review-preview";
+  preview.textContent = stats.preview.trim() || "No context.";
+  target.append(preview);
+  updateTaskChatContextReviewStatus();
+}
+
+function redactTaskChatContext() {
+  const input = qs("#taskChatContextInput");
+  input.value = redactHandoffSecrets(input.value || "");
+  updateTaskChatContextReviewStatus();
+  renderTaskChatContextReview();
+  input.focus();
+  showToast("Task chat context redacted.");
+}
+
+function clearTaskChatContext() {
+  const input = qs("#taskChatContextInput");
+  input.value = "";
+  updateTaskChatContextReviewStatus();
+  renderTaskChatContextReview();
+  input.focus();
+  showToast("Task chat context cleared.");
 }
 
 function openTaskChatContextSection(sectionId) {
@@ -9373,9 +9458,14 @@ function bindEvents() {
     "click",
     createTaskChatProviderApprovalRequest,
   );
+  qs("#taskChatContextInput").addEventListener("input", updateTaskChatContextReviewStatus);
+  qs("#taskChatContextPreviewButton").addEventListener("click", renderTaskChatContextReview);
+  qs("#taskChatContextRedactButton").addEventListener("click", redactTaskChatContext);
+  qs("#taskChatContextClearButton").addEventListener("click", clearTaskChatContext);
   qs("#taskChatProviderInput").addEventListener("change", updateTaskChatProviderModelOptions);
   qs("#taskChatClearButton").addEventListener("click", clearTaskChatThread);
   loadTaskChatHistory();
+  updateTaskChatContextReviewStatus();
   renderTaskChatContextStream();
   renderTaskChatThread();
   qs("#taskForm").addEventListener("submit", createTaskPlan);

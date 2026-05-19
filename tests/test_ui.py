@@ -44,6 +44,16 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderStreamInput" in response.text
     assert "taskChatProviderApprovalInput" in response.text
     assert "taskChatProviderNetworkApprovalInput" in response.text
+    assert "taskChatContextReviewPanel" in response.text
+    assert "taskChatContextReviewStatus" in response.text
+    assert "taskChatContextPreviewButton" in response.text
+    assert "taskChatContextRedactButton" in response.text
+    assert "taskChatContextClearButton" in response.text
+    assert "taskChatContextReviewOutput" in response.text
+    assert "Context Review" in response.text
+    assert "Preview Context" in response.text
+    assert "Redact Context" in response.text
+    assert "Clear Context" in response.text
     assert "taskChatProviderButton" in response.text
     assert "taskChatProviderPromptPreviewButton" in response.text
     assert "taskChatRouteButton" in response.text
@@ -661,6 +671,18 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatContextStream" in script_response.text
     assert "renderTaskChatContextCard" in script_response.text
     assert "insertTaskChatContext" in script_response.text
+    assert "TASK_CHAT_CONTEXT_REVIEW_PREVIEW_LIMIT" in script_response.text
+    assert "TASK_CHAT_CONTEXT_REDACT_LIMIT" in script_response.text
+    assert "redactHandoffSecrets" in script_response.text
+    assert "taskChatContextReviewStats" in script_response.text
+    assert "updateTaskChatContextReviewStatus" in script_response.text
+    assert "renderTaskChatContextReview" in script_response.text
+    assert "redactTaskChatContext" in script_response.text
+    assert "clearTaskChatContext" in script_response.text
+    assert "task-chat-context-review-preview" in script_response.text
+    assert "Preview redaction is display-only" in script_response.text
+    assert "Task chat context redacted." in script_response.text
+    assert "Task chat context cleared." in script_response.text
     assert "useTaskChatContextAndAsk" in script_response.text
     assert "Use Context & Ask" in script_response.text
     assert "task-chat-plan-use-and-ask" in script_response.text
@@ -1234,6 +1256,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert ".settings-routing-review" in style_response.text
     assert ".settings-routing-card" in style_response.text
     assert ".settings-routing-actions" in style_response.text
+    assert ".task-chat-context-review-panel" in style_response.text
+    assert ".task-chat-context-review-status" in style_response.text
+    assert ".task-chat-context-review-actions" in style_response.text
+    assert ".task-chat-context-review-preview" in style_response.text
     assert ".settings-group-list" in style_response.text
     assert ".setting-source-row" in style_response.text
     assert ".policy-review-section" in style_response.text

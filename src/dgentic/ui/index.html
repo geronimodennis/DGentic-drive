@@ -129,6 +129,18 @@
                     <textarea id="taskChatAcceptanceInput" rows="3"></textarea>
                   </label>
                 </div>
+                <details id="taskChatContextReviewPanel" class="task-chat-context-review-panel">
+                  <summary>
+                    Context Review
+                    <span id="taskChatContextReviewStatus" class="task-chat-context-review-status">No context</span>
+                  </summary>
+                  <div class="task-chat-context-review-actions">
+                    <button id="taskChatContextPreviewButton" type="button" class="link-button">Preview Context</button>
+                    <button id="taskChatContextRedactButton" type="button" class="link-button">Redact Context</button>
+                    <button id="taskChatContextClearButton" type="button" class="link-button">Clear Context</button>
+                  </div>
+                  <div id="taskChatContextReviewOutput" class="output-region" aria-live="polite"></div>
+                </details>
                 <details id="taskChatProviderPanel" class="task-chat-provider-panel">
                   <summary>Provider Reply</summary>
                   <div class="two-column">

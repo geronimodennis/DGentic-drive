@@ -625,6 +625,38 @@ textarea {
   flex: 0 0 auto;
 }
 
+.task-chat-context-review-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.task-chat-context-review-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.task-chat-context-review-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-left: 8px;
+}
+
+.task-chat-context-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.task-chat-context-review-preview {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 .task-chat-handoff-panel {
   border: 1px solid var(--line);
   border-radius: 8px;

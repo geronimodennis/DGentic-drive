@@ -1253,6 +1253,141 @@ def test_browser_task_chat_context_card_use_and_ask_redacts_log_context(
         assert secret not in context_value
 
 
+def test_browser_task_chat_context_review_can_preview_redact_and_clear(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextReviewPanel'))")
+    devtools_page.eval(
+        """
+        (() => {
+          window.__contextReviewXss = false;
+          document.querySelector("#taskChatContextInput").value =
+            "Safe line\\n<img src=x onerror='window.__contextReviewXss=true'>\\n" +
+            "Authorization: Bearer context-review-secret\\n" +
+            "token=context-token\\npassword=context-password\\n" +
+            "--api-key cli-secret\\nsk-proj-abcdefghijklmnopqrstuvwxyz1234567890\\n" +
+            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890\\nAKIA1234567890ABCDEF\\n" +
+            "provider_approval_abcdefghi\\napproval_deadbeef12\\nNext step";
+          document.querySelector("#taskChatContextInput")
+            .dispatchEvent(new Event("input", { bubbles: true }));
+          document.querySelector("#taskChatContextReviewPanel").open = true;
+          document.querySelector("#taskChatContextPreviewButton").click();
+          return true;
+        })()
+        """
+    )
+    preview_text = devtools_page.wait_for(
+        """
+        (() => {
+          const status = document.querySelector("#taskChatContextReviewStatus")?.textContent || "";
+          const output = document.querySelector("#taskChatContextReviewOutput")?.textContent || "";
+          const preview = document.querySelector(
+            '[data-testid="task-chat-context-review-preview"]'
+          );
+          return status.includes("12 lines")
+            && output.includes("Preview redaction is display-only")
+            && preview
+            && preview.textContent.includes("Safe line")
+            && preview.textContent.includes("<img src=x onerror='window.__contextReviewXss=true'>")
+            && preview.textContent.includes("Next step")
+            && preview.textContent.includes("[redacted]")
+            ? preview.textContent
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    raw_after_preview = devtools_page.eval('document.querySelector("#taskChatContextInput").value')
+    assert "<img src=x onerror='window.__contextReviewXss=true'>" in preview_text
+    assert devtools_page.eval("window.__contextReviewXss") is False
+    assert "context-review-secret" in raw_after_preview
+    assert "context-token" in raw_after_preview
+    for secret in [
+        "context-review-secret",
+        "context-token",
+        "context-password",
+        "cli-secret",
+        "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890",
+        "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+        "AKIA1234567890ABCDEF",
+        "provider_approval_abcdefghi",
+        "approval_deadbeef12",
+    ]:
+        assert secret not in preview_text
+
+    devtools_page.eval('document.querySelector("#taskChatContextRedactButton").click()')
+    redacted_context = devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          const preview = document.querySelector(
+            '[data-testid="task-chat-context-review-preview"]'
+          )?.textContent || "";
+          return value.includes("[redacted]") && preview.includes("[redacted]")
+            ? value
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert "Safe line" in redacted_context
+    assert "Next step" in redacted_context
+    assert "<img src=x onerror='window.__contextReviewXss=true'>" in redacted_context
+    for secret in [
+        "context-review-secret",
+        "context-token",
+        "context-password",
+        "cli-secret",
+        "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890",
+        "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+        "AKIA1234567890ABCDEF",
+        "provider_approval_abcdefghi",
+        "approval_deadbeef12",
+    ]:
+        assert secret not in redacted_context
+
+    long_redaction_result = devtools_page.wait_for(
+        """
+        (() => {
+          const input = document.querySelector("#taskChatContextInput");
+          const tail = "TAIL_CONTEXT_PRESERVED";
+          input.value = "token=long-context-secret\\n" + "x".repeat(120050) + tail;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          document.querySelector("#taskChatContextRedactButton").click();
+          const value = input.value || "";
+          return value.includes(tail)
+            && value.length > 120000
+            && value.includes("[redacted]")
+            && !value.includes("long-context-secret")
+            ? String(value.length)
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert int(long_redaction_result) > 120000
+
+    devtools_page.eval('document.querySelector("#taskChatContextClearButton").click()')
+    devtools_page.wait_for(
+        """
+        (() => {
+          const value = document.querySelector("#taskChatContextInput")?.value || "";
+          const status = document.querySelector("#taskChatContextReviewStatus")?.textContent || "";
+          const preview = document.querySelector(
+            '[data-testid="task-chat-context-review-preview"]'
+          )?.textContent || "";
+          return value === "" && status === "No context" && preview.includes("No context.");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+
 def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context(
     ui_live_server,
     devtools_page,

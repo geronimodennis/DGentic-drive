@@ -1603,6 +1603,21 @@ function compactTaskChatProviderGeneration(result) {
   };
 }
 
+function compactTaskChatProviderPromptPreview(preview) {
+  if (!preview || typeof preview !== "object") {
+    return null;
+  }
+  return {
+    provider_id: boundedString(preview.provider_id, 128),
+    model: boundedString(preview.model, 256),
+    role: boundedString(preview.role, 40),
+    stream: Boolean(preview.stream),
+    prompt: safeHandoffString(preview.prompt, 2400),
+    prompt_bytes: finiteNumberOrNull(preview.prompt_bytes),
+    created_at: boundedString(preview.created_at, 80),
+  };
+}
+
 function compactTaskChatRouteDecision(decision) {
   if (!decision || typeof decision !== "object") {
     return null;
@@ -1739,6 +1754,9 @@ function compactTaskChatMessage(message, { restored = false } = {}) {
   }
   if (message.providerGeneration) {
     compact.providerGeneration = compactTaskChatProviderGeneration(message.providerGeneration);
+  }
+  if (message.providerPromptPreview) {
+    compact.providerPromptPreview = compactTaskChatProviderPromptPreview(message.providerPromptPreview);
   }
   if (message.routeDecision) {
     compact.routeDecision = compactTaskChatRouteDecision(message.routeDecision);
@@ -1895,6 +1913,9 @@ function renderTaskChatMessage(target, message) {
   }
   if (message.providerGeneration) {
     renderTaskChatProviderGeneration(item, message.providerGeneration);
+  }
+  if (message.providerPromptPreview) {
+    renderTaskChatProviderPromptPreview(item, message.providerPromptPreview);
   }
   if (message.routeDecision) {
     renderTaskChatRouteDecision(item, message.routeDecision);
@@ -2082,6 +2103,66 @@ function renderTaskChatProviderGeneration(target, result) {
   content.textContent = boundedString(result.content || "", 2400) || "No content returned.";
   card.append(content);
   target.append(card);
+}
+
+function taskChatProviderPromptPreviewRecord() {
+  const chatPayload = taskChatPayload();
+  if (!chatPayload.objective) {
+    throw new Error("Message is required.");
+  }
+  const prompt = taskChatProviderPrompt(chatPayload);
+  return {
+    provider_id: qs("#taskChatProviderInput").value.trim(),
+    model: qs("#taskChatProviderModelInput").value.trim(),
+    role: qs("#taskChatProviderRoleInput").value,
+    stream: qs("#taskChatProviderStreamInput").checked,
+    prompt,
+    prompt_bytes: workspaceTextBytes(prompt),
+    created_at: new Date().toISOString(),
+  };
+}
+
+function renderTaskChatProviderPromptPreview(target, preview) {
+  const card = make("div", "task-chat-execution-card");
+  const header = make("div", "task-chat-execution-header");
+  const copy = make("div");
+  copy.append(make("div", "item-title", "Provider Prompt Preview"));
+  copy.append(make("div", "item-meta", `${preview.provider_id || "-"} / ${preview.model || "-"}`));
+  const actions = make("div", "task-run-actions");
+  actions.append(statusChip("preview"));
+  header.append(copy, actions);
+  card.append(header);
+
+  const grid = make("div", "task-chat-execution-grid");
+  appendKeyValue(grid, "Role", preview.role || "-");
+  appendKeyValue(grid, "Stream", preview.stream ? "Yes" : "No");
+  appendKeyValue(grid, "Prompt bytes", String(preview.prompt_bytes ?? "-"));
+  appendKeyValue(grid, "Created", formatTimestamp(preview.created_at));
+  card.append(grid);
+
+  const content = make("pre", "provider-generation-content");
+  content.dataset.testid = "task-chat-provider-prompt-preview";
+  content.textContent = safeHandoffString(preview.prompt || "", 2400) || "No prompt content.";
+  card.append(content);
+  target.append(card);
+}
+
+function previewTaskChatProviderPrompt() {
+  let preview;
+  try {
+    preview = taskChatProviderPromptPreviewRecord();
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  appendTaskChatMessage({
+    role: "agent",
+    title: "Provider prompt preview",
+    detail: `${preview.provider_id || "-"} / ${preview.model || "-"}`,
+    state: "preview",
+    providerPromptPreview: compactTaskChatProviderPromptPreview(preview),
+  });
+  showToast("Provider prompt previewed.");
 }
 
 function taskChatRouteContextLines(route) {
@@ -9156,6 +9237,7 @@ function bindEvents() {
   qs("#loadTasksButton").addEventListener("click", () => Promise.all([loadTasks(), loadTaskChatContext()]));
   qs("#taskChatForm").addEventListener("submit", submitTaskChatMessage);
   qs("#taskChatProviderButton").addEventListener("click", askTaskChatProvider);
+  qs("#taskChatProviderPromptPreviewButton").addEventListener("click", previewTaskChatProviderPrompt);
   qs("#taskChatRouteButton").addEventListener("click", previewTaskChatProviderRoute);
   qs("#taskChatHandoffPreviewButton").addEventListener("click", renderTaskChatHandoffPreview);
   qs("#taskChatHandoffCopyMarkdownButton").addEventListener("click", () =>

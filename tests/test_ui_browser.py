@@ -1568,6 +1568,93 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
     assert len(handoff["jsonText"]) < 16000
 
 
+def test_browser_task_chat_provider_prompt_preview_redacts_without_generating(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for(
+        "Boolean(document.querySelector('#taskChatProviderPromptPreviewButton'))"
+    )
+    devtools_page.eval(
+        """
+        (() => {
+          populateProviderApprovalControls({
+            ok: true,
+            data: [
+              {
+                id: "chat-provider",
+                name: "Task Chat Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["chat-model"],
+                supports_streaming: true,
+              },
+            ],
+          });
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderRequests = [];
+          window.__taskChatProviderStreamRequests = [];
+          window.__taskChatProviderApprovalRequests = [];
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {
+              window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
+            }
+            if (url.endsWith("/providers/generate")) {
+              window.__taskChatProviderRequests.push(JSON.parse(init.body));
+            }
+            if (url.endsWith("/providers/chat-provider/approvals")) {
+              window.__taskChatProviderApprovalRequests.push(JSON.parse(init.body));
+            }
+            return originalFetch(input, init);
+          };
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value =
+            "Preview the provider prompt token=preview-secret";
+          document.querySelector("#taskChatContextInput").value =
+            "Authorization: Bearer preview-secret-token\\nSafe preview context";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Preview card is redacted";
+          document.querySelector("#taskChatProviderPromptPreviewButton").click();
+          return true;
+        })()
+        """
+    )
+    preview_text = devtools_page.wait_for(
+        """
+        (() => {
+          const preview = document.querySelector(
+            '[data-testid="task-chat-provider-prompt-preview"]'
+          );
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatProviderRequests.length === 0
+            && window.__taskChatProviderStreamRequests.length === 0
+            && window.__taskChatProviderApprovalRequests.length === 0
+            && preview
+            && transcript.includes("Provider Prompt Preview")
+            && preview.textContent.includes("Message: Preview the provider prompt")
+            && preview.textContent.includes("Safe preview context")
+            && preview.textContent.includes("[redacted]")
+            ? preview.textContent
+            : null;
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    assert "preview-secret" not in preview_text
+    assert "Bearer preview-secret-token" not in preview_text
+
+
 def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions(
     ui_live_server,
     devtools_page,

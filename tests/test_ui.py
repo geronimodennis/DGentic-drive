@@ -45,6 +45,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatProviderApprovalInput" in response.text
     assert "taskChatProviderNetworkApprovalInput" in response.text
     assert "taskChatProviderButton" in response.text
+    assert "taskChatProviderPromptPreviewButton" in response.text
     assert "taskChatRouteButton" in response.text
     assert "taskChatProviderApprovalRequestButton" in response.text
     assert "taskChatHandoffPanel" in response.text
@@ -53,6 +54,7 @@ def test_web_ui_entrypoint_is_served() -> None:
     assert "taskChatHandoffCopyJsonButton" in response.text
     assert "taskChatHandoffOutput" in response.text
     assert "Handoff Packet" in response.text
+    assert "Preview Prompt" in response.text
     assert "Preview Route" in response.text
     assert "Request Approval" in response.text
     assert "refreshActivityButton" in response.text
@@ -713,6 +715,12 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatExecution" in script_response.text
     assert "renderTaskChatOrchestration" in script_response.text
     assert "taskChatProviderPrompt" in script_response.text
+    assert "taskChatProviderPromptPreviewRecord" in script_response.text
+    assert "renderTaskChatProviderPromptPreview" in script_response.text
+    assert "previewTaskChatProviderPrompt" in script_response.text
+    assert "compactTaskChatProviderPromptPreview" in script_response.text
+    assert "task-chat-provider-prompt-preview" in script_response.text
+    assert "Provider Prompt Preview" in script_response.text
     assert "taskChatProviderPayload" in script_response.text
     assert "taskChatProviderRoleInput" in script_response.text
     assert 'role: qs("#taskChatProviderRoleInput").value' in script_response.text
@@ -734,6 +742,7 @@ def test_web_ui_static_assets_are_served() -> None:
         script_response.text
     )
     assert "askTaskChatProvider" in script_response.text
+    assert 'qs("#taskChatProviderPromptPreviewButton").addEventListener(' in script_response.text
     assert "renderTaskChatProviderGeneration" in script_response.text
     assert "compactTaskChatProviderGeneration" in script_response.text
     assert "task-chat-provider-use-response" in script_response.text

@@ -6,6 +6,31 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010ci Task Chat Provider Prompt Preview
+
+Status: completed for the scoped Task Chat provider prompt preview slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome-to-reply handoffs and non-generating prompt previews, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact prompt-preview slice because Task Chat provider requests had route/outcome/reply handoffs but no local way to inspect the exact composed provider prompt before generation.
+- Completed: Architect kept the slice client-only on existing Task Chat prompt composition; no backend route, provider execution authority, approval creation, or provider/network approval binding changed.
+- Completed: Developer added a Preview Prompt control to Task Chat provider actions and a Provider Prompt Preview transcript card with bounded prompt metadata.
+- Completed: QA split browser coverage into a dedicated prompt-preview smoke so the existing route/reply/handoff regression test keeps its original transcript-window assumptions.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Preview Prompt composes the same Task Chat provider prompt used by Ask Provider and appends a transcript preview card with provider, model, role, stream, prompt byte count, and created timestamp metadata.
+- Implemented in this slice: preview content is bounded and passed through existing secret-shaped redaction before rendering or being stored in capped browser-local transcript history.
+- Still out of scope after this slice: provider generation, streaming generation, approval creation, backend route/schema changes, persisted backend chat records, and autonomous multi-turn provider loops.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Focused QA validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_entrypoint_is_served tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_context tests\test_ui_browser.py::test_browser_task_chat_provider_prompt_preview_redacts_without_generating` with 4 passed.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 36 passed.
+
 ### Sprint 16 BL-010ch Task Chat Approval Outcome-To-Reply Automation
 
 Status: completed for the scoped Task Chat approval outcome-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome-to-reply handoffs, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

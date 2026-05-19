@@ -224,6 +224,8 @@ The `/ui/` dashboard is served by the same FastAPI process. In local development
 
 Task-chat pending approval context cards include `Review` actions that switch to the unified inbox, synchronize source/status filters, and open the exact safe approval review contract. Approval decisions and bound execution still happen only through the existing approval dashboard controls and backend routes.
 
+Loaded approval reviews include Use Review Context and Use Review & Ask actions. These use curated safe review summary fields and fingerprinted approval references, omit raw approval IDs, approval digests, and bound execution payloads, and call only the existing guarded Task Chat provider reply path when asking a provider.
+
 Task-chat handoff packets are generated in the browser from already loaded Task Chat context and transcript state. Preview shows the bounded Markdown packet, Copy Markdown copies that portable continuation prompt, and Copy JSON copies the same evidence as a structured `dgentic.task-chat-handoff.v1` packet; no backend packet record is created.
 
 Task-chat memory context cards show active SQL metadata from the existing memory list endpoint. The Reliability-panel memory detail and hybrid retrieval rows include Use In Task Chat controls that insert bounded metadata and retrieval-score context into the composer without mutating memory.

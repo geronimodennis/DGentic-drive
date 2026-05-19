@@ -2985,6 +2985,142 @@ def test_browser_task_chat_approval_context_opens_exact_review(
     )
 
 
+def test_browser_approval_review_use_and_ask_sends_redacted_safe_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+    create_status, create_body = _http_json(
+        "POST",
+        f"{base_url}/cli/approvals?requested_by=review-context-seed",
+        payload={"command": "python --version --token cli-review-secret", "timeout_seconds": 10},
+    )
+    assert create_status == 201
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatContextStream'))")
+    devtools_page.wait_for(
+        f"""
+        document.querySelector("#taskChatContextStream")
+          ?.textContent.includes("{create_body["id"]}")
+        """
+    )
+    devtools_page.eval(
+        f"""
+        (() => {{
+          const button = [...document.querySelectorAll('[data-testid="task-chat-approval-review"]')]
+            .find((candidate) => candidate.dataset.approvalId === "{create_body["id"]}");
+          button.click();
+          return true;
+        }})()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        Boolean(document.querySelector('[data-testid="approval-review-use-and-ask"]'))
+          && document.querySelector("#approvalReview")?.textContent.includes("CLI review")
+          && document.querySelector("#approvalReview")?.textContent.includes("python --version")
+        """,
+        timeout_seconds=10.0,
+    )
+    review_meta = devtools_page.eval(
+        """
+        (() => ({
+          approvalId: selectedApproval?.approval?.id || "",
+          commandDigest: selectedApproval?.review?.command_digest || "",
+          approvalDigest: selectedApproval?.review?.approval_digest || "",
+          reviewText: document.querySelector("#approvalReview")?.textContent || "",
+        }))()
+        """
+    )
+    assert review_meta["approvalId"] == create_body["id"]
+    assert review_meta["approvalId"] in review_meta["reviewText"]
+    assert review_meta["commandDigest"]
+
+    devtools_page.eval(
+        """
+        (() => {
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderRequests = [];
+          window.__taskChatProviderStreamRequests = [];
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {
+              window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
+              throw new Error("Unexpected stream request");
+            }
+            if (url.endsWith("/providers/generate")) {
+              window.__taskChatProviderRequests.push(JSON.parse(init.body));
+              return new Response(
+                JSON.stringify({
+                  provider_id: "review-provider",
+                  model: "review-model",
+                  content: "Follow-up from approval review context",
+                  duration_ms: 8,
+                  usage_metadata: { total_tokens: 5 },
+                  finish_reasons: ["stop"],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            return originalFetch(input, init);
+          };
+          document.querySelector("#taskChatProviderInput").value = "review-provider";
+          document.querySelector("#taskChatProviderModelInput").value = "review-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatProviderApprovalInput").value = "";
+          document.querySelector("#taskChatProviderNetworkApprovalInput").value = "";
+          document.querySelector("#taskChatInput").value =
+            "Summarize the pending approval review.";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Provider sees safe review context only.";
+          document.querySelector('[data-testid="approval-review-use-and-ask"]').click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatProviderRequests.length === 1
+            && window.__taskChatProviderStreamRequests.length === 0
+            && transcript.includes("Follow-up from approval review context");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    payload = devtools_page.eval("window.__taskChatProviderRequests[0]")
+    prompt = payload["messages"][0]["content"]
+    context_value = devtools_page.eval(
+        'document.querySelector("#taskChatContextInput")?.value || ""'
+    )
+    combined = f"{prompt}\n{context_value}"
+    assert payload["provider_id"] == "review-provider"
+    assert payload["model"] == "review-model"
+    assert payload["stream"] is False
+    assert payload["messages"][0]["role"] == "developer"
+    assert "approval_id" not in payload
+    assert "network_approval_id" not in payload
+    assert "Message: Summarize the pending approval review." in prompt
+    assert "CLI approval review" in prompt
+    assert "Approval: CLI approval" in prompt
+    assert "Source: CLI" in prompt
+    assert "Status: pending" in prompt
+    assert "Command: python --version" in prompt
+    assert "[redacted]" in prompt
+    for secret in [
+        "cli-review-secret",
+        review_meta["approvalId"],
+        review_meta["commandDigest"],
+        review_meta["approvalDigest"],
+    ]:
+        if secret:
+            assert secret not in combined
+
+
 def test_browser_approval_dashboard_can_execute_seeded_filesystem_delete_approval(
     ui_live_server,
     devtools_page,

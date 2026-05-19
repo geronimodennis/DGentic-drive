@@ -253,6 +253,15 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderApprovalSummary" in script_response.text
     assert "renderApprovalReviewSummary" in script_response.text
     assert "approvalReviewPairs" in script_response.text
+    assert "approvalReviewReferenceLabel" in script_response.text
+    assert "approvalReviewContextTitle" in script_response.text
+    assert "approvalReviewContextLines" in script_response.text
+    assert "insertApprovalReviewContext" in script_response.text
+    assert "useApprovalReviewContextAndAsk" in script_response.text
+    assert "approval-review-use-context" in script_response.text
+    assert "approval-review-use-and-ask" in script_response.text
+    assert "Use Review Context" in script_response.text
+    assert "Use Review & Ask" in script_response.text
     assert "renderApprovalExecutionControls" in script_response.text
     assert "renderBoundExecutionRequestPanel" in script_response.text
     assert "boundExecutionRequestScaffold" in script_response.text

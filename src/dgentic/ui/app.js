@@ -2326,6 +2326,89 @@ function approvalOutcomeContextTitle(outcome) {
   return `${outcome?.source_label || "Approval"} outcome`;
 }
 
+function approvalReviewReferenceLabel(item) {
+  return handoffReferenceLabel(
+    handoffReference(item?.approval?.id, `${item?.source?.label || "Approval"} approval`),
+  );
+}
+
+function approvalReviewContextTitle(item) {
+  return `${item?.source?.label || "Approval"} approval review`;
+}
+
+function approvalReviewContextLines(item) {
+  const review = item.review || item.approval || {};
+  const lines = [
+    `Approval: ${approvalReviewReferenceLabel(item)}`,
+    `Source: ${safeHandoffString(item.source?.label, 80) || "-"}`,
+    `Status: ${safeHandoffString(review.status || item.approval?.status, 80) || "-"}`,
+    `Permission: ${safeHandoffString(review.permission_mode, 80) || "-"}`,
+    `Policy reason: ${safeHandoffString(review.policy_reason, 300) || "-"}`,
+    `Requested by: ${safeHandoffString(review.requested_by, 180) || "-"}`,
+    `Agent role: ${safeHandoffString(review.agent_role, 120) || "-"}`,
+    `Task: ${safeHandoffString(review.task_id, 160) || "-"}`,
+  ];
+  if (item.source?.key === "cli") {
+    lines.push(
+      `Command: ${safeHandoffString(review.review_command, 500) || "-"}`,
+      `Working directory: ${safeHandoffString(review.cwd, 240) || "-"}`,
+      `Matched rule: ${safeHandoffString(review.matched_rule_name || review.matched_rule_id, 180) || "-"}`,
+    );
+  } else if (item.source?.key === "filesystem") {
+    lines.push(
+      `Action: ${safeHandoffString(review.action, 80) || "-"}`,
+      `Path: ${safeHandoffString(review.path, 300) || "-"}`,
+      `Target path: ${safeHandoffString(review.target_path, 300) || "-"}`,
+      `Options: ${safeHandoffString(filesystemApprovalOptions(review), 200) || "-"}`,
+    );
+  } else if (item.source?.key === "network") {
+    lines.push(
+      `Surface: ${safeHandoffString(review.surface, 80) || "-"}`,
+      `Action: ${safeHandoffString(review.action, 80) || "-"}`,
+      `Host: ${safeHandoffString(review.port ? `${review.host}:${review.port}` : review.host, 240) || "-"}`,
+      `Matched domain: ${safeHandoffString(review.matched_domain, 240) || "-"}`,
+    );
+  } else if (item.source?.key === "provider") {
+    lines.push(
+      `Provider: ${safeHandoffString(review.provider_id, 128) || "-"}`,
+      `Model: ${safeHandoffString(review.model, 256) || "-"}`,
+      `Messages: ${safeHandoffString(providerMessageSummary(review), 240) || "-"}`,
+      `Options: ${safeHandoffString((review.option_keys || []).join(", "), 240) || "-"}`,
+      `Stream: ${review.stream ? "Yes" : "No"}`,
+    );
+  } else if (item.source?.key === "tool") {
+    lines.push(
+      `Tool: ${safeHandoffString(review.tool_name, 180) || "-"}`,
+      `Version: ${safeHandoffString(review.tool_version, 120) || "-"}`,
+      `Tool status: ${safeHandoffString(review.tool_status, 80) || "-"}`,
+      `Entrypoint: ${safeHandoffString(review.entrypoint, 240) || "-"}`,
+    );
+  }
+  if (review.decided_by || review.decision_reason || review.denial_reason) {
+    lines.push(
+      `Decided by: ${safeHandoffString(review.decided_by, 180) || "-"}`,
+      `Decision reason: ${safeHandoffString(review.decision_reason || review.denial_reason, 300) || "-"}`,
+    );
+  }
+  if (review.executed_at) {
+    lines.push(`Executed: ${formatTimestamp(review.executed_at)}`);
+  }
+  const warnings = safeHandoffStringList(review.review_warnings || [], 4, 180);
+  if (warnings.length) {
+    lines.push(`Warnings: ${warnings.join("; ")}`);
+  }
+  return lines;
+}
+
+function insertApprovalReviewContext(item) {
+  insertTaskChatContext(approvalReviewContextTitle(item), approvalReviewContextLines(item));
+}
+
+async function useApprovalReviewContextAndAsk(item) {
+  insertApprovalReviewContext(item);
+  await askTaskChatProvider();
+}
+
 function approvalOutcomeContextLines(outcome) {
   return [
     `Approval: ${approvalOutcomeReferenceLabel(outcome)}`,
@@ -4490,6 +4573,17 @@ function renderApprovalReviewSummary(target, item) {
   const review = item.review || item.approval || {};
   const box = make("div", "approval-review-summary");
   box.append(make("div", "item-title", "Review Summary"));
+  const actions = make("div", "task-run-actions");
+  const contextButton = make("button", "link-button", "Use Review Context");
+  contextButton.type = "button";
+  contextButton.dataset.testid = "approval-review-use-context";
+  contextButton.addEventListener("click", () => insertApprovalReviewContext(item));
+  const askButton = make("button", "primary-button", "Use Review & Ask");
+  askButton.type = "button";
+  askButton.dataset.testid = "approval-review-use-and-ask";
+  askButton.addEventListener("click", () => useApprovalReviewContextAndAsk(item));
+  actions.append(contextButton, askButton);
+  box.append(actions);
   const grid = make("div", "checkpoint-grid");
   for (const pair of approvalReviewPairs(item)) {
     appendKeyValue(grid, pair.label, reviewValue(pair.value), pair.chip || "");

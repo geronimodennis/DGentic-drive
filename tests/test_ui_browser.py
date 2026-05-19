@@ -1397,7 +1397,8 @@ def test_browser_task_chat_provider_reply_builds_payload_streams_and_inserts_con
         """
         [...document.querySelectorAll(".task-chat-execution-card")]
           .some((card) => card.textContent.includes("Provider Stream")
-            && card.textContent.includes("Streamed task chat reply."))
+            && card.textContent.includes("Streamed task chat reply.")
+            && Boolean(card.querySelector('[data-testid="task-chat-provider-use-and-ask"]')))
         """,
         timeout_seconds=10.0,
     )
@@ -1653,6 +1654,129 @@ def test_browser_task_chat_provider_prompt_preview_redacts_without_generating(
     )
     assert "preview-secret" not in preview_text
     assert "Bearer preview-secret-token" not in preview_text
+
+
+def test_browser_task_chat_provider_response_and_ask_reuses_redacted_context(
+    ui_live_server,
+    devtools_page,
+) -> None:
+    base_url, _root_dir = ui_live_server
+
+    devtools_page.call("Page.navigate", {"url": f"{base_url}/ui/#tasks"})
+    devtools_page.wait_for("document.readyState === 'complete'")
+    devtools_page.wait_for("Boolean(document.querySelector('#taskChatProviderButton'))")
+    devtools_page.eval(
+        """
+        (() => {
+          populateProviderApprovalControls({
+            ok: true,
+            data: [
+              {
+                id: "chat-provider",
+                name: "Task Chat Provider",
+                kind: "external",
+                enabled: true,
+                permission_mode: "approval_required",
+                model_names: ["chat-model"],
+                supports_streaming: true,
+              },
+            ],
+          });
+          const originalFetch = window.fetch.bind(window);
+          window.__taskChatProviderRequests = [];
+          window.__taskChatProviderStreamRequests = [];
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.endsWith("/providers/generate/stream")) {
+              window.__taskChatProviderStreamRequests.push(JSON.parse(init.body));
+              throw new Error("Unexpected stream request");
+            }
+            if (url.endsWith("/providers/generate")) {
+              window.__taskChatProviderRequests.push(JSON.parse(init.body));
+              const content = window.__taskChatProviderRequests.length === 1
+                ? "Prior provider answer token=response-secret\\nUseful fact"
+                : "Follow-up provider reply";
+              return new Response(
+                JSON.stringify({
+                  provider_id: "chat-provider",
+                  model: "chat-model",
+                  content,
+                  duration_ms: 12,
+                  usage_metadata: { total_tokens: 9 },
+                  finish_reasons: ["stop"],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            return originalFetch(input, init);
+          };
+          const providerInput = document.querySelector("#taskChatProviderInput");
+          providerInput.value = "chat-provider";
+          providerInput.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("#taskChatProviderModelInput").value = "chat-model";
+          document.querySelector("#taskChatProviderRoleInput").value = "developer";
+          document.querySelector("#taskChatProviderStreamInput").checked = false;
+          document.querySelector("#taskChatInput").value = "Get an initial provider answer.";
+          document.querySelector("#taskChatContextInput").value = "Initial context";
+          document.querySelector("#taskChatAcceptanceInput").value = "Initial reply appears";
+          document.querySelector("#taskChatProviderButton").click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const cards = [...document.querySelectorAll(".task-chat-execution-card")]
+            .map((card) => card.textContent || "");
+          return window.__taskChatProviderRequests.length === 1
+            && window.__taskChatProviderStreamRequests.length === 0
+            && cards.some((card) => card.includes("Provider Reply")
+              && card.includes("Prior provider answer"))
+            && Boolean(document.querySelector(
+              '[data-testid="task-chat-provider-use-and-ask"]'
+            ));
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+
+    devtools_page.eval(
+        """
+        (() => {
+          document.querySelector("#taskChatInput").value = "Follow up on the prior answer.";
+          document.querySelector("#taskChatAcceptanceInput").value =
+            "Follow-up uses redacted response context";
+          document.querySelector(
+            '[data-testid="task-chat-provider-use-and-ask"]'
+          ).click();
+          return true;
+        })()
+        """
+    )
+    devtools_page.wait_for(
+        """
+        (() => {
+          const transcript = document.querySelector("#taskChatTranscript")?.textContent || "";
+          return window.__taskChatProviderRequests.length === 2
+            && transcript.includes("Follow-up provider reply");
+        })()
+        """,
+        timeout_seconds=10.0,
+    )
+    follow_up_payload = devtools_page.eval("window.__taskChatProviderRequests[1]")
+    follow_up_prompt = follow_up_payload["messages"][0]["content"]
+    assert follow_up_payload["provider_id"] == "chat-provider"
+    assert follow_up_payload["model"] == "chat-model"
+    assert follow_up_payload["stream"] is False
+    assert follow_up_payload["messages"][0]["role"] == "developer"
+    assert "approval_id" not in follow_up_payload
+    assert "network_approval_id" not in follow_up_payload
+    assert "Message: Follow up on the prior answer." in follow_up_prompt
+    assert "Provider reply" in follow_up_prompt
+    assert "Useful fact" in follow_up_prompt
+    assert "[redacted]" in follow_up_prompt
+    assert "response-secret" not in follow_up_prompt
 
 
 def test_browser_task_chat_provider_approval_request_posts_review_payload_and_wires_actions(

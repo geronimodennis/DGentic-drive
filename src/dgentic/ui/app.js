@@ -2086,7 +2086,15 @@ function renderTaskChatProviderGeneration(target, result) {
   contextButton.addEventListener("click", () =>
     insertTaskChatContext("Provider reply", providerGenerationContextLines(result)),
   );
-  actions.append(statusChip(result.error ? "failed" : "ok"), contextButton);
+  const askButton = make("button", "primary-button", "Use Response & Ask");
+  askButton.type = "button";
+  askButton.dataset.testid = "task-chat-provider-use-and-ask";
+  askButton.disabled = !result.content;
+  if (!result.content) {
+    askButton.title = "Provider response content is required before asking again.";
+  }
+  askButton.addEventListener("click", () => useTaskChatProviderResponseAndAsk(result));
+  actions.append(statusChip(result.error ? "failed" : "ok"), contextButton, askButton);
   header.append(copy, actions);
   card.append(header);
 
@@ -2103,6 +2111,11 @@ function renderTaskChatProviderGeneration(target, result) {
   content.textContent = boundedString(result.content || "", 2400) || "No content returned.";
   card.append(content);
   target.append(card);
+}
+
+async function useTaskChatProviderResponseAndAsk(result) {
+  insertTaskChatContext("Provider reply", providerGenerationContextLines(result));
+  await askTaskChatProvider();
 }
 
 function taskChatProviderPromptPreviewRecord() {
@@ -6478,13 +6491,13 @@ function providerGenerationPayload() {
 
 function providerGenerationContextLines(result) {
   return [
-    `Provider: ${result.provider_id || "-"}`,
-    `Model: ${result.model || "-"}`,
+    `Provider: ${safeHandoffString(result.provider_id, 128) || "-"}`,
+    `Model: ${safeHandoffString(result.model, 256) || "-"}`,
     `Stream: ${result.streamed ? "Yes" : "No"}`,
     `Duration: ${result.duration_ms ?? "-"} ms`,
     `Estimated cost: ${result.estimated_cost_usd ?? "-"}`,
-    `Finish reasons: ${result.finish_reasons?.length ? result.finish_reasons.join(", ") : "-"}`,
-    `Content: ${boundedString(result.content || "", 900) || "-"}`,
+    `Finish reasons: ${safeHandoffString((result.finish_reasons || []).join(", "), 240) || "-"}`,
+    `Content: ${safeHandoffString(result.content || "", 900) || "-"}`,
   ];
 }
 

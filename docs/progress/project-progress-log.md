@@ -6,6 +6,32 @@ For the current sprint, priority order, safe stopping rules, and source-of-truth
 
 ## 2026-05-19
 
+### Sprint 16 BL-010cj Task Chat Provider Response-To-Reply Automation
+
+Status: completed for the scoped Task Chat provider response-to-reply slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome/response-to-reply handoffs and non-generating prompt previews, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.
+
+Current story:
+- BL-010: Cross-Platform Web UI, Dashboard, And Interactive Approval Experience.
+
+Checklist:
+- Completed: PM selected a compact response-to-reply slice because Provider Reply cards could already insert response context, but operators still needed a separate Ask Provider step for follow-up.
+- Completed: Architect kept the slice client-only on existing provider response context and guarded provider reply contracts; no backend route, approval creation, provider execution bypass, or automatic loop was added.
+- Completed: Developer added an explicit Use Response & Ask control to Provider Reply and Provider Stream cards.
+- Completed: Developer hardened reusable provider response context by applying secret-shaped redaction before provider output can be inserted into follow-up prompts.
+- Completed: QA added static UI assertions and browser coverage proving the new control inserts bounded redacted response context, calls the existing provider reply path, preserves provider/model/message role controls, and does not invent provider or network approval IDs.
+- Completed: PM updated README, project status, backlog, Agile plan, setup, usage, and this progress log.
+
+Feature tracking:
+- Implemented in this slice: Provider Reply and Provider Stream transcript cards can explicitly Use Response & Ask, inserting bounded response context and immediately calling the existing guarded Task Chat provider reply flow.
+- Implemented in this slice: response-to-reply uses current composer/provider controls for provider, model, message role, stream mode, prompt, and any manually supplied provider/network approval IDs.
+- Still out of scope after this slice: automatic provider chaining, backend route/schema changes, approval creation, provider execution bypass, durable backend conversation records, and autonomous multi-turn provider loops.
+
+Validation:
+- Static validation passed: `node --check src\dgentic\ui\app.js`.
+- Focused QA validation passed: `uv run pytest -q tests\test_ui.py::test_web_ui_static_assets_are_served tests\test_ui_browser.py::test_browser_task_chat_provider_response_and_ask_reuses_redacted_context` with 2 passed.
+- Quality gates passed: `uv run ruff format --check .`, `uv run ruff check .`, and `git diff --check`.
+- Full UI/browser validation passed: `uv run pytest -q tests\test_ui.py tests\test_ui_browser.py` with 37 passed.
+
 ### Sprint 16 BL-010ci Task Chat Provider Prompt Preview
 
 Status: completed for the scoped Task Chat provider prompt preview slice; Sprint 16 remains active for richer unified chat semantics beyond deterministic task execution, richer provider reply automation beyond explicit route/outcome-to-reply handoffs and non-generating prompt previews, active memory/session/log context beyond bounded cards and handoff packets, orchestration creation/context reuse, bounded approval-review/request/outcome handoffs, actual Git hunk/patch apply or revert workflows beyond guarded workspace editor mutations, richer AI-change review semantics beyond metadata-only Git review artifacts, UI-side diff decisions, and reviewer rationale notes, broader editable settings and policy workflows beyond the currently implemented project metadata, read-only provider routing review, CLI policy, hook policy, network policy, command recipes, plugin trust/activation, generated-tool governance, memory administration beyond active metadata context insertion, manual thresholded preview/apply, and metadata quick-edit controls, and persistent or multi-worker project activation semantics.

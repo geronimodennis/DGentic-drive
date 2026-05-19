@@ -746,6 +746,10 @@ def test_web_ui_static_assets_are_served() -> None:
     assert "renderTaskChatProviderGeneration" in script_response.text
     assert "compactTaskChatProviderGeneration" in script_response.text
     assert "task-chat-provider-use-response" in script_response.text
+    assert "task-chat-provider-use-and-ask" in script_response.text
+    assert "Use Response & Ask" in script_response.text
+    assert "useTaskChatProviderResponseAndAsk" in script_response.text
+    assert 'safeHandoffString(result.content || "", 900)' in script_response.text
     assert "Provider Reply" in script_response.text
     assert "Provider Stream" in script_response.text
     assert 'requested_by: "dashboard-task-chat"' in script_response.text
